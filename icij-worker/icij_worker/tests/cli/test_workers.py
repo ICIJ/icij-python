@@ -11,12 +11,12 @@ from icij_worker.cli import cli_app
 def test_workers_help(cli_runner: CliRunner, help_command: str):
     # When
     result = cli_runner.invoke(
-        cli_app, ["workers", help_command], catch_exceptions=False
+        cli_app, ["workers", help_command], catch_exceptions=False, color=False
     )
     # Then
     assert result.exit_code == 0
     output = result.stdout
-    assert "Usage: icij-worker workers [OPTIONS] COMMAND [ARGS]..." in output
+    assert "icij-worker workers [OPTIONS] COMMAND [ARGS]..." in output
     assert "start  Start a pool of workers running the provided app" in output
 
 
@@ -34,7 +34,7 @@ def test_workers_start(
     # Given
     test_app = "icij_worker.tests.conftest.APP"
     # When
-    result = cli_runner.invoke(cli_app, ["workers", "start", test_app])
+    result = cli_runner.invoke(cli_app, ["workers", "start", test_app], color=False)
     # Then
     # Here the program will fail because the DB for the worker is not initialized,
     # since the CLI is running forever, launching a failing worker enables returning
@@ -46,11 +46,11 @@ def test_workers_start(
 @pytest.mark.parametrize("help_command", ["-h", "--help"])
 def test_workers_start_help(cli_runner: CliRunner, help_command: str):
     # When
-    result = cli_runner.invoke(cli_app, ["workers", "start", help_command])
+    result = cli_runner.invoke(cli_app, ["workers", "start", help_command], color=False)
     # Then
     assert result.exit_code == 0
     output = result.stdout
-    assert " Usage: icij-worker workers start [OPTIONS] APP" in output
+    assert "icij-worker workers start [OPTIONS] APP" in output
     assert "-n" in output
     assert "-n-workers" in output
     assert "-c" in output

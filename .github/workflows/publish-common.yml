@@ -1,0 +1,30 @@
+name: Publish icij-common
+
+on:
+  push:
+    tags:
+      - icij-common-*
+
+jobs:
+  publish-icij-common:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install poetry
+        run: pipx install poetry
+      - name: Setup Python project
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+          cache: poetry
+      - name: Install Python project
+        run: cd icij-common && poetry install --with dev --sync
+      # We assume tests have run in a previous workflow and just build and publish
+      - name: Build and publish
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          cd icij-common
+          poetry build
+          poetry config pypi-token.pypi {{ env.PYPI_API_TOKEN }}
+          poetry publish

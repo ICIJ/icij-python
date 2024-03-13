@@ -1,0 +1,41 @@
+name: Test for icij-worker
+
+on:
+  pull_request:
+    paths:
+      - 'icij-worker/**.py'
+      - '.github/workflows/tests-worker.yml'
+
+jobs:
+  test-icij-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install poetry
+        run: pipx install poetry
+      - name: Setup Python project
+        uses: actions/setup-python@v5
+        with:
+          # TODO: use a version matrix here
+          python-version: 3.9
+          cache: poetry
+      - run: cd icij-worker && poetry install -v --with dev --sync
+      - name: Run tests
+        run: |
+          cd icij-worker
+          poetry run python -m pytest -vvv --cache-clear --show-capture=all -r A .
+    services:
+      neo4j:
+        image: neo4j:4.4.17
+        env:
+          NEO4J_AUTH: neo4j/theneo4jpassword
+          NEO4JLABS_PLUGINS: '["apoc"]'
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p theneo4jpassword -d neo4j 'CALL db.ping()'"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+          --health-start-period 20s
+        ports:
+          - 7475:7474
+          - 7688:7687
