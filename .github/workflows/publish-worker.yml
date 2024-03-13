@@ -26,5 +26,5 @@ jobs:
         run: |
           cd icij-worker
           poetry build
-          poetry config pypi-token.pypi {{ env.PYPI_API_TOKEN }}
+          poetry config pypi-token.pypi ${{ env.PYPI_API_TOKEN }}
           poetry publish
