@@ -23,8 +23,11 @@ jobs:
       - name: Build and publish
         env:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        # PyPi doesn't support orgs and user API token have to be put in here. Since tokens can be used either for a
+        # single repo or all user repos, we have to use separate tokens for each asset to avoid providing access to
+        # all user repos
         run: |
           cd icij-common
           poetry build
-          poetry config pypi-token.pypi ${{ env.PYPI_API_TOKEN }}
+          poetry config pypi-token.pypi ${{ env.PYPI_API_TOKEN_ICIJ_COMMON }}
           poetry publish
