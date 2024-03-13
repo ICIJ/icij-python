@@ -32,11 +32,11 @@ neo4j = "^5.0.0"
 pylint = "^3.1.0"
 pytest = "^7.2.1"
 pytest-asyncio = "^0.20.3"
-icij_common = { path = "../icij-common", develop = true, extras = ["dev"] }
+icij-common = "^0.1.0"
 
 [tool.poetry.group.neo4j.dependencies]
 neo4j = "^5.0.0"
-icij_common = { path = "../icij-common", develop = true, extras = ["neo4j"] }
+icij-common = { path = "../icij-common", develop = true, extras = ["neo4j"] }
 
 [build-system]
 requires = ["poetry-core"]
