@@ -1,0 +1,19 @@
+name: Linting test for icij-common
+
+on:
+  pull_request:
+    paths:
+      - 'icij-common/**.py'
+  push:
+    paths:
+      - 'icij-common/**.py'
+
+# TODO: leverage some caching here
+jobs:
+  linting-test-icij-common:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/pylint
+        with:
+          path: icij-common

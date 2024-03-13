@@ -41,7 +41,7 @@ from icij_worker.task_manager.neo4j import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
 
 # noinspection PyUnresolvedReferences
-from icij_worker.utils.tests import (
+from icij_worker.utils.tests import (  # pylint: disable=unused-import
     DBMixin,
     test_async_app,
 )
