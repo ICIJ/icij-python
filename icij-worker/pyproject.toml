@@ -24,7 +24,7 @@ icij-worker = "icij_worker.__main__:cli_app"
 
 [tool.poetry.dependencies]
 python = "^3.9"
-icij_common = { path = "../icij-common", develop = true }
+icij_common = "^0.1.0"
 typer = { extras = ["all"], version = "^0.9.0" }
 
 [tool.poetry.group.dev.dependencies]
