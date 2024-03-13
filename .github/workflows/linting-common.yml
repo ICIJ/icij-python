@@ -4,16 +4,13 @@ on:
   pull_request:
     paths:
       - 'icij-common/**.py'
-  push:
-    paths:
-      - 'icij-common/**.py'
+      - '.github/workflows/tests-common.yml'
 
-# TODO: leverage some caching here
 jobs:
   linting-test-icij-common:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/pylint
         with:
           path: icij-common
