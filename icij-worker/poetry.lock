@@ -70,7 +70,7 @@ test = ["pytest (>=6)"]
 
 [[package]]
 name = "icij-common"
-version = "0.1.0"
+version = "0.1.1"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -451,4 +451,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "24e3e6b13a7e0431e7fc657617b194c60d5b2160102583d7a9e8ca28546f8c4d"
+content-hash = "38fde67aacc28fd37a308a23dc37a752852e368fb89ff07a1160ed2c27ee174b"
