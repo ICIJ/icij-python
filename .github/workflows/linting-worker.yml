@@ -1,12 +1,12 @@
 name: Linting test for icij-worker
 
 on:
+  push:
+    branches: ['main']
   pull_request:
     paths:
       - 'icij-worker/**.py'
-  push:
-    paths:
-      - 'icij-worker/**.py'
+      - '.github/workflows/tests-worker.yml'
 
 # TODO: leverage some caching here
 jobs:

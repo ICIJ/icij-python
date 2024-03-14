@@ -1,6 +1,8 @@
 name: Test for icij-common
 
 on:
+  push:
+    branches: ['main']
   pull_request:
     paths:
       - 'icij-common/**.py'
