@@ -41,6 +41,17 @@ jobs:
         ports:
           - 7475:7474
           - 7688:7687
+      test-rabbit-mq:
+        image: rabbitmq:3.12.0-management
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+          --health-start-period 20s
+        ports:
+          - 5673:5672
+          - 15673:15672
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
