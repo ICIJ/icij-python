@@ -13,7 +13,8 @@ from icij_common.test_utils import async_true_after, fail_if_exception
 
 from icij_worker import AsyncApp, Task, TaskError, TaskEvent, TaskResult, TaskStatus
 from icij_worker.exceptions import TaskCancelled, UnregisteredTask
-from icij_worker.tests.conftest import MockManager, MockWorker, TEST_PROJECT
+from icij_worker.tests.conftest import TEST_PROJECT
+from icij_worker.utils.tests import MockManager, MockWorker
 from icij_worker.worker.worker import add_missing_args, task_wrapper
 
 

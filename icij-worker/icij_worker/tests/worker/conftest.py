@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from icij_worker import AsyncApp
-from icij_worker.tests.conftest import MockWorker
 
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
+    MockWorker,
     mock_db,
     mock_db_session,
 )
