@@ -6,7 +6,7 @@ authors = [
     "Clément Doumouro <cdoumouro@icij.org>",
     "ICIJ <engineering@icij.org>",
 ]
-# TODO: add readme
+readme = "README.md"
 packages = [
     { include = "icij_common" }
 ]
