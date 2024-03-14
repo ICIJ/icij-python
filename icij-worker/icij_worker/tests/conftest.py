@@ -3,13 +3,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, List, Optional, Tuple, Type
 
 import aiohttp
 import neo4j
+import pika
 import pytest
 import pytest_asyncio
+from aiohttp import ClientResponseError
+from pika.channel import Channel
+from pika.spec import Basic, BasicProperties
+
+import icij_worker
+from icij_common.logging_utils import (
+    DATE_FMT,
+    STREAM_HANDLER_FMT,
+)
 from icij_common.neo4j.migrate import (
     Migration,
     init_project,
@@ -21,8 +33,8 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
 from icij_common.test_utils import TEST_PROJECT
-
 from icij_worker import AsyncApp, Task
+from icij_worker.event_publisher.amqp import Routing
 from icij_worker.task_manager.neo4j import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
 
@@ -31,9 +43,11 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
     DBMixin,
     test_async_app,
 )
-
-logger = logging.getLogger(__name__)
-
+from icij_worker.worker.amqp.consumer import (
+    AMQPMessageConsumer,
+    OnMessage,
+    _AMQPMessageConsumer,
+)
 
 _RABBITMQ_TEST_PORT = 5673
 _RABBITMQ_MANAGEMENT_PORT = 15673
@@ -63,6 +77,21 @@ TEST_MIGRATIONS = [
         migration_fn=migration_v_0_1_0_tx,
     )
 ]
+
+
+@pytest.fixture(scope="session")
+def amqp_loggers():
+    loggers = [pika.__name__, icij_worker.__name__]
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(STREAM_HANDLER_FMT, datefmt=DATE_FMT))
+    for logger_ in loggers:
+        logger_ = logging.getLogger(logger_)
+        if logger_.name == pika.__name__:
+            logger_.setLevel(logging.INFO)
+        else:
+            logger_.setLevel(logging.DEBUG)
+        logger_.handlers = []
+        logger_.addHandler(handler)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -199,3 +228,81 @@ async def _delete_queue(session: aiohttp.ClientSession, name: str):
     url = f"/api/queues/{DEFAULT_VHOST}/{name}"
     async with session.delete(get_test_management_url(url)) as res:
         res.raise_for_status()
+
+
+async def queue_exists(name: str) -> bool:
+    url = get_test_management_url(f"/api/queues/vhost/{name}")
+    try:
+        async with aiohttp.ClientSession(raise_for_status=True) as sess:
+            async with sess.get(url):
+                return True
+    except ClientResponseError:
+        return False
+
+
+@contextmanager
+def shutdown_nowait(executor: ThreadPoolExecutor):
+    try:
+        yield executor
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+class TestConsumer__(_AMQPMessageConsumer):  # pylint: disable=invalid-name
+    n_failures: int = 0
+    consumed = 0
+
+    def __init__(
+        self,
+        logger: Optional[logging.Logger] = None,
+        *,
+        on_message: OnMessage,
+        broker_url: str,
+        routing: Routing,
+        app_id: Optional[str] = None,
+        recover_from: Tuple[Type[Exception], ...] = tuple(),
+    ):
+        super().__init__(
+            logger,
+            on_message=on_message,
+            broker_url=broker_url,
+            routing=routing,
+            app_id=app_id,
+            recover_from=recover_from,
+        )
+        self._declare_and_bind = True
+
+    def on_message(
+        self,
+        _: Channel,
+        basic_deliver: Basic.Deliver,
+        properties: BasicProperties,
+        body: bytes,
+    ):
+        # pylint: disable=arguments-renamed
+        super().on_message(_, basic_deliver, properties, body)
+        self.consumed += 1
+
+
+def consumer_factory(consumer_cls: Type[TestConsumer__], n_failures: int) -> Type:
+    consumer_cls.n_failures = n_failures
+
+    class TestConsumer(AMQPMessageConsumer):
+        def n_consumed(self) -> int:
+            return self._consumer.consumed
+
+        @property
+        def consumer(self) -> TestConsumer__:
+            return self._consumer
+
+        def _create_consumer(self, logger: logging.Logger) -> TestConsumer__:
+            return consumer_cls(
+                logger=logger,
+                on_message=self._on_message,
+                broker_url=self._broker_url,
+                routing=self._routing,
+                app_id=self._app_id,
+                recover_from=self._recover_from,
+            )
+
+    return TestConsumer

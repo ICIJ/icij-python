@@ -21,7 +21,7 @@ from icij_worker.event_publisher.amqp import (
     Routing,
     parse_stream_lost_error,
 )
-from icij_worker.exceptions import ConnectionLostError
+from icij_worker.worker.amqp import ConnectionLostError
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     rabbit_mq_test_session,

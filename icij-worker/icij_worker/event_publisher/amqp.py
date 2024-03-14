@@ -23,10 +23,11 @@ from tenacity import (
 from icij_common.logging_utils import LogWithNameMixin
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
 from icij_worker import TaskEvent
-from icij_worker.exceptions import ConnectionLostError
+from ..worker.amqp import ConnectionLostError
 from . import EventPublisher
 
 
+# TODO: move these to a upper level
 class Exchange(NoEnumModel, LowerCamelCaseModel):
     name: str
     type: ExchangeType
@@ -210,7 +211,7 @@ class AMQPEventPublisher(EventPublisher, LogWithNameMixin):
         self.debug("opening a new channel")
         self._channel_ = self._connection.channel()
         self._channel.add_on_return_callback(self._on_return_callback)
-        self._channel.basic_qos(prefetch_count=0, global_qos=True)
+        self._channel.basic_qos(prefetch_count=1, global_qos=True)
         if self._declare_and_bind:
             self._declare_exchanges()
             self._declare_queues()
