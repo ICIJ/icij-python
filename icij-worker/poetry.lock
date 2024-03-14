@@ -70,7 +70,7 @@ test = ["pytest (>=6)"]
 
 [[package]]
 name = "icij-common"
-version = "0.1.1"
+version = "0.1.2"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
