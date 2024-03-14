@@ -1,0 +1,17 @@
+version: '3.7'
+services:
+  test-neo4j:
+    container_name: test-neo4j
+    image: neo4j:4.4.17
+    environment:
+      NEO4J_AUTH: neo4j/theneo4jpassword
+      NEO4JLABS_PLUGINS: '["apoc"]'
+    healthcheck:
+      test: [ "CMD", "cypher-shell", "-u", "neo4j", "-p", "theneo4jpassword", "-d", "neo4j", 'CALL db.ping()' ]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 20s
+    ports:
+      - 7475:7474
+      - 7688:7687
