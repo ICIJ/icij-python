@@ -16,3 +16,7 @@ jobs:
       - uses: ./.github/actions/pylint
         with:
           path: icij-common
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

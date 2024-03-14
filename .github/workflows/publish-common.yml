@@ -31,3 +31,7 @@ jobs:
           poetry build
           poetry config pypi-token.pypi ${{ env.PYPI_API_TOKEN_ICIJ_COMMON }}
           poetry publish
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
