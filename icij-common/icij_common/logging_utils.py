@@ -42,6 +42,10 @@ class LogWithNameMixin(ABC):
     def error(self, msg, *args, **kwargs):
         self._logger.error(msg, *args, **kwargs)
 
+    @final
+    def warning(self, msg, *args, **kwargs):
+        self._logger.warning(msg, *args, **kwargs)
+
 
 class WorkerIdFilter(logging.Filter):
     def __init__(self, worker_id: str):
