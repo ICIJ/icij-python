@@ -126,7 +126,6 @@ class Worker(
 
     @final
     async def _work_forever(self):
-
         while True:
             await self._work_once()
 

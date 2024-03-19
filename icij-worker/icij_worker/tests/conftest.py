@@ -40,6 +40,8 @@ from icij_worker.typing_ import PercentProgress
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
     DBMixin,
+    mock_db,
+    mock_db_session,
     test_async_app,
 )
 
@@ -286,4 +288,4 @@ class TestableAMQPPublisher(AMQPPublisher):
 
     @property
     def event_queue(self) -> str:
-        return self.evt_routing.default_queue
+        return self.__class__.evt_routing().default_queue

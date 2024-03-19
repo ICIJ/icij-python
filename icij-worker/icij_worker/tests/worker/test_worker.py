@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 from unittest.mock import patch
 
 import pytest
-from icij_common.test_utils import async_true_after, fail_if_exception
 
+from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import AsyncApp, Task, TaskError, TaskEvent, TaskResult, TaskStatus
 from icij_worker.exceptions import TaskCancelled, UnregisteredTask
 from icij_worker.tests.conftest import TEST_PROJECT
@@ -483,11 +483,3 @@ async def test_worker_acknowledgment_cm_should_not_raise_for_fatal_error(
                 raise ValueError("i am fatal")
             assert mocked_exit.assert_not_called()
             assert mocked_shutdown.assert_not_called()
-
-
-async def test_worker_work_forever():
-    assert False
-
-
-async def test_worker_self_managed_loop_worker_work_forever():
-    assert False
