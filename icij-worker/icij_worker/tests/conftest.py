@@ -6,16 +6,15 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
-from typing import AsyncGenerator, List, Optional, Tuple, Type
+from typing import AsyncGenerator, List, Optional
 
+import aio_pika
 import aiohttp
 import neo4j
 import pika
 import pytest
 import pytest_asyncio
-from aiohttp import ClientResponseError
-from pika.channel import Channel
-from pika.spec import Basic, BasicProperties
+from aiohttp import ClientResponseError, ClientTimeout
 
 import icij_worker
 from icij_common.logging_utils import (
@@ -34,7 +33,7 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 )
 from icij_common.test_utils import TEST_PROJECT
 from icij_worker import AsyncApp, Task
-from icij_worker.event_publisher.amqp import Routing
+from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.task_manager.neo4j import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
 
@@ -43,25 +42,23 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
     DBMixin,
     test_async_app,
 )
-from icij_worker.worker.amqp.consumer import (
-    AMQPMessageConsumer,
-    OnMessage,
-    _AMQPMessageConsumer,
-)
 
-_RABBITMQ_TEST_PORT = 5673
+RABBITMQ_TEST_PORT = 5673
+RABBITMQ_TEST_HOST = "localhost"
 _RABBITMQ_MANAGEMENT_PORT = 15673
 TEST_MANAGEMENT_URL = f"http://localhost:{_RABBITMQ_MANAGEMENT_PORT}"
 DEFAULT_VHOST = "%2F"
 
 _DEFAULT_BROKER_URL = (
-    f"amqp://guest:guest@localhost:{_RABBITMQ_TEST_PORT}/{DEFAULT_VHOST}"
+    f"amqp://guest:guest@{RABBITMQ_TEST_HOST}:{RABBITMQ_TEST_PORT}/{DEFAULT_VHOST}"
 )
 _DEFAULT_AUTH = aiohttp.BasicAuth(login="guest", password="guest", encoding="utf-8")
 
 
 def rabbit_mq_test_session() -> aiohttp.ClientSession:
-    return aiohttp.ClientSession(raise_for_status=True, auth=_DEFAULT_AUTH)
+    return aiohttp.ClientSession(
+        raise_for_status=True, auth=_DEFAULT_AUTH, timeout=ClientTimeout(total=2)
+    )
 
 
 async def migration_v_0_1_0_tx(tx: neo4j.AsyncTransaction):
@@ -81,7 +78,7 @@ TEST_MIGRATIONS = [
 
 @pytest.fixture(scope="session")
 def amqp_loggers():
-    loggers = [pika.__name__, icij_worker.__name__]
+    loggers = [aio_pika.__name__, icij_worker.__name__]
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(STREAM_HANDLER_FMT, datefmt=DATE_FMT))
     for logger_ in loggers:
@@ -230,10 +227,20 @@ async def _delete_queue(session: aiohttp.ClientSession, name: str):
         res.raise_for_status()
 
 
-async def queue_exists(name: str) -> bool:
-    url = get_test_management_url(f"/api/queues/vhost/{name}")
+async def exchange_exists(name: str) -> bool:
+    url = get_test_management_url(f"/api/exchanges/{DEFAULT_VHOST}/{name}")
     try:
-        async with aiohttp.ClientSession(raise_for_status=True) as sess:
+        async with rabbit_mq_test_session() as sess:
+            async with sess.get(url):
+                return True
+    except ClientResponseError:
+        return False
+
+
+async def queue_exists(name: str) -> bool:
+    url = get_test_management_url(f"/api/queues/{DEFAULT_VHOST}/{name}")
+    try:
+        async with rabbit_mq_test_session() as sess:
             async with sess.get(url):
                 return True
     except ClientResponseError:
@@ -248,61 +255,35 @@ def shutdown_nowait(executor: ThreadPoolExecutor):
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-class TestConsumer__(_AMQPMessageConsumer):  # pylint: disable=invalid-name
-    n_failures: int = 0
-    consumed = 0
+class TestableAMQPPublisher(AMQPPublisher):
 
     def __init__(
         self,
         logger: Optional[logging.Logger] = None,
         *,
-        on_message: OnMessage,
         broker_url: str,
-        routing: Routing,
+        connection_timeout_s: float = 1.0,
+        reconnection_wait_s: float = 5.0,
         app_id: Optional[str] = None,
-        recover_from: Tuple[Type[Exception], ...] = tuple(),
     ):
+        # declare and bind the queues
         super().__init__(
             logger,
-            on_message=on_message,
             broker_url=broker_url,
-            routing=routing,
+            connection_timeout_s=connection_timeout_s,
+            reconnection_wait_s=reconnection_wait_s,
             app_id=app_id,
-            recover_from=recover_from,
         )
         self._declare_and_bind = True
 
-    def on_message(
-        self,
-        _: Channel,
-        basic_deliver: Basic.Deliver,
-        properties: BasicProperties,
-        body: bytes,
-    ):
-        # pylint: disable=arguments-renamed
-        super().on_message(_, basic_deliver, properties, body)
-        self.consumed += 1
+    @property
+    def can_publish(self) -> bool:
+        if self._connection_ is None or self._connection.is_closed:
+            return False
+        if self._channel_ is None or self._channel.is_closed:
+            return False
+        return True
 
-
-def consumer_factory(consumer_cls: Type[TestConsumer__], n_failures: int) -> Type:
-    consumer_cls.n_failures = n_failures
-
-    class TestConsumer(AMQPMessageConsumer):
-        def n_consumed(self) -> int:
-            return self._consumer.consumed
-
-        @property
-        def consumer(self) -> TestConsumer__:
-            return self._consumer
-
-        def _create_consumer(self, logger: logging.Logger) -> TestConsumer__:
-            return consumer_cls(
-                logger=logger,
-                on_message=self._on_message,
-                broker_url=self._broker_url,
-                routing=self._routing,
-                app_id=self._app_id,
-                recover_from=self._recover_from,
-            )
-
-    return TestConsumer
+    @property
+    def event_queue(self) -> str:
+        return self.evt_routing.default_queue

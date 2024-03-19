@@ -18,6 +18,11 @@ target-version = ["py39"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+log_cli = true
+log_cli_level = "DEBUG"
+log_cli_format = "[%(levelname)s][%(asctime)s.%(msecs)03d][%(name)s]: %(message)s"
+log_cli_date_format = "%H:%M:%S"
+
 
 [tool.poetry.scripts]
 icij-worker = "icij_worker.__main__:cli_app"
@@ -26,6 +31,7 @@ icij-worker = "icij_worker.__main__:cli_app"
 python = "^3.9"
 icij_common = "^0.1.1"
 typer = { extras = ["all"], version = "^0.9.0" }
+aio-pika = "^9.4.0"
 
 [tool.poetry.group.dev.dependencies]
 neo4j = "^5.0.0"
@@ -42,7 +48,6 @@ neo4j = "^5.0.0"
 
 [tool.poetry.group.amqp.dependencies]
 pika = "^1.3"
-tenacity = "^8.2"
 
 [build-system]
 requires = ["poetry-core"]

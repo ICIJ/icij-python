@@ -6,6 +6,6 @@ except ImportError:
     pass
 
 try:
-    from .amqp import AMQPEventPublisher
+    from .amqp import AMQPPublisher
 except ImportError:
     pass

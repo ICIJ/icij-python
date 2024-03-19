@@ -483,3 +483,11 @@ async def test_worker_acknowledgment_cm_should_not_raise_for_fatal_error(
                 raise ValueError("i am fatal")
             assert mocked_exit.assert_not_called()
             assert mocked_shutdown.assert_not_called()
+
+
+async def test_worker_work_forever():
+    assert False
+
+
+async def test_worker_self_managed_loop_worker_work_forever():
+    assert False
