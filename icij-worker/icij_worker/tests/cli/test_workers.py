@@ -11,7 +11,7 @@ from icij_worker.cli import cli_app
 def test_workers_help(cli_runner: CliRunner, help_command: str):
     # When
     result = cli_runner.invoke(
-        cli_app, ["workers", help_command], catch_exceptions=False, color=False
+        cli_app, ["workers", help_command], catch_exceptions=False
     )
     # Then
     assert result.exit_code == 0
@@ -30,23 +30,26 @@ def mock_worker_in_env(tmp_path):  # pylint: disable=unused-argument
 def test_workers_start(
     mock_worker_in_env,  # pylint: disable=unused-argument
     cli_runner: CliRunner,
+    capsys,
 ):
-    # Given
-    test_app = "icij_worker.tests.conftest.APP"
-    # When
-    result = cli_runner.invoke(cli_app, ["workers", "start", test_app], color=False)
-    # Then
-    # Here the program will fail because the DB for the worker is not initialized,
-    # since the CLI is running forever, launching a failing worker enables returning
-    # and not hanging forever. Another option would have been to use different threads
-    # here
-    assert "starting worker" in result.stderr
+    # Working around Pytest log capture and cli runner log capture
+    with capsys.disabled():
+        # Given
+        test_app = "icij_worker.utils.tests.APP"
+        # When
+        result = cli_runner.invoke(cli_app, ["workers", "start", test_app])
+        # Then
+        # Here the program will fail because the DB for the worker is not initialized,
+        # since the CLI is running forever, launching a failing worker enables returning
+        # and not hanging forever. Another option would have been to use different
+        # threads here
+        assert "starting worker" in result.stderr
 
 
 @pytest.mark.parametrize("help_command", ["-h", "--help"])
 def test_workers_start_help(cli_runner: CliRunner, help_command: str):
     # When
-    result = cli_runner.invoke(cli_app, ["workers", "start", help_command], color=False)
+    result = cli_runner.invoke(cli_app, ["workers", "start", help_command])
     # Then
     assert result.exit_code == 0
     output = result.stdout

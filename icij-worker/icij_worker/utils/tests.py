@@ -300,6 +300,10 @@ if _has_pytest:
             self._worker_id = worker_id
             self._logger_ = logging.getLogger(__name__)
 
+        async def _aenter__(self):
+            if not self._db_path.exists():
+                raise OSError(f"worker DB was not initialized ({self._db_path})")
+
         @classmethod
         def _from_config(cls, config: MockWorkerConfig, **extras) -> MockWorker:
             worker = cls(db_path=config.db_path, **extras)

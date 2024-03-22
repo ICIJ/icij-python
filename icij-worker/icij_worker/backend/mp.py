@@ -163,6 +163,5 @@ def run_workers_with_multiprocessing(
     for w_id, process_runner in worker_runners:
         logger.info("starting worker %s", w_id)
         tasks.append(process_runner())
-    first = tasks[0]
     with _handle_pool_termination(pool, True):
-        first.get()
+        pass

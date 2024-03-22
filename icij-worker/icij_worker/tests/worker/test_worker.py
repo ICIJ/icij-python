@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 from unittest.mock import patch
 
 import pytest
-from icij_common.test_utils import async_true_after, fail_if_exception
 
+from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import AsyncApp, Task, TaskError, TaskEvent, TaskResult, TaskStatus
 from icij_worker.exceptions import TaskCancelled, UnregisteredTask
 from icij_worker.tests.conftest import TEST_PROJECT

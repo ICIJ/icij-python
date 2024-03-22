@@ -64,6 +64,7 @@ class Worker(
         worker_id: str,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
+        cancelled_tasks_refresh_interval_s: float = 2.0,
     ):
         # If worker are run using a thread backend then signal handling might not be
         # required, in this case the signal handling mixing will just do nothing
@@ -78,6 +79,7 @@ class Worker(
         self._current = None
         self._cancelled_ = defaultdict(set)
         self._config: Optional[C] = None
+        self._cancelled_tasks_refresh_interval_s = cancelled_tasks_refresh_interval_s
 
     def set_config(self, config: C):
         self._config = config
@@ -104,7 +106,7 @@ class Worker(
 
     @final
     def work_forever(self):
-        with self:  # The graceful shutdown happens here
+        with self:
             self.info("started working...")
             self._work_forever_task = self._loop.create_task(self._work_forever())
             try:
@@ -284,11 +286,6 @@ class Worker(
         return task_fn, recoverable
 
     @final
-    @functools.cached_property
-    def _cancelled_task_refresh_interval_s(self) -> int:
-        return self.config.cancelled_tasks_refresh_interval_s
-
-    @final
     async def check_cancelled(
         self, *, task_id: str, project: str, refresh: bool = False
     ):
@@ -320,7 +317,7 @@ class Worker(
             progress=progress,
             check_cancelled=check,
             refresh_cancelled=refresh,
-            refresh_interval_s=self._cancelled_task_refresh_interval_s,
+            refresh_interval_s=self._cancelled_tasks_refresh_interval_s,
         )
         return progress
 
@@ -424,7 +421,7 @@ async def _retry_task(
     task_fn: Callable,
     task_inputs: Dict,
     project: str,
-    recoverable_errors: Tuple[Type[Exception]],
+    recoverable_errors: Tuple[Type[Exception], ...],
 ):
     retries = task.retries or 0
     if retries:
