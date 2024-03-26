@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: psf/black@stable
+        with:
+          options: "--check --verbose"
+          jupyter: true
+          src: "icij-worker"
+          version: "~= 24.2.0"
       - name: Install poetry
         run: pipx install poetry
       - name: Setup Python project
