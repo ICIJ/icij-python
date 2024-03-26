@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
 from distutils.version import StrictVersion
@@ -10,12 +11,10 @@ from icij_common.neo4j.constants import (
     MIGRATION_NODE,
     MIGRATION_PROJECT,
     MIGRATION_VERSION,
+    PROJECT_NAME,
     PROJECT_NODE,
     PROJECT_REGISTRY_DB,
 )
-
-from icij_common.neo4j.constants import PROJECT_NAME
-
 from icij_common.pydantic_utils import ICIJModel
 
 logger = logging.getLogger(__name__)

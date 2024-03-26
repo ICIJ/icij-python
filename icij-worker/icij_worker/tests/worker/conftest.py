@@ -29,6 +29,10 @@ def test_app() -> AsyncApp:
 @pytest.fixture(scope="function")
 def mock_worker(test_async_app: AsyncApp, mock_db: Path) -> MockWorker:
     worker = MockWorker(
-        test_async_app, "test-worker", mock_db, teardown_dependencies=False
+        test_async_app,
+        "test-worker",
+        mock_db,
+        task_queue_poll_interval_s=0.1,
+        teardown_dependencies=False,
     )
     return worker

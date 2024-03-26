@@ -28,7 +28,7 @@ class TaskQueueIsFull(ICIJWorkerError, RuntimeError):
         super().__init__(f"task queue is full ({max_queue_size}/{max_queue_size})")
 
 
-class TaskCancelled(ICIJWorkerError, RuntimeError):
+class TaskAlreadyCancelled(ICIJWorkerError, RuntimeError):
     def __init__(self, task_id: str):
         super().__init__(f'Task(id="{task_id}") has been cancelled')
 

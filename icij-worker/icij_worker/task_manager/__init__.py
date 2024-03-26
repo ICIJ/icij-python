@@ -17,19 +17,15 @@ class TaskManager(ABC):
         return task
 
     @final
-    async def cancel(self, *, task_id: str, project: str) -> Task:
-        task_id = await self._cancel(task_id=task_id, project=project)
-        if task_id.status is not TaskStatus.CANCELLED:
-            msg = f"invalid status {task_id.status}, expected {TaskStatus.CANCELLED}"
-            raise ValueError(msg)
-        return task_id
+    async def cancel(self, *, task_id: str, project: str, requeue: bool):
+        await self._cancel(task_id=task_id, project=project, requeue=requeue)
 
     @abstractmethod
     async def _enqueue(self, task: Task, project: str) -> Task:
         pass
 
     @abstractmethod
-    async def _cancel(self, *, task_id: str, project: str) -> Task:
+    async def _cancel(self, *, task_id: str, project: str, requeue: bool) -> Task:
         pass
 
     @abstractmethod

@@ -1,6 +1,8 @@
 import logging
-import sys
 from typing import List, Optional
+
+import sys
+from pydantic.fields import FieldInfo
 
 from icij_common.logging_utils import (
     DATE_FMT,
@@ -9,7 +11,6 @@ from icij_common.logging_utils import (
     WorkerIdFilter,
 )
 from icij_common.pydantic_utils import get_field_default_value
-from pydantic.fields import FieldInfo
 
 
 class LogWithWorkerIDMixin:

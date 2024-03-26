@@ -27,21 +27,25 @@ _SCHEMAS = dict()
 
 
 # TODO: remove this one when migrating to pydantic 2.0
-def safe_copy(model: BaseModel, **kwargs):
-    if model.__class__ not in _SCHEMAS:
-        _SCHEMAS[model.__class__] = dict()
+def safe_copy(obj: BaseModel, **kwargs):
+    if obj.__class__ not in _SCHEMAS:
+        _SCHEMAS[obj.__class__] = dict()
         # Model.copy is always without alias
-        _SCHEMAS[model.__class__] = model.__class__.schema(by_alias=False)
-    schema = _SCHEMAS[model.__class__]
+        _SCHEMAS[obj.__class__] = obj.__class__.schema(by_alias=False)
+    schema = _SCHEMAS[obj.__class__]
     for k in _FIELD_ARGS:
         if k not in kwargs:
             continue
         for field in kwargs[k]:
-            if field not in schema["properties"]:
-                msg = f'Unknown attribute "{field}" for {model.__class__}'
+            props = schema.get("properties")
+            if props is None:
+                prop_key = schema["$ref"].replace("#/definitions/", "")
+                props = schema["definitions"][prop_key]["properties"]
+            if field not in props:
+                msg = f'Unknown attribute "{field}" for {obj.__class__}'
                 raise AttributeError(msg)
 
-    return cast(model.__class__, model.copy(**kwargs))
+    return cast(obj.__class__, obj.copy(**kwargs))
 
 
 class ICIJModel(BaseModel):
