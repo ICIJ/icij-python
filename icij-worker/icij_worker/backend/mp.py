@@ -8,6 +8,7 @@ import sys
 from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Tuple
 
+
 from icij_worker import AsyncApp, Worker, WorkerConfig
 
 logger = logging.getLogger(__name__)

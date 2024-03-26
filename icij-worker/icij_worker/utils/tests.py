@@ -51,6 +51,7 @@ from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
 from icij_worker.utils.logging_ import LogWithWorkerIDMixin
 
+
 logger = logging.getLogger(__name__)
 
 _has_pytest = False  # necessary because of the pytest decorators which requires pytest

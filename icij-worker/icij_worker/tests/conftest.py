@@ -26,7 +26,6 @@ from icij_common.neo4j.migrate import (
     init_project,
 )
 from icij_common.neo4j.projects import add_project_support_migration_tx
-
 # noinspection PyUnresolvedReferences
 from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
@@ -37,7 +36,6 @@ from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.task import CancelledTaskEvent
 from icij_worker.task_manager.neo4j import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
-
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
     DBMixin,
