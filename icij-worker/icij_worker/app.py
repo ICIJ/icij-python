@@ -1,13 +1,14 @@
 from __future__ import annotations
+
 import functools
 import importlib
 from contextlib import asynccontextmanager
 from functools import cached_property
 from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
-from icij_common.pydantic_utils import ICIJModel
 from pydantic import Field
 
+from icij_common.pydantic_utils import ICIJModel
 from icij_worker.exceptions import UnknownApp
 from icij_worker.typing_ import Dependency
 from icij_worker.utils import run_deps

@@ -1,8 +1,9 @@
 import inspect
 import logging
-import sys
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, List
+
+import sys
 
 from icij_worker.typing_ import Dependency
 

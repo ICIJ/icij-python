@@ -1,9 +1,9 @@
 from distutils.version import StrictVersion
 
 import pytest
-from icij_common.test_utils import fail_if_exception
 from typer.testing import CliRunner
 
+from icij_common.test_utils import fail_if_exception
 from icij_worker.cli import cli_app
 
 
@@ -20,5 +20,5 @@ def test_version(cli_runner: CliRunner):
     result = cli_runner.invoke(cli_app, ["--version"])
     assert result.exit_code == 0
     version = result.stdout
-    with fail_if_exception(f"CLI app returned an invalid version: {version }"):
+    with fail_if_exception(f"CLI app returned an invalid version: {version}"):
         StrictVersion(version)

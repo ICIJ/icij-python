@@ -1,11 +1,18 @@
-import itertools
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator, List, Optional, Union
 
+import itertools
 import neo4j
+from neo4j.exceptions import ConstraintError
+
 from icij_common.neo4j.constants import (
+    TASK_CANCELLED_BY_EVENT_REL,
+    TASK_CANCEL_EVENT_CREATED_AT,
+    TASK_CANCEL_EVENT_EFFECTIVE,
+    TASK_CANCEL_EVENT_NODE,
+    TASK_CANCEL_EVENT_REQUEUE,
     TASK_CREATED_AT,
     TASK_ERROR_ID,
     TASK_ERROR_NODE,
@@ -22,8 +29,6 @@ from icij_common.neo4j.constants import (
     TASK_TYPE,
 )
 from icij_common.neo4j.projects import project_db_session
-from neo4j.exceptions import ConstraintError
-
 from icij_worker import Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import (
     MissingTaskResult,
@@ -109,9 +114,9 @@ class Neo4JTaskManager(TaskManager):
                 inputs=inputs,
             )
 
-    async def _cancel(self, *, task_id: str, project: str) -> Task:
+    async def _cancel(self, *, task_id: str, project: str, requeue: bool):
         async with project_db_session(self._driver, project) as sess:
-            return await sess.execute_write(_cancel_task_tx, task_id=task_id)
+            await sess.execute_write(_cancel_task_tx, task_id=task_id, requeue=requeue)
 
     @asynccontextmanager
     async def _project_session(
@@ -234,12 +239,14 @@ RETURN task
     return Task.from_neo4j(task)
 
 
-async def _cancel_task_tx(tx: neo4j.AsyncTransaction, task_id: str):
-    query = f"""MATCH (t:{TASK_NODE} {{ {TASK_ID}: $taskId }})
-CALL apoc.create.setLabels(t, $labels) YIELD node as task
-RETURN task
+async def _cancel_task_tx(tx: neo4j.AsyncTransaction, task_id: str, requeue: bool):
+    query = f"""MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
+CREATE (task)-[
+    :{TASK_CANCELLED_BY_EVENT_REL}
+]->(:{TASK_CANCEL_EVENT_NODE} {{ 
+        {TASK_CANCEL_EVENT_CREATED_AT}: $createdAt, 
+        {TASK_CANCEL_EVENT_EFFECTIVE}: false,
+        {TASK_CANCEL_EVENT_REQUEUE}: $requeue
+    }})
 """
-    labels = [TASK_NODE, TaskStatus.CANCELLED.value]
-    res = await tx.run(query, taskId=task_id, labels=labels)
-    task = await res.single(strict=True)
-    return Task.from_neo4j(task)
+    await tx.run(query, taskId=task_id, requeue=requeue, createdAt=datetime.now())
