@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from contextlib import AsyncExitStack
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from datetime import datetime
 from functools import lru_cache
-from typing import ClassVar, Dict, Optional, Tuple, Type
+from typing import ClassVar, Dict, Optional, Type, cast
 
 from aio_pika import RobustQueue, connect_robust
 from aio_pika.abc import (
@@ -27,8 +27,12 @@ from icij_worker import (
     WorkerConfig,
     WorkerType,
 )
-from icij_worker.event_publisher import AMQPPublisher
-from icij_worker.event_publisher.amqp import Exchange, RobustConnection, Routing
+from icij_worker.event_publisher.amqp import (
+    AMQPPublisher,
+    Exchange,
+    RobustConnection,
+    Routing,
+)
 from icij_worker.task import CancelledTaskEvent
 from icij_worker.utils.from_config import T
 
@@ -81,14 +85,12 @@ class AMQPWorker(Worker):
         inactive_after_s: Optional[float] = None,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
-        **kwargs,
     ):
         super().__init__(
             app,
             worker_id,
             handle_signals=handle_signals,
             teardown_dependencies=teardown_dependencies,
-            **kwargs,
         )
         self._cancel_event_queue_name = (
             f"{self._cancel_event_routing().default_queue}" f"-{self._id}"
@@ -121,6 +123,9 @@ class AMQPWorker(Worker):
             create_queue=self._declare_exchanges,
             exchange_type=ExchangeType.DIRECT,
         )
+        self._task_queue_iterator = cast(
+            AbstractAsyncContextManager, self._task_queue_iterator
+        )
         await self._exit_stack.enter_async_context(self._task_queue_iterator)
         self._cancel_evt_connection = await self._make_connection()
         await self._exit_stack.enter_async_context(self._cancel_evt_connection)
@@ -131,6 +136,9 @@ class AMQPWorker(Worker):
             durable_queue=False,
             created_queue_name=self._cancel_event_queue_name,
             exchange_type=ExchangeType.FANOUT,
+        )
+        self._cancel_evt_queue_iterator = cast(
+            AbstractAsyncContextManager, self._cancel_evt_queue_iterator
         )
         await self._exit_stack.enter_async_context(self._cancel_evt_queue_iterator)
 
@@ -156,7 +164,9 @@ class AMQPWorker(Worker):
         durable_queue: bool = True,
     ) -> AbstractQueueIterator:
         channel: AbstractRobustChannel = await connection.channel()
-        await self._exit_stack.enter_async_context(channel)
+        await self._exit_stack.enter_async_context(
+            cast(AbstractAsyncContextManager, channel)
+        )
         arguments = None
         if self._declare_exchanges:
             if routing.dead_letter_routing is not None:
@@ -188,18 +198,17 @@ class AMQPWorker(Worker):
             kwargs["timeout"] = self._inactive_after_s
         return queue.iterator(**kwargs)
 
-    async def _consume(self) -> Tuple[Task, str]:
+    async def _consume(self) -> Task:
         message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
-        # TODO: handle project deserialization here
         task = Task.parse_raw(message.body)
         self._delivered[task.id] = message
-        return task, _PROJECT_PLACEHOLDER
+        return task
 
-    async def _consume_cancelled(self) -> Tuple[CancelledTaskEvent, str]:
+    async def _consume_cancelled(self) -> CancelledTaskEvent:
         message: AbstractIncomingMessage = await self._cancel_events_it.__anext__()
         # TODO: handle project deserialization here
         event = CancelledTaskEvent.parse_raw(message.body)
-        return event, _PROJECT_PLACEHOLDER
+        return event
 
     @property
     def _task_messages_it(self) -> AbstractQueueIterator:
@@ -221,9 +230,7 @@ class AMQPWorker(Worker):
             raise ValueError(msg)
         return self._cancel_evt_queue_iterator
 
-    async def _acknowledge(
-        self, task: Task, project: str, completed_at: datetime
-    ) -> Task:
+    async def _acknowledge(self, task: Task, completed_at: datetime) -> Task:
         message = self._delivered[task.id]
         await message.ack()
         acked = safe_copy(
@@ -236,21 +243,20 @@ class AMQPWorker(Worker):
         )
         return acked
 
-    async def _negatively_acknowledge(
-        self, nacked: Task, project: str, *, cancelled: bool
-    ):
+    async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
+        # pylint: disable=unused-argument
         message = self._delivered[nacked.id]
         requeue = nacked.status is TaskStatus.QUEUED
         await message.nack(requeue=requeue)
 
-    async def publish_event(self, event: TaskEvent, project: str):
-        await self._publisher.publish_event(event, project)
+    async def _publish_event(self, event: TaskEvent):
+        await self._publisher.publish_event_(event)
 
-    async def _save_result(self, result: TaskResult, project: str):
-        await self._publisher.publish_result(result, project)
+    async def _save_result(self, result: TaskResult):
+        await self._publisher.publish_result(result)
 
-    async def _save_error(self, error: TaskError, task: Task, project: str):
-        await self._publisher.publish_error(error, project, project)
+    async def _save_error(self, error: TaskError):
+        await self._publisher.publish_error(error)
 
     @classmethod
     @lru_cache(maxsize=1)

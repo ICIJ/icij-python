@@ -17,7 +17,6 @@ from typing import (
     Dict,
     List,
     Optional,
-    Tuple,
     Type,
     TypeVar,
     Union,
@@ -72,6 +71,7 @@ if _has_pytest:
 
         def __init__(self, db_path: Path):
             self._db_path = db_path
+            self._task_projects: Dict[str, str] = dict()
 
         @property
         def db_path(self) -> Path:
@@ -84,8 +84,20 @@ if _has_pytest:
             return json.loads(self._db_path.read_text())
 
         @staticmethod
-        def _task_key(task_id: str, project: str) -> str:
+        def _task_key(task_id: str, project: Optional[str]) -> str:
             return str((task_id, project))
+
+        def _get_task_project(self, task_id) -> str:
+            if task_id not in self._task_projects:
+                db = self._read()
+                self._task_projects = dict(
+                    eval(k)  # pylint: disable=eval-used
+                    for k in db[self._task_collection].keys()
+                )
+            try:
+                return self._task_projects[task_id]
+            except KeyError as e:
+                raise UnknownTask(task_id) from e
 
         @classmethod
         def fresh_db(cls, db_path: Path):
@@ -176,8 +188,8 @@ if _has_pytest:
             super().__init__(db_path)
             self._max_queue_size = max_queue_size
 
-        async def _enqueue(self, task: Task, project: str) -> Task:
-            key = self._task_key(task_id=task.id, project=project)
+        async def _enqueue(self, task: Task) -> Task:
+            key = self._task_key(task_id=task.id, project=task.project_id)
             db = self._read()
             tasks = db[self._task_collection]
             n_queued = sum(
@@ -193,7 +205,8 @@ if _has_pytest:
             self._write(db)
             return task
 
-        async def _cancel(self, *, task_id: str, project: str, requeue: bool):
+        async def _cancel(self, *, task_id: str, requeue: bool):
+            project = self._get_task_project(task_id)
             key = self._task_key(task_id=task_id, project=project)
             event = CancelledTaskEvent(
                 task_id=task_id, requeue=requeue, created_at=datetime.now()
@@ -202,7 +215,8 @@ if _has_pytest:
             db[self._cancel_event_collection][key] = event.dict()
             self._write(db)
 
-        async def get_task(self, *, task_id: str, project: str) -> Task:
+        async def get_task(self, *, task_id: str) -> Task:
+            project = self._get_task_project(task_id)
             key = self._task_key(task_id=task_id, project=project)
             db = self._read()
             try:
@@ -211,7 +225,8 @@ if _has_pytest:
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
-        async def get_task_errors(self, task_id: str, project: str) -> List[TaskError]:
+        async def get_task_errors(self, task_id: str) -> List[TaskError]:
+            project = self._get_task_project(task_id)
             key = self._task_key(task_id=task_id, project=project)
             db = self._read()
             errors = db[self._error_collection]
@@ -219,7 +234,8 @@ if _has_pytest:
             errors = [TaskError(**err) for err in errors]
             return errors
 
-        async def get_task_result(self, task_id: str, project: str) -> TaskResult:
+        async def get_task_result(self, task_id: str) -> TaskResult:
+            project = self._get_task_project(task_id)
             key = self._task_key(task_id=task_id, project=project)
             db = self._read()
             results = db[self._result_collection]
@@ -230,7 +246,7 @@ if _has_pytest:
 
         async def get_tasks(
             self,
-            project: str,
+            project_id: Optional[str] = None,
             task_type: Optional[str] = None,
             status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
         ) -> List[Task]:
@@ -252,7 +268,7 @@ if _has_pytest:
             super().__init__(db_path)
             self.published_events = []
 
-        async def publish_event(self, event: TaskEvent, project: str):
+        async def _publish_event(self, event: TaskEvent):
             self.published_events.append(event)
             # Let's simulate that we have an event handler which will reflect some event
             # into the DB, we could not do it. In this case tests should not expect that
@@ -260,6 +276,7 @@ if _has_pytest:
             # published_events (which could be enough).
             # Here we choose to reflect the change in the DB since its closer to what
             # will happen IRL and test integration further
+            project = self._get_task_project(event.task_id)
             key = self._task_key(task_id=event.task_id, project=project)
             db = self._read()
             try:
@@ -359,14 +376,16 @@ if _has_pytest:
         def _to_config(self) -> MockWorkerConfig:
             return MockWorkerConfig(db_path=self._db_path)
 
-        async def _save_result(self, result: TaskResult, project: str):
+        async def _save_result(self, result: TaskResult):
+            project = self._get_task_project(result.task_id)
             task_key = self._task_key(task_id=result.task_id, project=project)
             db = self._read()
             db[self._result_collection][task_key] = result
             self._write(db)
 
-        async def _save_error(self, error: TaskError, task: Task, project: str):
-            task_key = self._task_key(task_id=task.id, project=project)
+        async def _save_error(self, error: TaskError):
+            project = self._get_task_project(task_id=error.task_id)
+            task_key = self._task_key(task_id=error.task_id, project=project)
             db = self._read()
             errors = db[self._error_collection].get(task_key)
             if errors is None:
@@ -393,7 +412,8 @@ if _has_pytest:
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
-        async def _acknowledge(self, task: Task, project: str, completed_at: datetime):
+        async def _acknowledge(self, task: Task, completed_at: datetime):
+            project = self._get_task_project(task.id)
             key = self._task_key(task.id, project)
             db = self._read()
             tasks = db[self._task_collection]
@@ -410,9 +430,8 @@ if _has_pytest:
             tasks[key] = safe_copy(saved_task, update=update)
             self._write(db)
 
-        async def _negatively_acknowledge(
-            self, nacked: Task, project: str, *, cancelled: bool
-        ):
+        async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
+            project = self._get_task_project(nacked.id)
             key = self._task_key(nacked.id, project)
             db = self._read()
             tasks = db[self._task_collection]
@@ -431,7 +450,7 @@ if _has_pytest:
             tasks[key].update(update)
             self._write(db)
 
-        async def _consume(self) -> Tuple[Task, str]:
+        async def _consume(self) -> Task:
             return await self._consume_(
                 self._task_collection,
                 Task,
@@ -439,7 +458,7 @@ if _has_pytest:
                 order=lambda t: t.created_at,
             )
 
-        async def _consume_cancelled(self) -> Tuple[CancelledTaskEvent, str]:
+        async def _consume_cancelled(self) -> CancelledTaskEvent:
             return await self._consume_(
                 self._cancel_event_collection,
                 CancelledTaskEvent,
@@ -452,7 +471,7 @@ if _has_pytest:
             consumed_cls: Type[R],
             select: Optional[Callable[[R], bool]] = None,
             order: Optional[Callable[[R], Any]] = None,
-        ) -> Tuple[R, str]:
+        ) -> R:
             while "i'm waiting until I find something interesting":
                 db = self._read()
                 selected = db[collection]
@@ -464,8 +483,7 @@ if _has_pytest:
                         k, t = min(selected, key=lambda x: order(x[1]))
                     else:
                         k, t = selected[0]
-                    project = eval(k)[1]  # pylint: disable=eval-used
-                    return t, project
+                    return t
                 await asyncio.sleep(self._task_queue_poll_interval_s)
 
         async def work_once(self):
