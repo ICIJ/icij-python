@@ -34,8 +34,8 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 from icij_common.test_utils import TEST_PROJECT
 from icij_worker import AsyncApp, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.task import CancelledTaskEvent
-from icij_worker.task_manager.neo4j import add_support_for_async_task_tx
+from icij_worker.task import CancelledTaskEvent, TaskStatus
+from icij_worker.task_manager.neo4j_ import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
 
 # noinspection PyUnresolvedReferences
@@ -106,7 +106,7 @@ RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now()
     )
-    t_0 = Task.from_neo4j(recs_0[0])
+    t_0 = Task.from_neo4j(recs_0[0], project_id=TEST_PROJECT)
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
     type: 'hello_world',
@@ -119,7 +119,7 @@ RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
         query_1, now=datetime.now()
     )
-    t_1 = Task.from_neo4j(recs_1[0])
+    t_1 = Task.from_neo4j(recs_1[0], project_id=TEST_PROJECT)
     return [t_0, t_1]
 
 
@@ -133,7 +133,7 @@ RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now(), taskId=populate_tasks[0].id
     )
-    return [CancelledTaskEvent.from_neo4j(recs_0[0])]
+    return [CancelledTaskEvent.from_neo4j(recs_0[0], project_id=TEST_PROJECT)]
 
 
 class Recoverable(ValueError):
@@ -317,3 +317,16 @@ class TestableAMQPPublisher(AMQPPublisher):
     @property
     def event_queue(self) -> str:
         return self.__class__.evt_routing().default_queue
+
+
+@pytest.fixture(scope="session")
+def hello_world_task() -> Task:
+    task = Task(
+        id="some-id",
+        project_id=TEST_PROJECT,
+        type="hello_world",
+        inputs={"greeted": "world"},
+        status=TaskStatus.CREATED,
+        created_at=datetime.now(),
+    )
+    return task

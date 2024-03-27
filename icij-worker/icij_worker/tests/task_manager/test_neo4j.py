@@ -7,10 +7,9 @@ import pytest_asyncio
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT
-from icij_worker import Task, TaskError, TaskResult, TaskStatus
+from icij_worker import Neo4JTaskManager, Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
 from icij_worker.task import CancelledTaskEvent
-from icij_worker.task_manager.neo4j import Neo4JTaskManager
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -29,7 +28,9 @@ RETURN error"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, taskId=task_with_error.id, now=datetime.now()
     )
-    e_0 = TaskError.from_neo4j(recs_0[0])
+    e_0 = TaskError.from_neo4j(
+        recs_0[0], task_id=task_with_error.id, project_id=TEST_PROJECT
+    )
     query_1 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
     id: 'error-1',
@@ -43,7 +44,9 @@ RETURN error"""
         taskId=task_with_error.id,
         now=datetime.now(),
     )
-    e_1 = TaskError.from_neo4j(recs_1[0])
+    e_1 = TaskError.from_neo4j(
+        recs_1[0], task_id=task_with_error.id, project_id=TEST_PROJECT
+    )
     return list(zip(populate_tasks, [[], [e_0, e_1]]))
 
 
@@ -66,8 +69,8 @@ RETURN task, result"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_1, now=now, after=after
     )
-    t_2 = Task.from_neo4j(recs_0[0])
-    r_2 = TaskResult.from_neo4j(recs_0[0])
+    t_2 = Task.from_neo4j(recs_0[0], project_id=TEST_PROJECT)
+    r_2 = TaskResult.from_neo4j(recs_0[0], project_id=t_2.project_id)
     tasks = populate_tasks + [t_2]
     return list(zip(tasks, [None, None, r_2]))
 
@@ -77,17 +80,17 @@ async def test_task_manager_get_task(
 ):
     # Given
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    project = TEST_PROJECT
     second_task = populate_tasks[1]
 
     # When
-    task = await task_manager.get_task(task_id=second_task.id, project=project)
+    task = await task_manager.get_task(task_id=second_task.id)
     task = task.dict(by_alias=True)
 
     # Then
     expected_task = Task(
         id="task-1",
         type="hello_world",
+        project_id=TEST_PROJECT,
         inputs={"greeted": "1"},
         status=TaskStatus.RUNNING,
         progress=66.6,
@@ -108,11 +111,10 @@ async def test_task_manager_get_completed_task(
     # pylint: disable=invalid-name
     # Given
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    project = TEST_PROJECT
     last_task = _populate_results[-1][0]
 
     # When
-    task = await task_manager.get_task(task_id=last_task.id, project=project)
+    task = await task_manager.get_task(task_id=last_task.id)
 
     # Then
     assert isinstance(task.completed_at, datetime)
@@ -144,7 +146,7 @@ async def test_task_manager_get_tasks(
 
     # When
     tasks = await task_manager.get_tasks(
-        project=project, status=statuses, task_type=task_type
+        project_id=project, status=statuses, task_type=task_type
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 
@@ -162,12 +164,16 @@ async def test_task_manager_get_tasks(
             [
                 TaskError(
                     id="error-0",
+                    task_id="task-1",
+                    project_id=TEST_PROJECT,
                     title="error",
                     detail="with details",
                     occurred_at=datetime.now(),
                 ),
                 TaskError(
                     id="error-1",
+                    task_id="task-1",
+                    project_id=TEST_PROJECT,
                     title="error",
                     detail="same error again",
                     occurred_at=datetime.now(),
@@ -184,13 +190,10 @@ async def test_get_task_errors(
 ):
     # pylint: disable=invalid-name
     # Given
-    project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
 
     # When
-    retrieved_errors = await task_manager.get_task_errors(
-        task_id=task_id, project=project
-    )
+    retrieved_errors = await task_manager.get_task_errors(task_id=task_id)
 
     # Then
     retrieved_errors = [e.dict(by_alias=True) for e in retrieved_errors]
@@ -208,7 +211,10 @@ async def test_get_task_errors(
     [
         ("task-0", None),
         ("task-1", None),
-        ("task-2", TaskResult(task_id="task-2", result="Hello 2")),
+        (
+            "task-2",
+            TaskResult(task_id="task-2", project_id=TEST_PROJECT, result="Hello 2"),
+        ),
     ],
 )
 async def test_task_manager_get_task_result(
@@ -219,7 +225,6 @@ async def test_task_manager_get_task_result(
 ):
     # pylint: disable=invalid-name
     # Given
-    project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
 
     # When/ Then
@@ -228,26 +233,21 @@ async def test_task_manager_get_task_result(
             f'Result of task "{task_id}" couldn\'t be found, did it complete ?'
         )
         with pytest.raises(MissingTaskResult, match=expected_msg):
-            await task_manager.get_task_result(task_id=task_id, project=project)
+            await task_manager.get_task_result(task_id=task_id)
     else:
-        result = await task_manager.get_task_result(task_id=task_id, project=project)
+        result = await task_manager.get_task_result(task_id=task_id)
         assert result == expected_result
 
 
-async def test_task_manager_enqueue(neo4j_async_app_driver: neo4j.AsyncDriver):
+async def test_task_manager_enqueue(
+    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+):
     # Given
-    project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    task = Task(
-        id="some-id",
-        type="hello_world",
-        status=TaskStatus.CREATED,
-        created_at=datetime.now(),
-        inputs={"greeted": "world"},
-    )
+    task = hello_world_task
 
     # When
-    queued = await task_manager.enqueue(task, project)
+    queued = await task_manager.enqueue(task)
 
     # Then
     update = {"status": TaskStatus.QUEUED}
@@ -255,11 +255,10 @@ async def test_task_manager_enqueue(neo4j_async_app_driver: neo4j.AsyncDriver):
     assert queued == expected
 
 
-async def test_task_manager_enqueue_should_raise_for_existing_task(
+async def test_task_manager_enqueue_should_raise_for_missing_project(
     neo4j_async_app_driver: neo4j.AsyncDriver,
 ):
     # Given
-    project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
     task = Task(
         id="some-id",
@@ -268,34 +267,47 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
         created_at=datetime.now(),
         inputs={"greeted": "world"},
     )
-    await task_manager.enqueue(task, project)
+
+    # When/Then
+    expected = (
+        "neo4j expects project to be provided in order to fetch tasks from"
+        " the project's DB"
+    )
+    with pytest.raises(ValueError, match=expected):
+        await task_manager.enqueue(task)
+
+
+async def test_task_manager_enqueue_should_raise_for_existing_task(
+    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+):
+    # Given
+    task = hello_world_task
+    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
+    await task_manager.enqueue(task)
 
     # When/Then
     with pytest.raises(TaskAlreadyExists):
-        await task_manager.enqueue(task, project)
+        await task_manager.enqueue(task)
 
 
 @pytest.mark.parametrize("requeue", [True, False])
 async def test_task_manager_cancel(
-    neo4j_async_app_driver: neo4j.AsyncDriver, requeue: bool
+    neo4j_async_app_driver: neo4j.AsyncDriver, requeue: bool, hello_world_task: Task
 ):
     # Given
     driver = neo4j_async_app_driver
-    project = TEST_PROJECT
+    task = hello_world_task
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    task = Task(
-        id="some-id", type="hello", status=TaskStatus.CREATED, created_at=datetime.now()
-    )
 
     # When
-    task = await task_manager.enqueue(task, project)
-    await task_manager.cancel(task_id=task.id, project=project, requeue=requeue)
+    task = await task_manager.enqueue(task)
+    await task_manager.cancel(task_id=task.id, requeue=requeue)
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
 RETURN task, event"""
     recs, _, _ = await driver.execute_query(query, taskId=task.id)
     assert len(recs) == 1
-    event = CancelledTaskEvent.from_neo4j(recs[0])
+    event = CancelledTaskEvent.from_neo4j(recs[0], project_id=task.project_id)
     # Then
     assert event.task_id == task.id
     assert event.created_at is not None
@@ -303,14 +315,11 @@ RETURN task, event"""
 
 
 async def test_task_manager_enqueue_should_raise_when_queue_full(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
+    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
 ):
-    project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=-1)
-    task = Task(
-        id="some-id", type="hello", status=TaskStatus.CREATED, created_at=datetime.now()
-    )
+    task = hello_world_task
 
     # When
     with pytest.raises(TaskQueueIsFull):
-        await task_manager.enqueue(task, project)
+        await task_manager.enqueue(task)

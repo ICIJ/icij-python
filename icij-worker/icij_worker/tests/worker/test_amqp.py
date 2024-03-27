@@ -109,7 +109,7 @@ class TestableAMQPWorker(AMQPWorker):
         return AMQPPublisher.err_routing()
 
     @property
-    def cancelled(self) -> Dict[str, Dict[str, CancelledTaskEvent]]:
+    def cancelled(self) -> Dict[str, CancelledTaskEvent]:
         return self._cancelled
 
     def _create_publisher(self):
@@ -235,7 +235,7 @@ async def test_worker_consume_task(
         ):
             await asyncio.wait([consume_task], timeout=consume_timeout)
         expected_task = safe_copy(populate_tasks[0], update={"progress": 0.0})
-        consumed, _ = consume_task.result()
+        consumed = consume_task.result()
         assert consumed == expected_task
 
 
@@ -258,7 +258,7 @@ async def test_worker_consume_cancel_events(
 
         assert await async_true_after(_received_event, after_s=cancel_timeout), failure
         assert len(amqp_worker.cancelled) == 1
-        received_event = next(iter(amqp_worker.cancelled.values())).pop("some-id")
+        received_event = amqp_worker.cancelled.pop("some-id")
         assert received_event == expected_event
 
 
@@ -266,13 +266,11 @@ async def test_worker_negatively_acknowledge(
     populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
     # pylint: disable=protected-access,unused-argument
-    # Given
-    project = TEST_PROJECT
     # When
     async with amqp_worker:
         # Then
-        task, _ = await amqp_worker.consume()
-        await amqp_worker.negatively_acknowledge(task, project, requeue=False)
+        task = await amqp_worker.consume()
+        await amqp_worker.negatively_acknowledge(task, requeue=False)
 
         dlq_name = amqp_worker.task_routing.dead_letter_routing.default_queue
 
@@ -288,13 +286,12 @@ async def test_worker_negatively_acknowledge_and_requeue(
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
-    project = TEST_PROJECT
     n_tasks = len(populate_tasks)
     # When
     async with amqp_worker:
         # Then
-        task, _ = await amqp_worker.consume()
-        await amqp_worker.negatively_acknowledge(task, project, requeue=True)
+        task = await amqp_worker.consume()
+        await amqp_worker.negatively_acknowledge(task, requeue=True)
         # Check that we can poll the task again
         task_ids = set()
         for _ in range(n_tasks):
@@ -304,7 +301,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
                 f"failed to consume task in less than {consume_timeout}s"
             ):
                 await asyncio.wait([consume_task], timeout=consume_timeout)
-            task_ids.add(consume_task.result()[0].id)
+            task_ids.add(consume_task.result().id)
         assert task.id in task_ids
 
 
@@ -317,14 +314,11 @@ async def test_worker_negatively_acknowledge_and_cancel(
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
-    project = TEST_PROJECT
     # When
     async with amqp_worker:
         # Then
-        task, _ = await amqp_worker.consume()
-        await amqp_worker.negatively_acknowledge(
-            task, project, requeue=requeue, cancel=True
-        )
+        task = await amqp_worker.consume()
+        await amqp_worker.negatively_acknowledge(task, requeue=requeue, cancel=True)
         task_routing = amqp_worker.task_routing
 
         async def _requeued(queue_name: str, n: int) -> bool:
@@ -344,17 +338,19 @@ async def test_worker_negatively_acknowledge_and_cancel(
 
 
 async def test_publish_event(
-    test_async_app: AsyncApp, amqp_worker: TestableAMQPWorker, rabbit_mq: str
+    test_async_app: AsyncApp,
+    amqp_worker: TestableAMQPWorker,
+    rabbit_mq: str,
+    hello_world_task: Task,
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
     broker_url = rabbit_mq
-    project = TEST_PROJECT
-
-    event = TaskEvent(task_id="some_task", progress=50.0)
+    task = hello_world_task
+    event = TaskEvent(task_id=task.id, progress=50.0)
     # When
     async with amqp_worker:
-        await amqp_worker.publish_event(event, project)
+        await amqp_worker.publish_event(event, task)
 
         # Then
         connection = await connect_robust(url=broker_url)
@@ -365,7 +361,8 @@ async def test_publish_event(
             async for message in messages:
                 received_event = TaskEvent.parse_raw(message.body)
                 break
-        assert received_event == event
+        expected = safe_copy(event, update={"project_id": TEST_PROJECT})
+        assert received_event == expected
 
 
 async def test_publish_error(
@@ -374,10 +371,10 @@ async def test_publish_error(
     # pylint: disable=unused-argument
     # Given
     broker_url = rabbit_mq
-    project = TEST_PROJECT
     task = populate_tasks[0]
     error = TaskError(
         id="error-id",
+        task_id=task.id,
         title="someErrorTitle",
         detail="with_details",
         occurred_at=datetime.now(),
@@ -385,7 +382,7 @@ async def test_publish_error(
 
     # When
     async with amqp_worker:
-        await amqp_worker.save_error(error=error, task=task, project=project)
+        await amqp_worker.save_error(error=error)
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
@@ -404,13 +401,12 @@ async def test_publish_result(
     # pylint: disable=unused-argument
     # Given
     broker_url = rabbit_mq
-    project = TEST_PROJECT
     task = populate_tasks[0]
     result = TaskResult(task_id=task.id, result="hello world !")
 
     # When
     async with amqp_worker:
-        await amqp_worker.save_result(result, project=project)
+        await amqp_worker.save_result(result)
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()

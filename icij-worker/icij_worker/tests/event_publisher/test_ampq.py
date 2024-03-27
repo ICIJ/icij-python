@@ -2,8 +2,8 @@ import pytest
 from aio_pika import ExchangeType, connect_robust
 from aiormq import ChannelNotFoundEntity
 
-from icij_common.test_utils import TEST_PROJECT
-from icij_worker import TaskEvent, TaskStatus
+from icij_common.pydantic_utils import safe_copy
+from icij_worker import Task, TaskEvent, TaskStatus
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
     Exchange,
@@ -33,20 +33,20 @@ _RESULT_ROUTING = Routing(
 
 
 @pytest.mark.asyncio
-async def test_publish_event(rabbit_mq: str):
+async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     # Given
+    task = hello_world_task
     broker_url = rabbit_mq
-    project = TEST_PROJECT
     publisher = TestableAMQPPublisher(
         broker_url=broker_url, connection_timeout_s=2, reconnection_wait_s=1
     )
     event = TaskEvent(
-        task_id="task_id", task_type="hello_world", status=TaskStatus.CREATED
+        task_id=task.id, task_type="hello_world", status=TaskStatus.CREATED
     )
 
     # When
     async with publisher:
-        await publisher.publish_event(event, project)
+        await publisher.publish_event(event, task)
 
     # Then
     connection = await connect_robust(url=broker_url)
@@ -56,7 +56,8 @@ async def test_publish_event(rabbit_mq: str):
         async for message in messages:
             received_event = TaskEvent.parse_raw(message.body)
             break
-    assert received_event == event
+    expected = safe_copy(event, update={"project_id": task.project_id})
+    assert received_event == expected
 
 
 async def test_publisher_not_create_and_bind_exchanges_and_queues(rabbit_mq: str):
