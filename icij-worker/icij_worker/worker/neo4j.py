@@ -301,7 +301,7 @@ async def _nack_and_requeue_task_tx(
     retries: int,
     cancelled: bool,
 ):
-    clean_cancelled_query = """
+    clean_cancelled_query = f"""
 WITH task, lock
 OPTIONAL MATCH (task)-[
     :{TASK_CANCELLED_BY_EVENT_REL}
