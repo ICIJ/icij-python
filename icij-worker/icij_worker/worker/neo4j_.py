@@ -162,8 +162,8 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
             )
         else:
             nack_fn = _nack_task_tx
-        project = self._get_task_project_id(nacked.id)
-        async with self._project_session(project) as sess:
+        project_id = self._get_task_project_id(nacked.id)
+        async with self._project_session(project_id) as sess:
             await sess.execute_write(nack_fn, task_id=nacked.id, worker_id=self.id)
 
     async def _save_result(self, result: TaskResult):
@@ -194,8 +194,8 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
             )
 
     async def _acknowledge(self, task: Task, completed_at: datetime):
-        project = self._get_task_project_id(task.id)
-        async with self._project_session(project) as sess:
+        project_id = self._get_task_project_id(task.id)
+        async with self._project_session(project_id) as sess:
             await sess.execute_write(
                 _acknowledge_task_tx,
                 task_id=task.id,

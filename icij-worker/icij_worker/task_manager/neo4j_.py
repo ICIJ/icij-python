@@ -105,8 +105,8 @@ class Neo4JTaskManager(TaskManager, Neo4jTaskProjectMixin):
             )
 
     async def _cancel(self, *, task_id: str, requeue: bool):
-        project = await self._get_task_project_id(task_id)
-        async with self._project_session(project) as sess:
+        project_id = await self._get_task_project_id(task_id)
+        async with self._project_session(project_id) as sess:
             await sess.execute_write(_cancel_task_tx, task_id=task_id, requeue=requeue)
 
 
