@@ -54,14 +54,13 @@ icij-worker workers start -c worker_config.json -n 2 --backend multiprocessing "
 **depending on the worker configuration additional setup might be required**.
 
 
-## Async worker implementations 
-### Implemented
-- [`neo4j`](https://neo4j.com/docs/api/python-driver/current/): task
-- [AMQP](https://www.amqp.org/) `0.9.1` based on [RabbitMQ](https://www.rabbitmq.com/)
+## Async worker implementations
+- [Neo4j](https://neo4j.com/docs/api/python-driver/current/)
+- [AMQP](https://www.amqp.org/) (`v0.9.1` based on [RabbitMQ](https://www.rabbitmq.com/))
 
 ## Worker asynchronous backends
 ### Implemented
-- [multiprocessing](https://docs.python.org/3/library/multiprocessing.html)
+- [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) for CPU bound tasks
 
 ### To be implemented
-- [asyncio](https://docs.python.org/3/library/asyncio.html)
+- [asyncio](https://docs.python.org/3/library/asyncio.html) for I/O bound tasks
