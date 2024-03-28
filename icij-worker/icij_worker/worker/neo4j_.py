@@ -3,16 +3,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import (
-    AsyncGenerator,
     Awaitable,
     Callable,
     ClassVar,
     Dict,
     Optional,
-    Tuple,
     TypeVar,
 )
 
@@ -40,7 +37,6 @@ from icij_common.neo4j.constants import (
     TASK_RETRIES,
 )
 from icij_common.neo4j.migrate import retrieve_projects
-from icij_common.neo4j.projects import project_db_session
 from icij_common.pydantic_utils import ICIJModel, jsonable_encoder
 from icij_worker import (
     AsyncApp,
@@ -52,9 +48,9 @@ from icij_worker import (
     WorkerConfig,
     WorkerType,
 )
-from ..event_publisher.neo4j import Neo4jEventPublisher
-from ..exceptions import TaskAlreadyReserved, UnknownTask
-from ..task import CancelledTaskEvent
+from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
+from icij_worker.exceptions import TaskAlreadyReserved, UnknownTask
+from icij_worker.task import CancelledTaskEvent
 
 _TASK_MANDATORY_FIELDS_BY_ALIAS = {
     f for f in Task.schema(by_alias=True)["required"] if f != "id"
@@ -126,21 +122,19 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
         worker.set_config(config)
         return worker
 
-    async def _consume(self) -> Tuple[Task, str]:
+    async def _consume(self) -> Task:
         return await self._consume_(
             _consume_task_tx,
             refresh_interval_s=self._new_tasks_refresh_interval_s,
         )
 
-    async def _consume_cancelled(self) -> Tuple[CancelledTaskEvent, str]:
+    async def _consume_cancelled(self) -> CancelledTaskEvent:
         return await self._consume_(
             _consume_cancelled_task_tx,
             refresh_interval_s=self._cancelled_tasks_refresh_interval_s,
         )
 
-    async def _consume_(
-        self, consume_tx: ConsumeT, refresh_interval_s: float
-    ) -> Tuple[T, str]:
+    async def _consume_(self, consume_tx: ConsumeT, refresh_interval_s: float) -> T:
         projects = []
         refresh_projects_i = 0
         while "i'm waiting until I find something interesting":
@@ -150,15 +144,14 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
                 projects = await retrieve_projects(self._driver)
             for p in projects:
                 async with self._project_session(p.name) as sess:
-                    received = await sess.execute_write(consume_tx, worker_id=self.id)
+                    tx = functools.partial(consume_tx, project_id=p.name)
+                    received = await sess.execute_write(tx, worker_id=self.id)
                     if received is not None:
-                        return received, p.name
+                        return received
             await asyncio.sleep(refresh_interval_s)
             refresh_projects_i += 1
 
-    async def _negatively_acknowledge(
-        self, nacked: Task, project: str, *, cancelled: bool
-    ):
+    async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
         if nacked.status is TaskStatus.QUEUED:
             nack_fn = functools.partial(
                 _nack_and_requeue_task_tx, retries=nacked.retries, cancelled=cancelled
@@ -169,26 +162,40 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
             )
         else:
             nack_fn = _nack_task_tx
-        async with self._project_session(project) as sess:
+        project_id = self._get_task_project_id(nacked.id)
+        async with self._project_session(project_id) as sess:
             await sess.execute_write(nack_fn, task_id=nacked.id, worker_id=self.id)
 
-    async def _save_result(self, result: TaskResult, project: str):
-        async with self._project_session(project) as sess:
+    async def _save_result(self, result: TaskResult):
+        project_id = result.project_id
+        if project_id is None:
+            raise ValueError(
+                "neo4j expects project to be provided in order to fetch tasks from the"
+                " project's DB"
+            )
+        async with self._project_session(project_id) as sess:
             res_str = json.dumps(jsonable_encoder(result.result))
             await sess.execute_write(
                 _save_result_tx, task_id=result.task_id, result=res_str
             )
 
-    async def _save_error(self, error: TaskError, task: Task, project: str):
-        async with self._project_session(project) as sess:
+    async def _save_error(self, error: TaskError):
+        project_id = error.project_id
+        if project_id is None:
+            raise ValueError(
+                "neo4j expects project to be provided in order to fetch tasks from the"
+                " project's DB"
+            )
+        async with self._project_session(project_id) as sess:
             await sess.execute_write(
                 _save_error_tx,
-                task_id=task.id,
+                task_id=error.task_id,
                 error_props=error.dict(by_alias=True),
             )
 
-    async def _acknowledge(self, task: Task, project: str, completed_at: datetime):
-        async with self._project_session(project) as sess:
+    async def _acknowledge(self, task: Task, completed_at: datetime):
+        project_id = self._get_task_project_id(task.id)
+        async with self._project_session(project_id) as sess:
             await sess.execute_write(
                 _acknowledge_task_tx,
                 task_id=task.id,
@@ -196,19 +203,12 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
                 completed_at=completed_at,
             )
 
-    @asynccontextmanager
-    async def _project_session(
-        self, project: str
-    ) -> AsyncGenerator[neo4j.AsyncSession, None]:
-        async with project_db_session(self._driver, project) as sess:
-            yield sess
-
     async def _aexit__(self, exc_type, exc_val, exc_tb):
         await self._driver.__aexit__(exc_type, exc_val, exc_tb)
 
 
 async def _consume_task_tx(
-    tx: neo4j.AsyncTransaction, worker_id: str
+    tx: neo4j.AsyncTransaction, *, worker_id: str, project_id: str
 ) -> Optional[Task]:
     query = f"""MATCH (t:{TASK_NODE}:`{TaskStatus.QUEUED.value}`)
 WITH t
@@ -228,11 +228,11 @@ RETURN task, lock"""
         return None
     except ConstraintError as e:
         raise TaskAlreadyReserved() from e
-    return Task.from_neo4j(task)
+    return Task.from_neo4j(task, project_id=project_id)
 
 
 async def _consume_cancelled_task_tx(
-    tx: neo4j.AsyncTransaction, **_
+    tx: neo4j.AsyncTransaction, project_id: str, **_
 ) -> Optional[CancelledTaskEvent]:
     get_event_query = f"""MATCH (task:{TASK_NODE})-[
     :{TASK_CANCELLED_BY_EVENT_REL}
@@ -247,7 +247,7 @@ LIMIT 1
         event = await res.single(strict=True)
     except ResultNotSingleError:
         return None
-    return CancelledTaskEvent.from_neo4j(event)
+    return CancelledTaskEvent.from_neo4j(event, project_id=project_id)
 
 
 async def _acknowledge_task_tx(
@@ -381,6 +381,7 @@ async def _save_error_tx(
 CREATE (error:{TASK_ERROR_NODE} $errorProps)-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
 RETURN task, error"""
     res = await tx.run(query, taskId=task_id, errorProps=error_props)
-    records = [rec async for rec in res]
-    if not records:
-        raise UnknownTask(task_id)
+    try:
+        await res.single(strict=True)
+    except ResultNotSingleError as e:
+        raise UnknownTask(task_id) from e
