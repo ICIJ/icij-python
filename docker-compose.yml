@@ -1,8 +1,8 @@
 version: '3.7'
 services:
-  test-neo4j:
+  icij-python-test-neo4j:
     container_name: test-neo4j
-    image: neo4j:4.4.17
+    image: neo4j:4.4.31
     environment:
       NEO4J_AUTH: neo4j/theneo4jpassword
       NEO4JLABS_PLUGINS: '["apoc"]'
@@ -16,9 +16,12 @@ services:
       - 7475:7474
       - 7688:7687
 
-  test-rabbit-mq:
+  icij-python-test-rabbit-mq:
     container_name: test-rabbit-mq
-    image: rabbitmq:3.12.0-management
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: rabbitmq
     healthcheck:
       test: rabbitmq-diagnostics -q ping
       interval: 2s

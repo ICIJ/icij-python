@@ -5,24 +5,35 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import signal
 import tempfile
 from abc import ABC
 from datetime import datetime
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
+from pydantic import Field
+
+import icij_worker
 from icij_common.pydantic_utils import (
     ICIJModel,
     IgnoreExtraModel,
     jsonable_encoder,
     safe_copy,
 )
-from pydantic import Field
-
-import icij_worker
 from icij_worker import (
     AsyncApp,
-    EventPublisher,
     Task,
     TaskError,
     TaskEvent,
@@ -32,7 +43,9 @@ from icij_worker import (
     WorkerConfig,
     WorkerType,
 )
+from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskAlreadyExists, TaskQueueIsFull, UnknownTask
+from icij_worker.task import CancelledTaskEvent
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
@@ -55,6 +68,7 @@ if _has_pytest:
         _task_collection = "tasks"
         _error_collection = "errors"
         _result_collection = "results"
+        _cancel_event_collection = "cancel_events"
 
         def __init__(self, db_path: Path):
             self._db_path = db_path
@@ -79,6 +93,7 @@ if _has_pytest:
                 cls._task_collection: dict(),
                 cls._error_collection: {},
                 cls._result_collection: {},
+                cls._cancel_event_collection: {},
             }
             db_path.write_text(json.dumps(db))
 
@@ -178,15 +193,14 @@ if _has_pytest:
             self._write(db)
             return task
 
-        async def _cancel(self, *, task_id: str, project: str) -> Task:
+        async def _cancel(self, *, task_id: str, project: str, requeue: bool):
             key = self._task_key(task_id=task_id, project=project)
-            task_id = await self.get_task(task_id=task_id, project=project)
-            update = {"status": TaskStatus.CANCELLED}
-            task_id = safe_copy(task_id, update=update)
+            event = CancelledTaskEvent(
+                task_id=task_id, requeue=requeue, created_at=datetime.now()
+            )
             db = self._read()
-            db[self._task_collection][key] = task_id.dict()
+            db[self._cancel_event_collection][key] = event.dict()
             self._write(db)
-            return task_id
 
         async def get_task(self, *, task_id: str, project: str) -> Task:
             key = self._task_key(task_id=task_id, project=project)
@@ -228,6 +242,8 @@ if _has_pytest:
                 status = set(status)
                 tasks = (t for t in tasks if t.status in status)
             return list(tasks)
+
+    R = TypeVar("R", bound=ICIJModel)
 
     class MockEventPublisher(DBMixin, EventPublisher):
         _excluded_from_event_update = {"error"}
@@ -282,9 +298,11 @@ if _has_pytest:
     @WorkerConfig.register()
     class MockWorkerConfig(WorkerConfig, IgnoreExtraModel):
         type: ClassVar[str] = Field(const=True, default=WorkerType.mock.value)
+
+        db_path: Path
         log_level: str = "DEBUG"
         loggers: List[str] = [icij_worker.__name__]
-        db_path: Path
+        task_queue_poll_interval_s: float = 2.0
 
     @Worker.register(WorkerType.mock)
     class MockWorker(Worker, MockEventPublisher):
@@ -293,12 +311,37 @@ if _has_pytest:
             app: AsyncApp,
             worker_id: str,
             db_path: Path,
+            task_queue_poll_interval_s: float,
             **kwargs,
         ):
             super().__init__(app, worker_id, **kwargs)
             MockEventPublisher.__init__(self, db_path)
+            self._task_queue_poll_interval_s = task_queue_poll_interval_s
             self._worker_id = worker_id
             self._logger_ = logging.getLogger(__name__)
+            self.terminated_cancelled_event_loop = False
+
+        @property
+        def watch_cancelled_task(self) -> Optional[asyncio.Task]:
+            return self._watch_cancelled_task
+
+        async def work_forever_async(self):
+            await self._work_forever_async()
+
+        @property
+        def work_forever_task(self) -> Optional[asyncio.Task]:
+            return self._work_forever_task
+
+        @property
+        def work_once_task(self) -> Optional[asyncio.Task]:
+            return self._work_once_task
+
+        @property
+        def successful_exit(self) -> bool:
+            return self._successful_exit
+
+        async def signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
+            await self._signal_handler(signal_name, graceful=graceful)
 
         async def _aenter__(self):
             if not self._db_path.exists():
@@ -306,7 +349,11 @@ if _has_pytest:
 
         @classmethod
         def _from_config(cls, config: MockWorkerConfig, **extras) -> MockWorker:
-            worker = cls(db_path=config.db_path, **extras)
+            worker = cls(
+                db_path=config.db_path,
+                task_queue_poll_interval_s=config.task_queue_poll_interval_s,
+                **extras,
+            )
             return worker
 
         def _to_config(self) -> MockWorkerConfig:
@@ -364,44 +411,62 @@ if _has_pytest:
             self._write(db)
 
         async def _negatively_acknowledge(
-            self, task: Task, project: str, *, requeue: bool
-        ) -> Task:
-            key = self._task_key(task.id, project)
+            self, nacked: Task, project: str, *, cancelled: bool
+        ):
+            key = self._task_key(nacked.id, project)
             db = self._read()
             tasks = db[self._task_collection]
-            try:
-                task = tasks[key]
-            except KeyError as e:
-                raise UnknownTask(task_id=task.id) from e
-            task = Task(**task)
-            if requeue:
-                update = {
-                    "status": TaskStatus.QUEUED,
-                    "progress": 0.0,
-                    "retries": task.retries or 0 + 1,
-                }
-            else:
-                update = {"status": TaskStatus.ERROR}
-            task = safe_copy(task, update=update)
-            tasks[key] = task
+            if cancelled:
+                # Clean cancellation events
+                db[self._cancel_event_collection].pop(
+                    self._task_key(nacked.id, project)
+                )
+            update = {"status": nacked.status}
+            if nacked.status is TaskStatus.QUEUED:
+                update["progress"] = nacked.progress
+                if not cancelled:
+                    update["retries"] = nacked.retries
+            if nacked.cancelled_at:
+                update["cancelledAt"] = nacked.cancelled_at
+            tasks[key].update(update)
             self._write(db)
-            return task
-
-        async def _refresh_cancelled(self, project: str):
-            db = self._read()
-            tasks = db[self._task_collection]
-            tasks = [Task(**t) for t in tasks.values()]
-            cancelled = [t.id for t in tasks if t.status is TaskStatus.CANCELLED]
-            self._cancelled_[project] = set(cancelled)
 
         async def _consume(self) -> Tuple[Task, str]:
-            while "waiting for some task to be available for some project":
+            return await self._consume_(
+                self._task_collection,
+                Task,
+                select=lambda t: t.status is TaskStatus.QUEUED,
+                order=lambda t: t.created_at,
+            )
+
+        async def _consume_cancelled(self) -> Tuple[CancelledTaskEvent, str]:
+            return await self._consume_(
+                self._cancel_event_collection,
+                CancelledTaskEvent,
+                order=lambda e: e.created_at,
+            )
+
+        async def _consume_(
+            self,
+            collection: str,
+            consumed_cls: Type[R],
+            select: Optional[Callable[[R], bool]] = None,
+            order: Optional[Callable[[R], Any]] = None,
+        ) -> Tuple[R, str]:
+            while "i'm waiting until I find something interesting":
                 db = self._read()
-                tasks = db[self._task_collection]
-                tasks = [(k, Task(**t)) for k, t in tasks.items()]
-                queued = [(k, t) for k, t in tasks if t.status is TaskStatus.QUEUED]
-                if queued:
-                    k, t = min(queued, key=lambda x: x[1].created_at)
+                selected = db[collection]
+                selected = [(k, consumed_cls(**t)) for k, t in selected.items()]
+                if select is not None:
+                    selected = [(k, t) for k, t in selected if select(t)]
+                if selected:
+                    if order is not None:
+                        k, t = min(selected, key=lambda x: order(x[1]))
+                    else:
+                        k, t = selected[0]
                     project = eval(k)[1]  # pylint: disable=eval-used
                     return t, project
-                await asyncio.sleep(self.config.task_queue_poll_interval_s)
+                await asyncio.sleep(self._task_queue_poll_interval_s)
+
+        async def work_once(self):
+            await self._work_once()

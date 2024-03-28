@@ -31,6 +31,7 @@ class Routing(LowerCamelCaseModel):
     exchange: Exchange
     routing_key: str
     default_queue: str
+    dead_letter_routing: Optional[Routing] = None
 
 
 class RobustConnection(_RobustConnection):

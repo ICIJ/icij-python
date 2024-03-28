@@ -3,9 +3,9 @@ from abc import ABC
 from typing import ClassVar, Type
 
 import pytest
-from icij_common.test_utils import fail_if_exception
 from pydantic import Field
 
+from icij_common.test_utils import fail_if_exception
 from icij_worker.utils import Registrable, RegistrableConfig
 from icij_worker.utils.from_config import C, T
 

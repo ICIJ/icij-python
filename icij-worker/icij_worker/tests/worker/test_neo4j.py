@@ -5,10 +5,10 @@ from typing import List
 
 import neo4j
 import pytest
+
 from icij_common.neo4j.projects import project_db_session
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT, fail_if_exception
-
 from icij_worker import (
     AsyncApp,
     Neo4jWorker,
@@ -18,6 +18,7 @@ from icij_worker import (
     TaskResult,
     TaskStatus,
 )
+from icij_worker.task import CancelledTaskEvent
 from icij_worker.task_manager.neo4j import Neo4JTaskManager
 
 
@@ -25,7 +26,13 @@ from icij_worker.task_manager.neo4j import Neo4JTaskManager
 def worker(
     test_app: AsyncApp, neo4j_async_app_driver: neo4j.AsyncDriver
 ) -> Neo4jWorker:
-    worker = Neo4jWorker(test_app, "test-worker", neo4j_async_app_driver)
+    worker = Neo4jWorker(
+        test_app,
+        "test-worker",
+        neo4j_async_app_driver,
+        cancelled_tasks_refresh_interval_s=0.1,
+        new_tasks_refresh_interval_s=0.1,
+    )
     return worker
 
 
@@ -57,15 +64,35 @@ async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWork
     assert counts["nLocks"] == 1
 
 
+async def test_worker_consume_cancel_event(
+    populate_cancel_events: List[CancelledTaskEvent], worker: Neo4jWorker
+):
+    # pylint: disable=unused-argument,protected-access
+    # Given
+    # When
+    task = asyncio.create_task(worker._consume_cancelled())
+    # Then
+    timeout = 2
+    await asyncio.wait([task], timeout=timeout)
+    if not task.done():
+        pytest.fail(f"failed to consume task in less than {timeout}s")
+    event, project = task.result()
+    assert event == populate_cancel_events[0]
+    assert project == TEST_PROJECT
+
+
 async def test_worker_negatively_acknowledge(
     populate_tasks: List[Task], worker: Neo4jWorker
 ):
     # pylint: disable=unused-argument
+    # Given
+    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
     # When
     task, project = await worker.consume()
     n_locks = await _count_locks(worker.driver, project=project)
     assert n_locks == 1
-    nacked = await worker.negatively_acknowledge(task, project, requeue=False)
+    await worker.negatively_acknowledge(task, project, requeue=False)
+    nacked = await task_manager.get_task(task_id=task.id, project=project)
 
     # Then
     update = {"status": TaskStatus.ERROR}
@@ -102,11 +129,58 @@ async def test_worker_negatively_acknowledge_and_requeue(
     event = TaskEvent(task_id=task.id, progress=50.0)
     await worker.publish_event(event, project)
     with_progress = safe_copy(task, update={"progress": event.progress})
-    nacked = await worker.negatively_acknowledge(task, project, requeue=True)
+    await worker.negatively_acknowledge(task, project, requeue=True)
+    nacked = await task_manager.get_task(task_id=task.id, project=project)
 
     # Then
     update = {"status": TaskStatus.QUEUED, "progress": 0.0, "retries": 1.0}
     expected_nacked = safe_copy(with_progress, update=update)
+    assert nacked == expected_nacked
+    n_locks = await _count_locks(worker.driver, project=project)
+    assert n_locks == 0
+
+
+@pytest.mark.parametrize("requeue", [True, False])
+async def test_worker_negatively_acknowledge_and_cancel(
+    populate_tasks: List[Task], worker: Neo4jWorker, requeue: bool
+):
+    # pylint: disable=unused-argument
+    # Given
+    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    project = TEST_PROJECT
+    created_at = datetime.now()
+    task = Task(
+        id="some-id",
+        type="hello_world",
+        created_at=created_at,
+        status=TaskStatus.CREATED,
+    )
+    n_locks = await _count_locks(worker.driver, project=project)
+    assert n_locks == 0
+
+    # When
+    await task_manager.enqueue(task, project)
+    task, project = await worker.consume()
+    n_locks = await _count_locks(worker.driver, project=project)
+    assert n_locks == 1
+    # Let's publish some event to increment the progress and check that it's reset
+    # correctly to 0
+    event = TaskEvent(task_id=task.id, progress=50.0)
+    await worker.publish_event(event, project)
+    with_progress = safe_copy(task, update={"progress": event.progress})
+    await worker.negatively_acknowledge(task, project, cancel=True, requeue=requeue)
+    nacked = await task_manager.get_task(task_id=task.id, project=project)
+
+    # Then
+    nacked = nacked.dict(exclude_unset=True)
+    if requeue:
+        update = {"status": TaskStatus.QUEUED, "progress": 0.0}
+    else:
+        assert nacked["cancelled_at"] is not None
+        nacked.pop("cancelled_at")
+        update = {"status": TaskStatus.CANCELLED}
+    expected_nacked = safe_copy(with_progress, update=update)
+    expected_nacked = expected_nacked.dict(exclude_unset=True)
     assert nacked == expected_nacked
     n_locks = await _count_locks(worker.driver, project=project)
     assert n_locks == 0
@@ -155,10 +229,9 @@ async def test_worker_acknowledgment_cm(
     # Given
     created = populate_tasks[0]
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
-    project = TEST_PROJECT
 
     # When
-    async with worker.acknowledgment_cm(created, project):
+    async with worker.acknowledgment_cm():
         await worker.consume()
         task = await task_manager.get_task(task_id=created.id, project=TEST_PROJECT)
         assert task.status is TaskStatus.RUNNING

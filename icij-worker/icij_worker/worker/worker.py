@@ -15,7 +15,6 @@ from typing import (
     Any,
     Callable,
     Dict,
-    List,
     Optional,
     Tuple,
     Type,
@@ -23,6 +22,7 @@ from typing import (
     final,
 )
 
+from icij_common.pydantic_utils import safe_copy
 from icij_worker import (
     AsyncApp,
     Task,
@@ -35,15 +35,15 @@ from icij_worker.app import RegisteredTask
 from icij_worker.exceptions import (
     MaxRetriesExceeded,
     RecoverableError,
+    TaskAlreadyCancelled,
     TaskAlreadyReserved,
-    TaskCancelled,
+    UnknownTask,
     UnregisteredTask,
 )
-from icij_worker.typing_ import PercentProgress
 from icij_worker.utils import Registrable
-from icij_worker.utils.progress import CheckCancelledProgress
 from icij_worker.worker.process import HandleSignalsMixin
 from ..event_publisher import EventPublisher
+from ..task import CancelledTaskEvent
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,6 @@ class Worker(
         worker_id: str,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
-        cancelled_tasks_refresh_interval_s: float = 2.0,
     ):
         # If worker are run using a thread backend then signal handling might not be
         # required, in this case the signal handling mixing will just do nothing
@@ -75,11 +74,20 @@ class Worker(
         self._graceful_shutdown = True
         self._loop = asyncio.get_event_loop()
         self._work_forever_task: Optional[asyncio.Task] = None
+        self._work_once_task: Optional[asyncio.Task] = None
+        self._watch_cancelled_task: Optional[asyncio.Task] = None
         self._already_exiting = False
-        self._current = None
-        self._cancelled_ = defaultdict(set)
+        self._current: Optional[Tuple[Task, str]] = None
+        self._cancelled: Dict[str, Dict[str, CancelledTaskEvent]] = defaultdict(dict)
+        self._cancelling: Optional[str] = None
         self._config: Optional[C] = None
-        self._cancelled_tasks_refresh_interval_s = cancelled_tasks_refresh_interval_s
+        # We use asyncio lock, not thread lock, since the worker is supposed run in a
+        # single thread (not thread-safe for now)
+        self._cancellation_lock = asyncio.Lock()
+        # Not sure if this is even necessary, since there might be a single loop
+        # reading and writing the current stuf
+        self._current_lock = asyncio.Lock()
+        self._successful_exit = False
 
     def set_config(self, config: C):
         self._config = config
@@ -96,21 +104,22 @@ class Worker(
     def loop(self) -> asyncio.AbstractEventLoop:
         return self._loop
 
-    @property
-    def _cancelled(self) -> List[str]:
-        return list(self._cancelled_)
-
     @functools.cached_property
     def id(self) -> str:
         return self._id
 
     @final
     def work_forever(self):
-        with self:
+        # This is a bit cosmetic but the sync one is useful to be run inside Python
+        # worker multiprocessing Pool, while async one is more convenient for testing
+        self._work_forever_task = self._loop.create_task(self._work_forever_async())
+
+    @final
+    async def _work_forever_async(self):
+        async with self:
             self.info("started working...")
-            self._work_forever_task = self._loop.create_task(self._work_forever())
             try:
-                self._loop.run_until_complete(self._work_forever_task)
+                await self._work_forever()
             except asyncio.CancelledError:  # Shutdown let's not reraise
                 self.info("worker cancelled, shutting down...")
             except KeyboardInterrupt:  # Shutdown let's not reraise
@@ -119,15 +128,34 @@ class Worker(
                 self.error("error occurred while consuming: %s", _format_error(e))
                 self.info("will try to shutdown gracefully...")
                 raise e
-        self.info(
-            "finally stopped working, nothing lasts forever, "
-            "i'm out of this busy life !"
-        )
+            finally:
+                self.info(
+                    "finally stopped working, nothing lasts forever, "
+                    "i'm out of this busy life !"
+                )
 
     @final
     async def _work_forever(self):
         while True:
-            await self._work_once()
+            try:
+                self._work_once_task = asyncio.create_task(self._work_once())
+                await self._work_once_task
+            except TaskAlreadyReserved:
+                # This part is won't happen with AMQP since it will take care to
+                # correctly forward one task to one worker
+                self.info("tried to consume an already reserved task, skipping...")
+                continue
+            except TaskAlreadyCancelled:
+                # This part is won't happen with AMQP since it will take care to
+                # correctly forward one task to one worker
+                self.info("tried to consume a cancelled task, skipping...")
+                continue
+
+    def _get_cancel_event(self, task: Task, project: str) -> CancelledTaskEvent:
+        try:
+            return self._cancelled[project][task.id]
+        except KeyError as e:
+            raise UnknownTask(task_id=task.id, worker_id=self._id) from e
 
     @final
     def logged_name(self) -> str:
@@ -139,47 +167,87 @@ class Worker(
 
     @final
     async def _work_once(self):
-        await task_wrapper(self)
+        async with self.acknowledgment_cm():
+            task, project = await self.consume()
+            await task_wrapper(self, task, project)
 
     @final
     async def consume(self) -> Tuple[Task, str]:
-        return await self._consume()
+        task, project = await self._consume()
+        self.debug('Task(id="%s") locked', task.id)
+        async with self._current_lock:
+            self._current = task, project
+        progress = 0.0
+        update = {"progress": progress}
+        task = safe_copy(task, update=update)
+        event = TaskEvent(task_id=task.id, progress=progress, status=TaskStatus.RUNNING)
+        await self.publish_event(event, project)
+        return task, project
 
     @final
     @asynccontextmanager
-    async def acknowledgment_cm(self, task: Task, project: str):
+    async def acknowledgment_cm(self):
         try:
-            self._current = task, project
-            self.debug('Task(id="%s") locked', task.id)
-            event = TaskEvent(task_id=task.id, progress=0, status=TaskStatus.RUNNING)
-            await self.publish_event(event, project)
             yield
-            await self.acknowledge(task, project)
-            self.info('Task(id="%s") successful !', task.id)
+            async with self._current_lock:
+                await self.acknowledge(*self._current)
         except asyncio.CancelledError as e:
-            self.error(
-                'Task(id="%s") worker cancelled, exiting without persisting error',
-                task.id,
-            )
+            await self._handle_cancel_event(e)
+        except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
+            # Let this bubble up and the worker continue without recording anything
             raise e
         except RecoverableError:
-            self.error('Task(id="%s") encountered error', task.id)
-            await self.negatively_acknowledge(task, project, requeue=True)
+            async with self._current_lock:
+                self.error('Task(id="%s") encountered error', self._current[0].id)
+                await self.negatively_acknowledge(*self._current, requeue=True)
         except Exception as fatal_error:  # pylint: disable=broad-exception-caught
-            if isinstance(fatal_error, MaxRetriesExceeded):
-                self.error('Task(id="%s") exceeded max retries, exiting !', task.id)
-            else:
-                self.error('Task(id="%s") fatal error, exiting !', task.id)
-            task_error = TaskError.from_exception(fatal_error)
-            await self.save_error(error=task_error, task=task, project=project)
-            await self.negatively_acknowledge(task, project, requeue=False)
+            async with self._current_lock:
+                if self._current is not None:
+                    # The error is due to the current task, other tasks might success,
+                    # let's fail this task and keep working
+                    await self._handle_fatal_error(fatal_error, *self._current)
+                    return
+            # The error was in the worker's code, something is wrong that won't change
+            # at the next task, let's make the worker crash
+            raise fatal_error
+
+    async def _handle_fatal_error(
+        self, fatal_error: BaseException, task: Task, project: str
+    ):
+        if isinstance(fatal_error, MaxRetriesExceeded):
+            self.error('Task(id="%s") exceeded max retries, nacking it...', task.id)
+        else:
+            self.error(
+                'fatal error during Task(id="%s") execution, nacking it...', task.id
+            )
+        task_error = TaskError.from_exception(fatal_error)
+        await self.save_error(error=task_error, task=task, project=project)
+        await self.negatively_acknowledge(task, project, requeue=False)
+
+    async def _handle_cancel_event(self, e: asyncio.CancelledError):
+        async with self._current_lock:
+            async with self._cancellation_lock:
+                if self._worker_cancelled:
+                    # we just raise and the Worker.__aexit__ will take care of
+                    # handling worker shutdown gracefully
+                    raise e
+        if self._current is None:
+            logger.info(
+                "task cancellation was ask but task was acked or nacked"
+                " in between, discarding cancel event !"
+            )
+            return
+        current_t, current_p = self._current
+        event = self._get_cancel_event(current_t, current_p)
+        self.info('Task(id="%s") cancellation requested !', current_t.id)
+        async with self._current_lock:
+            await self._negatively_acknowledge_running_task(event.requeue, cancel=True)
 
     @final
     async def acknowledge(self, task: Task, project: str):
         completed_at = datetime.now()
         self.info('Task(id="%s") acknowledging...', task.id)
         await self._acknowledge(task, project, completed_at)
-        self._current = None
         self.info('Task(id="%s") acknowledged', task.id)
         self.debug('Task(id="%s") publishing acknowledgement event', task.id)
         event = TaskEvent(
@@ -190,40 +258,55 @@ class Worker(
         )
         # Tell the listeners that the task succeeded
         await self.publish_event(event, project)
+        self.info('Task(id="%s") successful !', task.id)
+        self._current = None
 
     @abstractmethod
     async def _acknowledge(
         self, task: Task, project: str, completed_at: datetime
-    ) -> Task:
-        pass
+    ) -> Task: ...
 
     @final
     async def negatively_acknowledge(
-        self, task: Task, project: str, *, requeue: bool
-    ) -> Task:
+        self, task: Task, project: str, *, requeue: bool, cancel: bool = False
+    ):
         self.info(
             "negatively acknowledging Task(id=%s) with (requeue=%s)...",
             task.id,
             requeue,
         )
-        nacked = await self._negatively_acknowledge(task, project, requeue=requeue)
+        cancelled_at = datetime.now()
+        if requeue:
+            update = {"status": TaskStatus.QUEUED, "progress": 0.0}
+            if cancel:
+                update["cancelled_at"] = cancelled_at
+            else:
+                update["retries"] = task.retries or 0 + 1
+        elif cancel:
+            update = {"status": TaskStatus.CANCELLED, "cancelled_at": cancelled_at}
+        else:
+            update = {"status": TaskStatus.ERROR}
+        nacked = safe_copy(task, update=update)
+        await self._negatively_acknowledge(nacked, project, cancelled=cancel)
+        self.info(
+            "Task(id=%s) negatively acknowledged (requeue=%s)!", nacked.id, requeue
+        )
         self._current = None
-        self.info("Task(id=%s) negatively acknowledged (requeue=%s)!", task.id, requeue)
-        return nacked
 
     @abstractmethod
     async def _negatively_acknowledge(
-        self, task: Task, project: str, *, requeue: bool
-    ) -> Task:
-        pass
+        self, nacked: Task, project: str, *, cancelled: bool
+    ): ...
+
+    # TODO: the cancel parameter is needed in some implementation to know whether
+    #  the cancellation happened, it which case the implem might want to clean
+    #  cancellation events. Another alternative would be to add a _clean_cancelled
+    #  method and use it in the  negatively_acknowledge method right after calling
+    #  _negatively_acknowledge when cancel = True. However for some DB implems
+    #  it's nice to nack and clean in a single transaction
 
     @abstractmethod
-    async def _refresh_cancelled(self, project: str):
-        pass
-
-    @abstractmethod
-    async def _consume(self) -> Tuple[Task, str]:
-        pass
+    async def _consume(self) -> Tuple[Task, str]: ...
 
     @abstractmethod
     async def _save_result(self, result: TaskResult, project: str):
@@ -281,18 +364,46 @@ class Worker(
             for param in signature(task_fn).parameters.values()
         )
         if supports_progress:
-            publish_progress = self._make_progress(task, project)
+            publish_progress = functools.partial(
+                self._publish_progress, task=task, project=project
+            )
             task_fn = functools.partial(task_fn, progress=publish_progress)
         return task_fn, recoverable
 
     @final
-    async def check_cancelled(
-        self, *, task_id: str, project: str, refresh: bool = False
-    ):
-        if refresh:
-            await self._refresh_cancelled(project)
-        if task_id in self._cancelled_[project]:
-            raise TaskCancelled(task_id)
+    async def _watch_cancelled(self):
+        try:
+            while True:
+                cancel_event, project = await self._consume_cancelled()
+                self._cancelled[project][cancel_event.task_id] = cancel_event
+                async with self._current_lock, self._cancellation_lock:
+                    if self._current is None:
+                        continue
+                    if (
+                        self._cancelling is not None
+                        and self._cancelling == cancel_event.task_id
+                    ):
+                        continue
+                    self._cancelling = cancel_event.task_id
+                    task, project = self._current
+                    if task.id != cancel_event.task_id:
+                        continue
+                    self.info(
+                        'received cancel event for Task(id="%s"), cancelling it !',
+                        task.id,
+                    )
+                    self._work_once_task.cancel()
+                await self._work_once_task
+        except Exception as fatal_error:
+            if self._current is not None:
+                await self._handle_fatal_error(fatal_error, *self._current)
+            raise fatal_error
+        except asyncio.CancelledError as e:
+            logger.info("cancelling cancelled task watch !")
+            raise e
+
+    @abstractmethod
+    async def _consume_cancelled(self) -> Tuple[CancelledTaskEvent, str]: ...
 
     @final
     def check_retries(self, retries: int, task: Task):
@@ -308,26 +419,14 @@ class Worker(
             )
 
     @final
-    def _make_progress(self, task: Task, project: str) -> PercentProgress:
-        progress = functools.partial(self._publish_progress, task=task, project=project)
-        refresh = functools.partial(self._refresh_cancelled, project=project)
-        check = functools.partial(self.check_cancelled, project=project)
-        progress = CheckCancelledProgress(
-            task_id=task.id,
-            progress=progress,
-            check_cancelled=check,
-            refresh_cancelled=refresh,
-            refresh_interval_s=self._cancelled_tasks_refresh_interval_s,
-        )
-        return progress
-
-    @final
     def __enter__(self):
         self._loop.run_until_complete(self.__aenter__())
 
     @final
     async def __aenter__(self):
         await self._aenter__()
+        # Start watching cancelled tasks
+        self._watch_cancelled_task = self._loop.create_task(self._watch_cancelled())
 
     async def _aenter__(self):
         pass
@@ -341,6 +440,19 @@ class Worker(
         # dependencies might be closed while trying to gracefully shutdown
         if not self._already_exiting:
             self._already_exiting = True
+            if (
+                self._watch_cancelled_task is not None
+                and not self._watch_cancelled_task.cancelled()
+            ):
+                logger.info("terminating cancel event loop ...")
+                self._watch_cancelled_task.cancel()
+                # Wait for cancellation to be effective
+                try:
+                    await self._watch_cancelled_task
+                except asyncio.CancelledError:
+                    pass
+                self._watch_cancelled_task = None
+                logger.info("cancel event loop terminated !")
             # Let's try to shut down gracefully
             await self.shutdown()
             # Clean worker dependencies only if needed, dependencies might be share in
@@ -348,6 +460,7 @@ class Worker(
             if self._teardown_dependencies:
                 self.info("cleaning worker dependencies...")
                 await self._aexit__(exc_type, exc_value, tb)
+            self._successful_exit = True
 
     async def _aexit__(self, exc_type, exc_val, exc_tb):
         pass
@@ -356,10 +469,14 @@ class Worker(
     async def _shutdown_gracefully(self):
         await self._negatively_acknowledge_running_task(requeue=True)
 
-    async def _negatively_acknowledge_running_task(self, requeue: bool):
+    async def _negatively_acknowledge_running_task(
+        self, requeue: bool, cancel: bool = False
+    ):
         if self._current:
             task, project = self._current
-            await self.negatively_acknowledge(task, project, requeue=requeue)
+            await self.negatively_acknowledge(
+                task, project, requeue=requeue, cancel=cancel
+            )
 
     @final
     async def shutdown(self):
@@ -382,37 +499,18 @@ def _retrieve_registered_task(
     return registered
 
 
-async def task_wrapper(worker: Worker):
-    # Receive task
-    try:
-        task, project = await worker.consume()
-    except TaskAlreadyReserved:
-        # This part is won't happen with AMQP since it will take care to correctly
-        # forward one task to one worker
-        worker.info("tried to consume an already reserved task, exiting...")
-        return
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        worker.error("error while receiving task: %s", _format_error(e))
-        raise e
-
-    # Lock it and skips if already reserved
-    async with worker.acknowledgment_cm(task, project):
-        # Skip it if already cancelled
-        try:
-            await worker.check_cancelled(task_id=task.id, project=project, refresh=True)
-        except TaskCancelled:
-            worker.info('Task(id="%s") already cancelled skipping it !', task.id)
-            return
-
-        # Parse task to retrieve recoverable errors and max retries
-        task_fn, recoverable_errors = worker.parse_task(task, project)
-        task_inputs = add_missing_args(
-            task_fn, task.inputs, config=worker.config, project=project
-        )
-        # Retry task until success, fatal error or max retry exceeded
-        await _retry_task(
-            worker, task, task_fn, task_inputs, project, recoverable_errors
-        )
+async def task_wrapper(worker: Worker, task: Task, project: str):
+    # Skips if already reserved
+    if task.status is TaskStatus.CANCELLED:
+        worker.info('Task(id="%s") already cancelled skipping it !', task.id)
+        raise TaskAlreadyCancelled(task_id=task.id)
+    # Parse task to retrieve recoverable errors and max retries
+    task_fn, recoverable_errors = worker.parse_task(task, project)
+    task_inputs = add_missing_args(
+        task_fn, task.inputs, config=worker.config, project=project
+    )
+    # Retry task until success, fatal error or max retry exceeded
+    await _retry_task(worker, task, task_fn, task_inputs, project, recoverable_errors)
 
 
 async def _retry_task(
@@ -432,9 +530,6 @@ async def _retry_task(
         task_res = task_fn(**task_inputs)
         if isawaitable(task_res):
             task_res = await task_res
-    except TaskCancelled:
-        worker.info('Task(id="%s") cancelled during execution')
-        return
     except recoverable_errors as e:
         # This will throw a MaxRetriesExceeded when necessary
         worker.check_retries(retries, task)

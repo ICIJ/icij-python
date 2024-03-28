@@ -4,8 +4,8 @@ from typing import ClassVar, Optional
 
 import pytest
 from pydantic import Field
-from icij_common.test_utils import reset_env  # pylint: disable=unused-import
 
+from icij_common.test_utils import reset_env  # pylint: disable=unused-import
 from icij_worker import WorkerConfig
 
 
