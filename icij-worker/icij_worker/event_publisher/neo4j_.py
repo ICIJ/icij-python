@@ -23,9 +23,9 @@ class Neo4jTaskProjectMixin:
 
     @asynccontextmanager
     async def _project_session(
-        self, project: str
+        self, project_id: str
     ) -> AsyncGenerator[neo4j.AsyncSession, None]:
-        async with project_db_session(self._driver, project) as sess:
+        async with project_db_session(self._driver, project_id) as sess:
             yield sess
 
     async def _get_task_project_id(self, task_id: str) -> str:
@@ -61,14 +61,14 @@ class Neo4jEventPublisher(Neo4jTaskProjectMixin, EventPublisher):
         self._driver = driver
 
     async def _publish_event(self, event: TaskEvent):
-        project = event.project_id
-        if project is None:
+        project_id = event.project_id
+        if project_id is None:
             msg = (
-                "neo4j expects project to be provided in order to fetch tasks from"
-                " the project's DB"
+                "neo4j expects project_id to be provided in order to fetch tasks from"
+                " the project_id's DB"
             )
             raise ValueError(msg)
-        async with self._project_session(project) as sess:
+        async with self._project_session(project_id) as sess:
             await _publish_event(sess, event)
 
     @property
