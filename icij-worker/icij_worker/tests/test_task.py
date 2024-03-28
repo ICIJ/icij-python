@@ -24,81 +24,81 @@ def test_precedence_sanity_check():
 @pytest.mark.parametrize(
     "task,event,expected_resolved",
     [
-        # # Update the status
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.CREATED,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
-        # ),
-        # # Task type is not updated
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.CREATED,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", task_type="goodbye_world"),
-        #     None,
-        # ),
-        # # Status is updated when not in a final state
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.CREATED,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.QUEUED),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.QUEUED),
-        # ),
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.QUEUED,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
-        # ),
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.RUNNING,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.DONE),
-        #     TaskEvent(task_id="task-id", status=TaskStatus.DONE),
-        # ),
-        # # Update the progress
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.CREATED,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", progress=50.0),
-        #     TaskEvent(task_id="task-id", progress=50.0),
-        # ),
-        # # Update retries
-        # (
-        #     Task(
-        #         id="task-id",
-        #         type="hello_world",
-        #         status=TaskStatus.CREATED,
-        #         created_at=_CREATED_AT,
-        #     ),
-        #     TaskEvent(task_id="task-id", retries=4),
-        #     TaskEvent(task_id="task-id", retries=4),
-        # ),
+        # Update the status
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.CREATED,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
+            TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
+        ),
+        # Task type is not updated
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.CREATED,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", task_type="goodbye_world"),
+            None,
+        ),
+        # Status is updated when not in a final state
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.CREATED,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", status=TaskStatus.QUEUED),
+            TaskEvent(task_id="task-id", status=TaskStatus.QUEUED),
+        ),
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.QUEUED,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
+            TaskEvent(task_id="task-id", status=TaskStatus.RUNNING),
+        ),
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.RUNNING,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", status=TaskStatus.DONE),
+            TaskEvent(task_id="task-id", status=TaskStatus.DONE),
+        ),
+        # Update the progress
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.CREATED,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", progress=50.0),
+            TaskEvent(task_id="task-id", progress=50.0),
+        ),
+        # Update retries
+        (
+            Task(
+                id="task-id",
+                type="hello_world",
+                status=TaskStatus.CREATED,
+                created_at=_CREATED_AT,
+            ),
+            TaskEvent(task_id="task-id", retries=4),
+            TaskEvent(task_id="task-id", retries=4),
+        ),
         # Update error
         (
             Task(
