@@ -6,7 +6,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional
 
 import aio_pika
 import aiohttp
@@ -34,6 +34,7 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 from icij_common.test_utils import TEST_PROJECT
 from icij_worker import AsyncApp, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
+from icij_worker.task import CancelledTaskEvent
 from icij_worker.task_manager.neo4j import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
 
@@ -120,6 +121,19 @@ RETURN task"""
     )
     t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
+
+
+@pytest_asyncio.fixture(scope="function")
+async def populate_cancel_events(
+    populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
+) -> List[CancelledTaskEvent]:
+    query_0 = """MATCH (task:_Task { id: $taskId })
+CREATE (task)-[:_CANCELLED_BY]->(event:_CancelEvent { requeue: false, effective: false, createdAt: $now }) 
+RETURN task, event"""
+    recs_0, _, _ = await neo4j_async_app_driver.execute_query(
+        query_0, now=datetime.now(), taskId=populate_tasks[0].id
+    )
+    return [CancelledTaskEvent.from_neo4j(recs_0[0])]
 
 
 class Recoverable(ValueError):
@@ -239,12 +253,26 @@ async def exchange_exists(name: str) -> bool:
         return False
 
 
-async def queue_exists(name: str) -> bool:
+async def get_queue(name: str) -> Dict:
     url = get_test_management_url(f"/api/queues/{DEFAULT_VHOST}/{name}")
     try:
         async with rabbit_mq_test_session() as sess:
-            async with sess.get(url):
-                return True
+            async with sess.get(url) as res:
+                res.raise_for_status()
+                return await res.json()
+    except ClientResponseError:
+        return False
+
+
+async def get_queue_size(name: str) -> int:
+    q = await get_queue(name)
+    return q.get("messages")
+
+
+async def queue_exists(name: str) -> bool:
+    try:
+        await get_queue(name)
+        return True
     except ClientResponseError:
         return False
 

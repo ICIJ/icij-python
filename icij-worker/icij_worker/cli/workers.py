@@ -3,8 +3,8 @@ from typing import Annotated, Optional
 
 import typer
 
-from icij_worker import AsyncApp, WorkerBackend, WorkerConfig
-from icij_worker.backend import start_workers
+from icij_worker import AsyncApp, WorkerConfig
+from icij_worker.backend import WorkerBackend, start_workers
 
 _START_HELP = "Start a pool of workers running the provided app, reading the worker\
  configuration from the environment or an optionally provided file."

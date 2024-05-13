@@ -4,10 +4,11 @@ from typing import List
 
 import neo4j
 import pytest
+
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT
-
-from icij_worker import Neo4jEventPublisher, Task, TaskEvent, TaskStatus
+from icij_worker import Task, TaskEvent, TaskStatus
+from icij_worker.event_publisher import Neo4jEventPublisher
 from icij_worker.task_manager.neo4j import Neo4JTaskManager
 
 

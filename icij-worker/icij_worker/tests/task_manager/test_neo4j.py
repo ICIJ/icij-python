@@ -4,11 +4,12 @@ from typing import List, Optional, Tuple
 import neo4j
 import pytest
 import pytest_asyncio
+
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT
-
 from icij_worker import Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
+from icij_worker.task import CancelledTaskEvent
 from icij_worker.task_manager.neo4j import Neo4JTaskManager
 
 
@@ -274,8 +275,12 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
         await task_manager.enqueue(task, project)
 
 
-async def test_task_manager_cancel(neo4j_async_app_driver: neo4j.AsyncDriver):
+@pytest.mark.parametrize("requeue", [True, False])
+async def test_task_manager_cancel(
+    neo4j_async_app_driver: neo4j.AsyncDriver, requeue: bool
+):
     # Given
+    driver = neo4j_async_app_driver
     project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
     task = Task(
@@ -284,12 +289,17 @@ async def test_task_manager_cancel(neo4j_async_app_driver: neo4j.AsyncDriver):
 
     # When
     task = await task_manager.enqueue(task, project)
-    task = await task_manager.cancel(task_id=task.id, project=project)
-
+    await task_manager.cancel(task_id=task.id, project=project, requeue=requeue)
+    query = """MATCH (task:_Task { id: $taskId })-[
+    :_CANCELLED_BY]->(event:_CancelEvent)
+RETURN task, event"""
+    recs, _, _ = await driver.execute_query(query, taskId=task.id)
+    assert len(recs) == 1
+    event = CancelledTaskEvent.from_neo4j(recs[0])
     # Then
-    update = {"status": TaskStatus.CANCELLED}
-    expected = safe_copy(task, update=update)
-    assert task == expected
+    assert event.task_id == task.id
+    assert event.created_at is not None
+    assert event.requeue == requeue
 
 
 async def test_task_manager_enqueue_should_raise_when_queue_full(

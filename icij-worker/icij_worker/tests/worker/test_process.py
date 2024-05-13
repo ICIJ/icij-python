@@ -4,11 +4,11 @@ from signal import Signals
 
 import pytest
 
-from icij_worker import Worker
+from icij_worker.utils.tests import MockWorker
 
 
 @pytest.mark.parametrize("signal", [Signals.SIGINT, Signals.SIGTERM])
-def test_worker_signal_handler(mock_worker: Worker, signal: Signals, caplog):
+def test_worker_signal_handler(mock_worker: MockWorker, signal: Signals, caplog):
     # pylint: disable=protected-access
     # Given
     caplog.set_level(logging.INFO)
@@ -19,7 +19,7 @@ def test_worker_signal_handler(mock_worker: Worker, signal: Signals, caplog):
     assert len(caplog.records) == 0
 
     # When
-    worker._signal_handler(signal, graceful=True)
+    loop.run_until_complete(worker.signal_handler(signal, graceful=True))
 
     # Then
     expected = [f"received {str(signal)}", "cancelling worker loop"]

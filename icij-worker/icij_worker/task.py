@@ -8,15 +8,20 @@ from datetime import datetime
 from enum import Enum, unique
 from typing import Any, Dict, Optional
 
-from icij_common.neo4j.constants import TASK_NODE
+from pydantic import validator
+
+from icij_common.neo4j.constants import (
+    TASK_CANCEL_EVENT_CREATED_AT,
+    TASK_CANCEL_EVENT_REQUEUE,
+    TASK_ID,
+    TASK_NODE,
+)
 from icij_common.pydantic_utils import (
     ISODatetime,
     LowerCamelCaseModel,
     NoEnumModel,
     safe_copy,
 )
-from pydantic import validator
-
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +87,16 @@ def status_precedence(state: TaskStatus) -> int:
     return PRECEDENCE_LOOKUP[state]
 
 
-class Task(NoEnumModel, LowerCamelCaseModel, ISODatetime):
+class Neo4jDatetimeMixin(ISODatetime):
+    @classmethod
+    def _validate_neo4j_datetime(cls, value: Any) -> datetime:
+        # Trick to avoid having to import neo4j here
+        if not isinstance(value, datetime) and hasattr(value, "to_native"):
+            value = value.to_native()
+        return value
+
+
+class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     type: str
     inputs: Optional[Dict[str, Any]] = None
@@ -90,6 +104,7 @@ class Task(NoEnumModel, LowerCamelCaseModel, ISODatetime):
     progress: Optional[float] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
     retries: Optional[int] = None
 
     @validator("inputs", pre=True, always=True)
@@ -121,10 +136,15 @@ class Task(NoEnumModel, LowerCamelCaseModel, ISODatetime):
 
     @validator("created_at", pre=True)
     def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
-        # Trick to avoid having to import neo4j here
-        if not isinstance(value, datetime) and hasattr(value, "to_native"):
-            value = value.to_native()
-        return value
+        return cls._validate_neo4j_datetime(value)
+
+    @validator("completed_at", pre=True)
+    def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
+
+    @validator("cancelled_at", pre=True)
+    def _validate_cancelled_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
 
     @validator("progress")
     def _validate_progress(cls, value: Optional[float]):
@@ -249,6 +269,31 @@ class TaskEvent(NoEnumModel, LowerCamelCaseModel):
         status = TaskStatus.QUEUED if retries is not None else TaskStatus.ERROR
         event = TaskEvent(task_id=task_id, status=status, retries=retries, error=error)
         return event
+
+
+class CancelledTaskEvent(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+    task_id: str
+    requeue: bool
+    created_at: datetime
+
+    @validator("created_at", pre=True)
+    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
+
+    @classmethod
+    def from_neo4j(
+        cls,
+        record: "neo4j.Record",
+        *,
+        event_key="event",
+        task_key="task",
+    ) -> CancelledTaskEvent:
+        task = record.get(task_key)
+        event = record.get(event_key)
+        task_id = task[TASK_ID]
+        requeue = event[TASK_CANCEL_EVENT_REQUEUE]
+        created_at = event[TASK_CANCEL_EVENT_CREATED_AT]
+        return cls(task_id=task_id, requeue=requeue, created_at=created_at)
 
 
 class TaskResult(LowerCamelCaseModel):

@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Optional
 
 import neo4j
+from neo4j.exceptions import ResultNotSingleError
+
 from icij_common.neo4j.constants import (
     TASK_ERROR_NODE,
     TASK_ERROR_OCCURRED_TYPE,
@@ -9,9 +11,6 @@ from icij_common.neo4j.constants import (
     TASK_NODE,
 )
 from icij_common.neo4j.projects import project_db_session
-from neo4j.exceptions import ResultNotSingleError
-
-
 from . import EventPublisher
 from .. import Task, TaskEvent, TaskStatus
 from ..exceptions import UnknownTask
