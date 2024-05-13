@@ -17,7 +17,7 @@ from aio_pika import (
 
 from icij_common.logging_utils import LogWithNameMixin
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
-from icij_worker import Task, TaskError, TaskEvent, TaskResult
+from icij_worker import TaskError, TaskEvent, TaskResult
 from . import EventPublisher
 
 
@@ -112,13 +112,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
     def _routings(self) -> List[Routing]:
         return [self.evt_routing(), self.res_routing(), self.err_routing()]
 
-    async def publish_event(self, event: TaskEvent, project: str):
-        # pylint: disable=unused-argument
-        # TODO: for now project information is not leverage on the AMQP side which is
-        #  not very convenient as clients will won't know from which project the event
-        #  is coming. This is limitating as for instance when it comes to logs errors,
-        #  such events must be save in separate DBs in order to avoid project data
-        #  leaking to other projects through the DB
+    async def _publish_event(self, event: TaskEvent):
         message = event.json().encode()
         await self._publish_message(
             message,
@@ -127,13 +121,14 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
             mandatory=False,
         )
 
-    async def publish_result(self, result: TaskResult, project: str):
-        # pylint: disable=unused-argument
-        # TODO: for now project information is not leverage on the AMQP side which is
-        #  not very convenient as clients will won't know from which project the result
-        #  is coming. This is limitating as for instance when as result must probably
-        #  be saved in separate DBs in order to avoid project data leaking to other
-        #  projects through the DB
+    publish_event_ = _publish_event
+
+    async def publish_result(self, result: TaskResult):
+        # TODO: for now task project information is not leverage on the AMQP side which
+        #  is not very convenient as clients will won't know from which project the
+        #  result is coming. This is limitating as for instance when as result must
+        #  probably be saved in separate DBs in order to avoid project data leaking to
+        #  other projects through the DB
         message = result.json().encode()
         await self._publish_message(
             message,
@@ -142,13 +137,12 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
             mandatory=True,  # This is important
         )
 
-    async def publish_error(self, error: TaskError, task: Task, project: str):
-        # pylint: disable=unused-argument
-        # TODO: for now project information is not leverage on the AMQP side which is
-        #  not very convenient as clients will won't know from which project the error
-        #  is coming. This is limitating as for instance when as error must probably
-        #  be saved in separate DBs in order to avoid project data leaking to other
-        #  projects through the DB
+    async def publish_error(self, error: TaskError):
+        # TODO: for now task project information is not leverage on the AMQP side which
+        #  is not very convenient as clients will won't know from which project the
+        #  result is coming. This is limitating as for instance when as result must
+        #  probably be saved in separate DBs in order to avoid project data leaking to
+        #  other projects through the DB
         message = error.json().encode()
         await self._publish_message(
             message,

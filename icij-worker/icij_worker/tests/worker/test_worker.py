@@ -12,10 +12,9 @@ from unittest.mock import patch
 import pytest
 
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import async_true_after, fail_if_exception
+from icij_common.test_utils import TEST_PROJECT, async_true_after, fail_if_exception
 from icij_worker import AsyncApp, Task, TaskError, TaskEvent, TaskResult, TaskStatus
 from icij_worker.exceptions import TaskAlreadyCancelled
-from icij_worker.tests.conftest import TEST_PROJECT
 from icij_worker.utils.tests import MockManager, MockWorker
 from icij_worker.worker.worker import add_missing_args
 
@@ -35,10 +34,10 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
+        project_id=TEST_PROJECT,
         type="hello_world",
         created_at=created_at,
         status=TaskStatus.CREATED,
@@ -46,17 +45,18 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     )
 
     # When
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     await worker.work_once()
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
-    saved_errors = await task_manager.get_task_errors(task_id=task.id, project=project)
-    saved_result = await task_manager.get_task_result(task_id=task.id, project=project)
+    saved_task = await task_manager.get_task(task_id=task.id)
+    saved_errors = await task_manager.get_task_errors(task_id=task.id)
+    saved_result = await task_manager.get_task_result(task_id=task.id)
 
     # Then
     assert not saved_errors
 
     expected_task = Task(
         id="some-id",
+        project_id=TEST_PROJECT,
         type="hello_world",
         progress=100,
         created_at=created_at,
@@ -71,11 +71,17 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     expected_task.pop("completedAt")
     assert saved_task == expected_task
     expected_events = [
-        TaskEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
-        TaskEvent(task_id="some-id", progress=0.1),
-        TaskEvent(task_id="some-id", progress=0.99),
         TaskEvent(
             task_id="some-id",
+            project_id=TEST_PROJECT,
+            status=TaskStatus.RUNNING,
+            progress=0.0,
+        ),
+        TaskEvent(task_id="some-id", project_id=TEST_PROJECT, progress=0.1),
+        TaskEvent(task_id="some-id", project_id=TEST_PROJECT, progress=0.99),
+        TaskEvent(
+            task_id="some-id",
+            project_id=TEST_PROJECT,
             status=TaskStatus.DONE,
             progress=100.0,
             completed_at=completed_at,
@@ -83,7 +89,9 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     ]
     assert worker.published_events == expected_events
 
-    expected_result = TaskResult(task_id="some-id", result="Hello world !")
+    expected_result = TaskResult(
+        task_id="some-id", project_id=TEST_PROJECT, result="Hello world !"
+    )
     assert saved_result == expected_result
 
 
@@ -91,10 +99,10 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
+        project_id=TEST_PROJECT,
         type="hello_world_sync",
         created_at=created_at,
         status=TaskStatus.CREATED,
@@ -102,11 +110,11 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     )
 
     # When
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     await worker.work_once()
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
-    saved_result = await task_manager.get_task_result(task_id=task.id, project=project)
-    saved_errors = await task_manager.get_task_errors(task_id=task.id, project=project)
+    saved_task = await task_manager.get_task(task_id=task.id)
+    saved_result = await task_manager.get_task_result(task_id=task.id)
+    saved_errors = await task_manager.get_task_errors(task_id=task.id)
 
     # Then
     assert not saved_errors
@@ -114,6 +122,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     expected_task = Task(
         id="some-id",
         type="hello_world_sync",
+        project_id=TEST_PROJECT,
         progress=100,
         created_at=created_at,
         status=TaskStatus.DONE,
@@ -127,9 +136,15 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     expected_task.pop("completedAt")
     assert saved_task == expected_task
     expected_events = [
-        TaskEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
         TaskEvent(
             task_id="some-id",
+            project_id=TEST_PROJECT,
+            status=TaskStatus.RUNNING,
+            progress=0.0,
+        ),
+        TaskEvent(
+            task_id="some-id",
+            project_id=TEST_PROJECT,
             status=TaskStatus.DONE,
             progress=100.0,
             completed_at=completed_at,
@@ -137,7 +152,9 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     ]
     assert worker.published_events == expected_events
 
-    expected_result = TaskResult(task_id="some-id", result="Hello world !")
+    expected_result = TaskResult(
+        task_id="some-id", project_id=TEST_PROJECT, result="Hello world !"
+    )
     assert saved_result == expected_result
 
 
@@ -147,33 +164,34 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     # Given
     worker = mock_failing_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
+        project_id=TEST_PROJECT,
         type="recovering_task",
         created_at=created_at,
         status=TaskStatus.CREATED,
     )
 
     # When/Then
-    task = await task_manager.enqueue(task, project)
+    task = await task_manager.enqueue(task)
     assert task.status is TaskStatus.QUEUED
     await worker.work_once()
-    retried_task = await task_manager.get_task(task_id=task.id, project=project)
+    retried_task = await task_manager.get_task(task_id=task.id)
 
     assert retried_task.status is TaskStatus.QUEUED
     assert retried_task.retries == 1
 
     await worker.work_once()
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
-    saved_result = await task_manager.get_task_result(task_id=task.id, project=project)
-    saved_errors = await task_manager.get_task_errors(task_id=task.id, project=project)
+    saved_task = await task_manager.get_task(task_id=task.id)
+    saved_result = await task_manager.get_task_result(task_id=task.id)
+    saved_errors = await task_manager.get_task_errors(task_id=task.id)
 
     # Then
     expected_task = Task(
         id="some-id",
         type="recovering_task",
+        project_id=TEST_PROJECT,
         progress=100,
         created_at=created_at,
         status=TaskStatus.DONE,
@@ -190,24 +208,42 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     # No error should be saved
     assert not saved_errors
     # However we expect the worker to have logged them somewhere in the events
-    expected_result = TaskResult(task_id="some-id", result="i told you i could recover")
+    expected_result = TaskResult(
+        task_id="some-id", project_id=TEST_PROJECT, result="i told you i could recover"
+    )
     assert saved_result == expected_result
 
     expected_events = [
-        TaskEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
         TaskEvent(
             task_id="some-id",
+            project_id=TEST_PROJECT,
+            status=TaskStatus.RUNNING,
+            progress=0.0,
+        ),
+        TaskEvent(
+            task_id="some-id",
+            project_id=TEST_PROJECT,
             status=TaskStatus.QUEUED,
             retries=1,
             progress=None,  # The progress should be left as is waiting before retry
             error=TaskError(
-                id="", title="Recoverable", detail="", occurred_at=datetime.now()
+                id="",
+                task_id="some-id",
+                title="Recoverable",
+                detail="",
+                occurred_at=datetime.now(),
             ),
         ),
-        TaskEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
-        TaskEvent(task_id="some-id", progress=0.0),
         TaskEvent(
             task_id="some-id",
+            project_id=TEST_PROJECT,
+            status=TaskStatus.RUNNING,
+            progress=0.0,
+        ),
+        TaskEvent(task_id="some-id", project_id=TEST_PROJECT, progress=0.0),
+        TaskEvent(
+            task_id="some-id",
+            project_id=TEST_PROJECT,
             status=TaskStatus.DONE,
             progress=100.0,
             completed_at=completed_at,
@@ -233,7 +269,6 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     # Given
     worker = mock_failing_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -243,12 +278,10 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     )
 
     # When
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     await worker.work_once()
-    saved_errors = await task_manager.get_task_errors(
-        task_id="some-id", project=project
-    )
-    saved_task = await task_manager.get_task(task_id="some-id", project=project)
+    saved_errors = await task_manager.get_task_errors(task_id="some-id")
+    saved_task = await task_manager.get_task(task_id="some-id")
 
     # Then
     expected_task = Task(
@@ -272,7 +305,11 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
             task_id="some-id",
             status=TaskStatus.ERROR,
             error=TaskError(
-                id="", title="ValueError", detail="", occurred_at=datetime.now()
+                id="",
+                task_id="some-id",
+                title="ValueError",
+                detail="",
+                occurred_at=datetime.now(),
             ),
         ),
     ]
@@ -295,7 +332,6 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -305,12 +341,10 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     )
 
     # When
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     await worker.work_once()
-    saved_task = await task_manager.get_task(task_id="some-id", project=project)
-    saved_errors = await task_manager.get_task_errors(
-        task_id="some-id", project=project
-    )
+    saved_task = await task_manager.get_task(task_id="some-id")
+    saved_errors = await task_manager.get_task_errors(task_id="some-id")
 
     # Then
     expected_task = Task(
@@ -334,6 +368,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
             status=TaskStatus.ERROR,
             error=TaskError(
                 id="error-id",
+                task_id="some-id",
                 title="UnregisteredTask",
                 detail="",
                 occurred_at=datetime.now(),
@@ -359,7 +394,6 @@ async def test_work_once_should_not_run_already_cancelled_task(mock_worker: Mock
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -369,10 +403,10 @@ async def test_work_once_should_not_run_already_cancelled_task(mock_worker: Mock
     )
     # When
     cancelled = safe_copy(task, update={"status": TaskStatus.CANCELLED})
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     # We mock the fact the task is still received but cancelled right after
     with pytest.raises(TaskAlreadyCancelled):
-        with patch.object(worker, "consume", return_value=(cancelled, project)):
+        with patch.object(worker, "consume", return_value=cancelled):
             await worker.work_once()
 
 
@@ -382,7 +416,6 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     duration = 10
     task = Task(
@@ -401,19 +434,19 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         worker._work_once_task = t
         asyncio_tasks.add(t)
 
-        await task_manager.enqueue(task, project)
+        await task_manager.enqueue(task)
         after_s = 2.0
 
         async def _assert_running() -> bool:
-            saved = await task_manager.get_task(task_id=task.id, project=project)
+            saved = await task_manager.get_task(task_id=task.id)
             return saved.status is TaskStatus.RUNNING
 
         failure_msg = f"Failed to run task in less than {after_s}"
         assert await async_true_after(_assert_running, after_s=after_s), failure_msg
-        await task_manager.cancel(task_id=task.id, project=project, requeue=requeue)
+        await task_manager.cancel(task_id=task.id, requeue=requeue)
 
         async def _assert_has_status(status: TaskStatus) -> bool:
-            saved = await task_manager.get_task(task_id=task.id, project=project)
+            saved = await task_manager.get_task(task_id=task.id)
             return saved.status is status
 
         expected_status = TaskStatus.QUEUED if requeue else TaskStatus.CANCELLED
@@ -431,7 +464,6 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     duration = 100
     task = Task(
@@ -443,7 +475,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
     )
 
     # When
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     asyncio_tasks = set()
     async with worker:
         work_forever_task = asyncio.create_task(worker.work_forever_async())
@@ -452,7 +484,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
         asyncio_tasks.add(work_forever_task)
 
         async def _assert_running() -> bool:
-            saved = await task_manager.get_task(task_id=task.id, project=project)
+            saved = await task_manager.get_task(task_id=task.id)
             return saved.status is TaskStatus.RUNNING
 
         after_s = 2.0
@@ -514,7 +546,6 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
     # Given
     worker = mock_failing_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -524,7 +555,7 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
     )
 
     # When/Then
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     with fail_if_exception("fatal_error_task"):
         await worker.work_once()
 
@@ -535,7 +566,6 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
     # Given
     worker = mock_failing_worker
     task_manager = MockManager(worker.db_path, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -545,7 +575,7 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
     )
 
     # When/Then
-    await task_manager.enqueue(task, project)
+    await task_manager.enqueue(task)
     with patch.object(worker, "_consume") as mocked_consume:
 
         class _FatalError(Exception): ...

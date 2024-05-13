@@ -7,9 +7,13 @@ import pytest
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT
-from icij_worker import Task, TaskEvent, TaskStatus
-from icij_worker.event_publisher import Neo4jEventPublisher
-from icij_worker.task_manager.neo4j import Neo4JTaskManager
+from icij_worker import (
+    Neo4JTaskManager,
+    Neo4jEventPublisher,
+    Task,
+    TaskEvent,
+    TaskStatus,
+)
 
 
 @pytest.fixture(scope="function")
@@ -23,7 +27,6 @@ async def test_worker_publish_event(
 ):
     # Given
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
-    project = TEST_PROJECT
     task = populate_tasks[0]
     assert task.status == TaskStatus.QUEUED
     assert task.progress is None
@@ -38,8 +41,8 @@ async def test_worker_publish_event(
     )
 
     # When
-    await publisher.publish_event(event=event, project=project)
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
+    await publisher.publish_event(event, task)
+    saved_task = await task_manager.get_task(task_id=task.id)
 
     # Then
     # Status is not updated by event
@@ -52,7 +55,6 @@ async def test_worker_publish_done_task_event_should_not_update_task(
     publisher: Neo4jEventPublisher,
 ):
     # Given
-    project = TEST_PROJECT
     query = """CREATE (task:_Task:DONE {
         id: 'task-0', 
         type: 'hello_world',
@@ -64,7 +66,7 @@ async def test_worker_publish_done_task_event_should_not_update_task(
     async with publisher.driver.session() as sess:
         res = await sess.run(query, now=datetime.now())
         completed = await res.single()
-    completed = Task.from_neo4j(completed)
+    completed = Task.from_neo4j(completed, project_id=TEST_PROJECT)
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
     event = TaskEvent(
         task_id=completed.id,
@@ -74,8 +76,8 @@ async def test_worker_publish_done_task_event_should_not_update_task(
     )
 
     # When
-    await publisher.publish_event(event=event, project=project)
-    saved_task = await task_manager.get_task(task_id=completed.id, project=project)
+    await publisher.publish_event(event, completed)
+    saved_task = await task_manager.get_task(task_id=completed.id)
 
     # Then
     assert saved_task == completed
@@ -85,11 +87,16 @@ async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublis
     # This is useful when task is not reserved yet
     # Given
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
-    project = TEST_PROJECT
-
     task_id = "some-id"
     task_type = "hello_world"
     created_at = datetime.now()
+    task = Task(
+        id=task_id,
+        type=task_type,
+        project_id=TEST_PROJECT,
+        created_at=created_at,
+        status=TaskStatus.QUEUED,
+    )
     event = TaskEvent(
         task_id=task_id,
         task_type=task_type,
@@ -98,14 +105,11 @@ async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublis
     )
 
     # When
-    await publisher.publish_event(event=event, project=project)
-    saved_task = await task_manager.get_task(task_id=task_id, project=project)
+    await publisher.publish_event(event, task)
+    saved_task = await task_manager.get_task(task_id=task_id)
 
     # Then
-    expected = Task(
-        id=task_id, type=task_type, created_at=created_at, status=TaskStatus.QUEUED
-    )
-    assert saved_task == expected
+    assert saved_task == task
 
 
 async def test_worker_publish_event_should_use_status_resolution(
@@ -113,15 +117,14 @@ async def test_worker_publish_event_should_use_status_resolution(
 ):
     # Given
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
-    project = TEST_PROJECT
     task = populate_tasks[1]
     assert task.status is TaskStatus.RUNNING
 
     event = TaskEvent(task_id=task.id, status=TaskStatus.CREATED)
 
     # When
-    await publisher.publish_event(event=event, project=project)
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
+    await publisher.publish_event(event, task)
+    saved_task = await task_manager.get_task(task_id=task.id)
 
     # Then
     assert saved_task == task

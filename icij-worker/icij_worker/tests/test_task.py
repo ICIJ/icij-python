@@ -111,6 +111,7 @@ def test_precedence_sanity_check():
                 task_id="task-id",
                 error=TaskError(
                     id="error-id",
+                    task_id="task-id",
                     title="some-error",
                     detail="some details",
                     occurred_at=_ERROR_OCCURRED_AT,
@@ -120,6 +121,7 @@ def test_precedence_sanity_check():
                 task_id="task-id",
                 error=TaskError(
                     id="error-id",
+                    task_id="task-id",
                     title="some-error",
                     detail="some details",
                     occurred_at=_ERROR_OCCURRED_AT,
@@ -165,6 +167,7 @@ def test_precedence_sanity_check():
                 retries=4,
                 error=TaskError(
                     id="error-id",
+                    task_id="task-id",
                     title="some-error",
                     detail="some details",
                     occurred_at=_ERROR_OCCURRED_AT,
@@ -189,6 +192,7 @@ def test_precedence_sanity_check():
                 retries=4,
                 error=TaskError(
                     id="error-id",
+                    task_id="task-id",
                     title="some-error",
                     detail="some details",
                     occurred_at=_ERROR_OCCURRED_AT,
@@ -213,6 +217,7 @@ def test_precedence_sanity_check():
                 retries=4,
                 error=TaskError(
                     id="error-id",
+                    task_id="task-id",
                     title="some-error",
                     detail="some details",
                     occurred_at=_ERROR_OCCURRED_AT,

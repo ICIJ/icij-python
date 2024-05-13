@@ -11,6 +11,7 @@ from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT, fail_if_exception
 from icij_worker import (
     AsyncApp,
+    Neo4JTaskManager,
     Neo4jWorker,
     Task,
     TaskError,
@@ -19,7 +20,6 @@ from icij_worker import (
     TaskStatus,
 )
 from icij_worker.task import CancelledTaskEvent
-from icij_worker.task_manager.neo4j import Neo4JTaskManager
 
 
 @pytest.fixture(scope="function")
@@ -76,9 +76,9 @@ async def test_worker_consume_cancel_event(
     await asyncio.wait([task], timeout=timeout)
     if not task.done():
         pytest.fail(f"failed to consume task in less than {timeout}s")
-    event, project = task.result()
+    event = task.result()
     assert event == populate_cancel_events[0]
-    assert project == TEST_PROJECT
+    assert event.project_id == TEST_PROJECT
 
 
 async def test_worker_negatively_acknowledge(
@@ -88,17 +88,17 @@ async def test_worker_negatively_acknowledge(
     # Given
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
     # When
-    task, project = await worker.consume()
-    n_locks = await _count_locks(worker.driver, project=project)
+    task = await worker.consume()
+    n_locks = await _count_locks(worker.driver, project=task.project_id)
     assert n_locks == 1
-    await worker.negatively_acknowledge(task, project, requeue=False)
-    nacked = await task_manager.get_task(task_id=task.id, project=project)
+    await worker.negatively_acknowledge(task, requeue=False)
+    nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
     update = {"status": TaskStatus.ERROR}
     expected_nacked = safe_copy(task, update=update)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, project=task.project_id)
     assert n_locks == 0
 
 
@@ -111,6 +111,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
     project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
+        project_id=project,
         id="some-id",
         type="hello_world",
         created_at=created_at,
@@ -120,17 +121,17 @@ async def test_worker_negatively_acknowledge_and_requeue(
     assert n_locks == 0
 
     # When
-    await task_manager.enqueue(task, project)
-    task, project = await worker.consume()
+    await task_manager.enqueue(task)
+    task = await worker.consume()
     n_locks = await _count_locks(worker.driver, project=project)
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
     event = TaskEvent(task_id=task.id, progress=50.0)
-    await worker.publish_event(event, project)
+    await worker.publish_event(event, task)
     with_progress = safe_copy(task, update={"progress": event.progress})
-    await worker.negatively_acknowledge(task, project, requeue=True)
-    nacked = await task_manager.get_task(task_id=task.id, project=project)
+    await worker.negatively_acknowledge(task, requeue=True)
+    nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
     update = {"status": TaskStatus.QUEUED, "progress": 0.0, "retries": 1.0}
@@ -142,7 +143,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
 
 @pytest.mark.parametrize("requeue", [True, False])
 async def test_worker_negatively_acknowledge_and_cancel(
-    populate_tasks: List[Task], worker: Neo4jWorker, requeue: bool
+    worker: Neo4jWorker, requeue: bool
 ):
     # pylint: disable=unused-argument
     # Given
@@ -152,6 +153,7 @@ async def test_worker_negatively_acknowledge_and_cancel(
     task = Task(
         id="some-id",
         type="hello_world",
+        project_id=TEST_PROJECT,
         created_at=created_at,
         status=TaskStatus.CREATED,
     )
@@ -159,17 +161,17 @@ async def test_worker_negatively_acknowledge_and_cancel(
     assert n_locks == 0
 
     # When
-    await task_manager.enqueue(task, project)
-    task, project = await worker.consume()
+    await task_manager.enqueue(task)
+    task = await worker.consume()
     n_locks = await _count_locks(worker.driver, project=project)
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
     event = TaskEvent(task_id=task.id, progress=50.0)
-    await worker.publish_event(event, project)
+    await worker.publish_event(event, task)
     with_progress = safe_copy(task, update={"progress": event.progress})
-    await worker.negatively_acknowledge(task, project, cancel=True, requeue=requeue)
-    nacked = await task_manager.get_task(task_id=task.id, project=project)
+    await worker.negatively_acknowledge(task, cancel=True, requeue=requeue)
+    nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
     nacked = nacked.dict(exclude_unset=True)
@@ -193,12 +195,12 @@ async def test_worker_save_result(populate_tasks: List[Task], worker: Neo4jWorke
     task = populate_tasks[0]
     assert task.status == TaskStatus.QUEUED
     result = "hello everyone"
-    task_result = TaskResult(task_id=task.id, result=result)
+    task_result = TaskResult(task_id=task.id, project_id=project, result=result)
 
     # When
-    await worker.save_result(result=task_result, project=project)
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
-    saved_result = await task_manager.get_task_result(task_id=task.id, project=project)
+    await worker.save_result(result=task_result)
+    saved_task = await task_manager.get_task(task_id=task.id)
+    saved_result = await task_manager.get_task_result(task_id=task.id)
 
     # Then
     assert saved_task == task
@@ -213,14 +215,14 @@ async def test_worker_should_raise_when_saving_existing_result(
     task = populate_tasks[0]
     assert task.status == TaskStatus.QUEUED
     result = "hello everyone"
-    task_result = TaskResult(task_id=task.id, result=result)
+    task_result = TaskResult(task_id=task.id, project_id=project, result=result)
 
     # When
-    await worker.save_result(result=task_result, project=project)
+    await worker.save_result(result=task_result)
     # Then
     expected = "Attempted to save result for task task-0 but found existing result"
     with pytest.raises(ValueError, match=expected):
-        await worker.save_result(result=task_result, project=project)
+        await worker.save_result(result=task_result)
 
 
 async def test_worker_acknowledgment_cm(
@@ -233,11 +235,11 @@ async def test_worker_acknowledgment_cm(
     # When
     async with worker.acknowledgment_cm():
         await worker.consume()
-        task = await task_manager.get_task(task_id=created.id, project=TEST_PROJECT)
+        task = await task_manager.get_task(task_id=created.id)
         assert task.status is TaskStatus.RUNNING
 
     # Then
-    task = await task_manager.get_task(task_id=created.id, project=TEST_PROJECT)
+    task = await task_manager.get_task(task_id=created.id)
     update = {"progress": 100.0, "status": TaskStatus.DONE}
     expected_task = safe_copy(task, update=update).dict(by_alias=True)
     expected_task.pop("completedAt")
@@ -258,16 +260,19 @@ async def test_worker_save_error(populate_tasks: List[Task], worker: Neo4jWorker
     project = TEST_PROJECT
     error = TaskError(
         id="error-id",
+        task_id=populate_tasks[0].id,
+        project_id=project,
         title="someErrorTitle",
         detail="with_details",
         occurred_at=datetime.now(),
     )
 
     # When
-    task, _ = await worker.consume()
-    await worker.save_error(error=error, task=task, project=project)
-    saved_task = await task_manager.get_task(task_id=task.id, project=project)
-    saved_errors = await task_manager.get_task_errors(task_id=task.id, project=project)
+    task = await worker.consume()
+    await worker.save_error(error=error)
+    await worker.publish_error_event(error, task)
+    saved_task = await task_manager.get_task(task_id=task.id)
+    saved_errors = await task_manager.get_task_errors(task_id=task.id)
 
     # Then
     # We don't expect the task status to be updated by saving the error, the negative
