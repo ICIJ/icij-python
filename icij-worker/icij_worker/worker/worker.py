@@ -248,6 +248,7 @@ class Worker(
         completed_at = datetime.now()
         self.info('Task(id="%s") acknowledging...', task.id)
         await self._acknowledge(task, completed_at)
+        self._current = None
         self.info('Task(id="%s") acknowledged', task.id)
         self.debug('Task(id="%s") publishing acknowledgement event', task.id)
         task_event = TaskEvent(
@@ -261,7 +262,6 @@ class Worker(
         # Tell the listeners that the task succeeded
         await self.publish_event(event, task)
         self.info('Task(id="%s") successful !', task.id)
-        self._current = None
 
     @abstractmethod
     async def _acknowledge(self, task: Task, completed_at: datetime) -> Task: ...
