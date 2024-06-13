@@ -4,7 +4,7 @@ from .task_manager import TaskManager
 from .worker import Worker, WorkerConfig, WorkerType
 
 try:
-    from icij_worker.worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
+    from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
     from icij_worker.event_publisher.amqp import AMQPPublisher
 except ImportError:
     pass
