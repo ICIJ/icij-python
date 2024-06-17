@@ -13,6 +13,7 @@ from icij_worker.utils.registrable import RegistrableConfig
 class WorkerConfig(RegistrableConfig, ABC):
     registry_key: ClassVar[str] = Field(const=True, default="type")
 
+    app_config_path: Optional[Path] = None
     inactive_after_s: Optional[float] = None
     log_level: str = "INFO"
     task_queue_poll_interval_s: float = 1.0
