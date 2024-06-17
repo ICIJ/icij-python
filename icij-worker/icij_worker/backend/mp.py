@@ -8,6 +8,8 @@ import sys
 from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Tuple
 
+import icij_worker
+from icij_common.logging_utils import setup_loggers
 from icij_worker import AsyncApp, Worker, WorkerConfig
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ def _mp_work_forever(
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
 ):
+    setup_loggers(["__main__", icij_worker.__name__])
     if worker_extras is None:
         worker_extras = dict()
     if app_deps_extras is None:
