@@ -101,9 +101,9 @@ STREAM_HANDLER_FMT_WITH_WORKER_ID = (
 DATE_FMT = "%H:%M:%S"
 
 
-def setup_loggers(loggers: List[str]):
-    level = logging.INFO
+def setup_loggers(loggers: List[str], level: int = logging.INFO):
     stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setLevel(level)
     stream_handler.setFormatter(logging.Formatter(STREAM_HANDLER_FMT, DATE_FMT))
     for logger in loggers:
         logger = logging.getLogger(logger)
