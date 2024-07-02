@@ -112,6 +112,7 @@ class Worker(
         # This is a bit cosmetic but the sync one is useful to be run inside Python
         # worker multiprocessing Pool, while async one is more convenient for testing
         self._work_forever_task = self._loop.create_task(self._work_forever_async())
+        self._loop.run_until_complete(self._work_forever_task)
 
     @final
     async def _work_forever_async(self):
