@@ -326,7 +326,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.1.3"
+version = "0.1.4"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -951,4 +951,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "a24cada5bbfb7325ecc520eb40a6b17a51202c3498bdeb0f2bd0673ad16a5490"
+content-hash = "69c6483ca80302ed052aaf0bb8e4dfce4abb01f9b617b78492b12f75e8d9faae"
