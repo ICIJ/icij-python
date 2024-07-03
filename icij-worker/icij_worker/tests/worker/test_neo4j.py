@@ -19,7 +19,7 @@ from icij_worker import (
     TaskResult,
     TaskStatus,
 )
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.task import CancelledTaskEvent, StacktraceItem
 
 
 @pytest.fixture(scope="function")
@@ -262,8 +262,11 @@ async def test_worker_save_error(populate_tasks: List[Task], worker: Neo4jWorker
         id="error-id",
         task_id=populate_tasks[0].id,
         project_id=project,
-        title="someErrorTitle",
-        detail="with_details",
+        name="someErrorTitle",
+        message="with_details",
+        stacktrace=[
+            StacktraceItem(name="someErrorTitle", file="with_details", lineno=666)
+        ],
         occurred_at=datetime.now(),
     )
 

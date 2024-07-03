@@ -33,10 +33,13 @@ TASK_LOCK_TASK_ID = "taskId"
 TASK_LOCK_WORKER_ID = "workerId"
 
 TASK_ERROR_NODE = "_TaskError"
-TASK_ERROR_DETAIL = "detail"
+TASK_ERROR_DETAIL_DEPRECATED = "detail"  # use stacktrace
 TASK_ERROR_ID = "id"
+TASK_ERROR_MESSAGE = "message"
+TASK_ERROR_NAME = "name"
 TASK_ERROR_OCCURRED_AT = "occurredAt"
-TASK_ERROR_TITLE = "title"
+TASK_ERROR_STACKTRACE = "stacktrace"
+TASK_ERROR_TITLE_DEPRECATED = "title"  # use message
 
 TASK_ERROR_OCCURRED_TYPE = "_OCCURRED_DURING"
 

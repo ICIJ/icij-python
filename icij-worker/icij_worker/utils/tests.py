@@ -231,7 +231,7 @@ if _has_pytest:
             db = self._read()
             errors = db[self._error_collection]
             errors = errors.get(key, [])
-            errors = [TaskError(**err) for err in errors]
+            errors = [TaskError.parse_obj(err) for err in errors]
             return errors
 
         async def get_task_result(self, task_id: str) -> TaskResult:

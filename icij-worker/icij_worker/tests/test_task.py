@@ -6,6 +6,7 @@ import pytest
 from icij_worker.task import (
     PRECEDENCE,
     READY_STATES,
+    StacktraceItem,
     Task,
     TaskError,
     TaskEvent,
@@ -112,8 +113,13 @@ def test_precedence_sanity_check():
                 error=TaskError(
                     id="error-id",
                     task_id="task-id",
-                    title="some-error",
-                    detail="some details",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
             ),
@@ -122,8 +128,13 @@ def test_precedence_sanity_check():
                 error=TaskError(
                     id="error-id",
                     task_id="task-id",
-                    title="some-error",
-                    detail="some details",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
             ),
@@ -168,8 +179,13 @@ def test_precedence_sanity_check():
                 error=TaskError(
                     id="error-id",
                     task_id="task-id",
-                    title="some-error",
-                    detail="some details",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
                 created_at=_ANOTHER_TIME,
@@ -193,8 +209,13 @@ def test_precedence_sanity_check():
                 error=TaskError(
                     id="error-id",
                     task_id="task-id",
-                    title="some-error",
-                    detail="some details",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
                 created_at=_ANOTHER_TIME,
@@ -218,8 +239,13 @@ def test_precedence_sanity_check():
                 error=TaskError(
                     id="error-id",
                     task_id="task-id",
-                    title="some-error",
-                    detail="some details",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
                 created_at=_ANOTHER_TIME,

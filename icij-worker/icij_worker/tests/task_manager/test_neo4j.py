@@ -9,7 +9,40 @@ from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_PROJECT
 from icij_worker import Neo4JTaskManager, Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.task import CancelledTaskEvent, StacktraceItem
+from icij_worker.task_manager.neo4j_ import migrate_task_errors_v0_tx
+
+
+@pytest_asyncio.fixture(scope="function")
+async def _populate_errors_legacy(
+    populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
+) -> neo4j.AsyncDriver:
+    task_with_error = populate_tasks[1]
+    query_0 = """MATCH (task:_Task { id: $taskId })
+CREATE  (error:_TaskError {
+    id: 'error-0',
+    title: 'error',
+    detail: 'with details',
+    occurredAt: $now 
+})-[:_OCCURRED_DURING]->(task)
+RETURN error"""
+    await neo4j_async_app_driver.execute_query(
+        query_0, taskId=task_with_error.id, now=datetime.now()
+    )
+    query_1 = """MATCH (task:_Task { id: $taskId })
+CREATE  (error:_TaskError {
+    id: 'error-1',
+    title: 'error',
+    detail: 'same error again',
+    occurredAt: $now 
+})-[:_OCCURRED_DURING]->(task)
+RETURN error"""
+    await neo4j_async_app_driver.execute_query(
+        query_1,
+        taskId=task_with_error.id,
+        now=datetime.now(),
+    )
+    return neo4j_async_app_driver
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -20,8 +53,10 @@ async def _populate_errors(
     query_0 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
     id: 'error-0',
-    title: 'error',
-    detail: 'with details',
+    name: 'error',
+    stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
+    message: "with details",
+    cause: "some cause",
     occurredAt: $now 
 })-[:_OCCURRED_DURING]->(task)
 RETURN error"""
@@ -34,8 +69,10 @@ RETURN error"""
     query_1 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
     id: 'error-1',
-    title: 'error',
-    detail: 'same error again',
+    name: 'error',
+    stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
+    message: 'same error again',
+    cause: "some cause",
     occurredAt: $now 
 })-[:_OCCURRED_DURING]->(task)
 RETURN error"""
@@ -166,16 +203,24 @@ async def test_task_manager_get_tasks(
                     id="error-0",
                     task_id="task-1",
                     project_id=TEST_PROJECT,
-                    title="error",
-                    detail="with details",
+                    name="error",
+                    message="with details",
                     occurred_at=datetime.now(),
+                    stacktrace=[
+                        StacktraceItem(name="SomeError", file="somefile", lineno=666)
+                    ],
+                    cause="some cause",
                 ),
                 TaskError(
                     id="error-1",
                     task_id="task-1",
                     project_id=TEST_PROJECT,
-                    title="error",
-                    detail="same error again",
+                    name="error",
+                    message="same error again",
+                    stacktrace=[
+                        StacktraceItem(name="SomeError", file="somefile", lineno=666)
+                    ],
+                    cause="some cause",
                     occurred_at=datetime.now(),
                 ),
             ],
@@ -323,3 +368,47 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
     # When
     with pytest.raises(TaskQueueIsFull):
         await task_manager.enqueue(task)
+
+
+async def test_migrate_task_errors_v0_tx(
+    _populate_errors_legacy: neo4j.AsyncDriver,  # pylint: disable=invalid-name
+):
+    # Given
+    task_id = "task-1"
+    driver = _populate_errors_legacy
+    task_manager = Neo4JTaskManager(driver, max_queue_size=10)
+    # When
+    async with _populate_errors_legacy.session() as session:
+        await session.execute_write(migrate_task_errors_v0_tx)
+
+    # Then / When
+    retrieved_errors = await task_manager.get_task_errors(task_id=task_id)
+    expected_errors = [
+        TaskError(
+            project_id="test_project",
+            id="error-1",
+            task_id="task-1",
+            name="error",
+            message="same error again",
+            cause=None,
+            stacktrace=[],
+            occurred_at=datetime.now(),
+        ),
+        TaskError(
+            project_id="test_project",
+            id="error-0",
+            task_id="task-1",
+            name="error",
+            message="with details",
+            cause=None,
+            stacktrace=[],
+            occurred_at=datetime.now(),
+        ),
+    ]
+    expected_errors = [e.dict() for e in expected_errors]
+    for e in expected_errors:
+        e.pop("occurred_at")
+    retrieved_errors = [e.dict() for e in retrieved_errors]
+    for e in retrieved_errors:
+        e.pop("occurred_at")
+    assert retrieved_errors == expected_errors
