@@ -25,8 +25,9 @@ def long_running_task(greeted: str) -> str:
 decorate your function with `ICIJApp` class and register a new task:
 
 ```python
+from icij_worker import AsyncApp
 
-my_app = ICIJApp(name="my_app")
+my_app = AsyncApp(name="my_app")
 
 @my_app.task
 def long_running_task(greeted: str) -> str:

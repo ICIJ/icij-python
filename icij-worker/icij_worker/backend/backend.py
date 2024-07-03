@@ -20,9 +20,6 @@ class WorkerBackend(str, Enum):
     # workers for IO based tasks
     MULTIPROCESSING = "multiprocessing"
 
-    # TODO: refactor this one to be a function rather than a cm coroutine a context
-    #  manager is no longer needed to run workers inside the HTTP server
-    @contextmanager
     def run(
         self,
         app: str,
