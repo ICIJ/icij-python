@@ -7,7 +7,7 @@ import uuid
 from abc import ABC
 from datetime import datetime
 from enum import Enum, unique
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field, validator
 
@@ -236,6 +236,12 @@ class WithProjectIDMixin(ICIJModel, ABC):
         return self
 
 
+class StacktraceItem(LowerCamelCaseModel):
+    name: str
+    file: str
+    lineno: int
+
+
 class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
     # This helps to know if an error has already been processed or not
     id: str
@@ -243,24 +249,35 @@ class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
     project_id: Optional[str] = Field(None, alias="project")
     # Follow the "problem detail" spec: https://datatracker.ietf.org/doc/html/rfc9457,
     # the type is omitted for now since we gave no URI to resolve errors yet
-    title: str
-    detail: str
+    name: str
+    message: str
+    cause: Optional[str] = None
+    stacktrace: List[StacktraceItem] = Field(default_factory=list)
     occurred_at: datetime
 
     @classmethod
     def from_exception(cls, exception: BaseException, task: Task) -> TaskError:
-        title = exception.__class__.__name__
-        trace_lines = traceback.format_exception(
-            None, value=exception, tb=exception.__traceback__
+        name = exception.__class__.__name__
+        message = str(exception)
+        error_id = f"{_id_title(name)}-{uuid.uuid4().hex}"
+        stacktrace = traceback.StackSummary.extract(
+            traceback.walk_tb(exception.__traceback__)
         )
-        detail = f"{exception}\n{''.join(trace_lines)}"
-        error_id = f"{_id_title(title)}-{uuid.uuid4().hex}"
+        stacktrace = [
+            StacktraceItem(name=f.name, file=f.filename, lineno=f.lineno)
+            for f in stacktrace
+        ]
+        cause = exception.__cause__
+        if cause is not None:
+            cause = str(cause)
         error = TaskError(
             id=error_id,
             task_id=task.id,
             project_id=task.project_id,
-            title=title,
-            detail=detail,
+            name=name,
+            message=message,
+            cause=cause,
+            stacktrace=stacktrace,
             occurred_at=datetime.now(),
         )
         return error
@@ -278,7 +295,21 @@ class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
         task.update({"taskId": task_id, "project": project_id})
         if "occurredAt" in task:
             task["occurredAt"] = task["occurredAt"].to_native()
+        if "stacktrace" in task:
+            stacktrace = [
+                StacktraceItem(**json.loads(item)) for item in task["stacktrace"]
+            ]
+            task["stacktrace"] = stacktrace
         return cls.parse_obj(task)
+
+    def trace(self) -> str:
+        # TODO: fix this using Pydantic v2 computed_fields + cached property
+        frames = [
+            traceback.FrameSummary(filename=i.file, lineno=i.lineno, name=i.name)
+            for i in self.stacktrace
+        ]
+        trace = "\n".join(traceback.StackSummary(frames).format())
+        return trace
 
 
 class TaskEvent(NoEnumModel, LowerCamelCaseModel, WithProjectIDMixin):

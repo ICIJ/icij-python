@@ -323,7 +323,7 @@ class Worker(
 
     @final
     async def save_error(self, error: TaskError):
-        self.error('Task(id="%s"): %s\n%s', error.task_id, error.title, error.detail)
+        self.error('Task(id="%s"): %s\n%s', error.task_id, error.name, error.trace())
         # Save the error in the appropriate location
         self.debug('Task(id="%s") saving error', error.task_id)
         await self._save_error(error)

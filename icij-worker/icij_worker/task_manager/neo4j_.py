@@ -13,10 +13,15 @@ from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_NODE,
     TASK_CANCEL_EVENT_REQUEUE,
     TASK_CREATED_AT,
+    TASK_ERROR_DETAIL_DEPRECATED,
     TASK_ERROR_ID,
+    TASK_ERROR_MESSAGE,
+    TASK_ERROR_NAME,
     TASK_ERROR_NODE,
     TASK_ERROR_OCCURRED_AT,
     TASK_ERROR_OCCURRED_TYPE,
+    TASK_ERROR_STACKTRACE,
+    TASK_ERROR_TITLE_DEPRECATED,
     TASK_HAS_RESULT_TYPE,
     TASK_ID,
     TASK_INPUTS,
@@ -282,3 +287,15 @@ CREATE (task)-[
     }})
 """
     await tx.run(query, taskId=task_id, requeue=requeue, createdAt=datetime.now())
+
+
+async def migrate_task_errors_v0_tx(tx: neo4j.AsyncSession):
+    query = f"""MATCH (error:{TASK_ERROR_NODE})
+// We leave the stacktrace and cause empty
+SET error.{TASK_ERROR_NAME} = error.{TASK_ERROR_TITLE_DEPRECATED},
+    error.{TASK_ERROR_MESSAGE} = error.{TASK_ERROR_DETAIL_DEPRECATED},
+    error.{TASK_ERROR_STACKTRACE} = []
+REMOVE error.{TASK_ERROR_TITLE_DEPRECATED}, error.{TASK_ERROR_DETAIL_DEPRECATED}
+RETURN error
+"""
+    await tx.run(query)

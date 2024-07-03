@@ -187,10 +187,12 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
                 " project's DB"
             )
         async with self._project_session(project_id) as sess:
+            error_props = error.dict(by_alias=True)
+            error_props["stacktrace"] = [
+                json.dumps(item) for item in error_props["stacktrace"]
+            ]
             await sess.execute_write(
-                _save_error_tx,
-                task_id=error.task_id,
-                error_props=error.dict(by_alias=True),
+                _save_error_tx, task_id=error.task_id, error_props=error_props
             )
 
     async def _acknowledge(self, task: Task, completed_at: datetime):

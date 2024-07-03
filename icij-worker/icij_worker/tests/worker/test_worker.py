@@ -229,8 +229,8 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
             error=TaskError(
                 id="",
                 task_id="some-id",
-                title="Recoverable",
-                detail="",
+                name="Recoverable",
+                message="i can recover from this",
                 occurred_at=datetime.now(),
             ),
         ),
@@ -251,8 +251,10 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     ]
     events = [e.dict(by_alias=True) for e in worker.published_events]
     event_errors = [e.pop("error") for e in events]
-    event_error_titles = [e["title"] if e is not None else e for e in event_errors]
+    event_error_titles = [e["name"] if e is not None else e for e in event_errors]
     assert event_error_titles == [None, "Recoverable", None, None, None]
+    event_error_titles = [e["message"] if e is not None else e for e in event_errors]
+    assert event_error_titles == [None, "i can recover from this", None, None, None]
     event_error_occurred_at = [
         isinstance(e["occurredAt"], datetime) if e else e for e in event_errors
     ]
@@ -295,7 +297,7 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
 
     assert len(saved_errors) == 1
     saved_error = saved_errors[0]
-    assert saved_error.title == "ValueError"
+    assert saved_error.name == "ValueError"
     assert isinstance(saved_error.occurred_at, datetime)
 
     expected_events = [
@@ -307,8 +309,8 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
             error=TaskError(
                 id="",
                 task_id="some-id",
-                title="ValueError",
-                detail="",
+                name="ValueError",
+                message="this is fatal",
                 occurred_at=datetime.now(),
             ),
         ),
@@ -319,7 +321,8 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     error_event = worker.published_events[-1]
     expected_error_event = expected_events[-1]
     assert isinstance(error_event.error, TaskError)
-    assert error_event.error.title == "ValueError"
+    assert error_event.error.name == "ValueError"
+    assert error_event.error.message == "this is fatal"
     assert isinstance(error_event.error.occurred_at, datetime)
     error_event = error_event.dict(by_alias=True)
     error_event.pop("error")
@@ -358,7 +361,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
 
     assert len(saved_errors) == 1
     saved_error = saved_errors[0]
-    assert saved_error.title == "UnregisteredTask"
+    assert saved_error.name == "UnregisteredTask"
     assert isinstance(saved_error.occurred_at, datetime)
 
     expected_events = [
@@ -369,8 +372,8 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
             error=TaskError(
                 id="error-id",
                 task_id="some-id",
-                title="UnregisteredTask",
-                detail="",
+                name="UnregisteredTask",
+                message="",
                 occurred_at=datetime.now(),
             ),
         ),
@@ -381,7 +384,8 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     error_event = worker.published_events[-1]
     expected_error_event = expected_events[-1]
     assert isinstance(error_event.error, TaskError)
-    assert error_event.error.title == "UnregisteredTask"
+    assert error_event.error.name == "UnregisteredTask"
+    assert error_event.error.message.startswith('UnregisteredTask task "i_dont_exist"')
     assert isinstance(error_event.error.occurred_at, datetime)
     error_event = error_event.dict(by_alias=True)
     error_event.pop("error")

@@ -26,7 +26,7 @@ from icij_worker import (
     WorkerConfig,
 )
 from icij_worker.event_publisher.amqp import AMQPPublisher, Exchange, Routing
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.task import CancelledTaskEvent, StacktraceItem
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     RABBITMQ_TEST_HOST,
@@ -375,8 +375,9 @@ async def test_publish_error(
     error = TaskError(
         id="error-id",
         task_id=task.id,
-        title="someErrorTitle",
-        detail="with_details",
+        name="someErrorTitle",
+        message="with_details",
+        stacktrace=[StacktraceItem(name="someErrorTitle", file="somefile", lineno=666)],
         occurred_at=datetime.now(),
     )
 
