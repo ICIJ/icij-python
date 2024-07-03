@@ -6,7 +6,7 @@
 
 - neo4j test utils (useful `pytest` fixtures)
 - lightweight migration lib
-- split of ICIJ's project across neo4j DBs
+- handles enterprise support and multiple neo4j DBs
 
 ## `logging`
 

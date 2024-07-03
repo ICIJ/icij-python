@@ -1,9 +1,9 @@
 from unittest.mock import AsyncMock
 
-from icij_common.neo4j.projects import create_project_registry_db
+from icij_common.neo4j.db import create_databases_registry_db
 
 
-async def test_should_create_project_registry_db_with_enterprise_distribution(
+async def test_should_create_databases_registry_db_with_enterprise_distribution(
     mock_enterprise,
 ):
     # pylint: disable=unused-argument
@@ -11,7 +11,7 @@ async def test_should_create_project_registry_db_with_enterprise_distribution(
     mocked_driver = AsyncMock()
 
     # When
-    await create_project_registry_db(mocked_driver)
+    await create_databases_registry_db(mocked_driver)
 
     # Then
     mocked_driver.execute_query.assert_called_once_with(

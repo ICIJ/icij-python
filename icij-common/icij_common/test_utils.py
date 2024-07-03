@@ -8,7 +8,7 @@ from typing import Awaitable, Callable, Optional
 
 import pytest
 
-TEST_PROJECT = "test_project"
+TEST_DB = "test_db"
 
 
 def true_after(
