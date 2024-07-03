@@ -12,23 +12,24 @@ from typing import Any, Callable, List, Optional, Sequence, Union
 
 import neo4j
 from neo4j.exceptions import ConstraintError
+from pydantic import Field
 
 from icij_common.neo4j.constants import (
     MIGRATION_COMPLETED,
     MIGRATION_LABEL,
     MIGRATION_NODE,
-    MIGRATION_PROJECT,
+    MIGRATION_DB,
     MIGRATION_STARTED,
     MIGRATION_STATUS,
     MIGRATION_VERSION,
 )
 from icij_common.pydantic_utils import NoEnumModel
-from .projects import (
-    Project,
-    create_project_db,
-    create_project_tx,
-    project_db_session,
-    projects_tx,
+from .db import (
+    Database,
+    create_db,
+    create_database_tx,
+    db_specific_session,
+    databases_tx,
     registry_db_session,
 )
 
@@ -80,7 +81,7 @@ class Neo4jMigration(_BaseMigration):
     # relationships properties which prevents from implementing the locking mechanism
     # properly. We hence enforce unique constraint on
     # (_Migration.version, _Migration.project)
-    project: str
+    db: str = Field(alias="project")
     started: datetime
     completed: Optional[datetime] = None
     status: MigrationStatus = MigrationStatus.IN_PROGRESS
@@ -104,9 +105,9 @@ MigrationRegistry: Sequence[Migration]
 
 async def _migrate_with_lock(
     *,
-    project_session: neo4j.AsyncSession,
+    db_session: neo4j.AsyncSession,
     registry_session: neo4j.AsyncSession,
-    project: str,
+    db: str,
     migration: Migration,
 ):
     # Note: all migrations.py should be carefully tested otherwise they will lock
@@ -116,7 +117,7 @@ async def _migrate_with_lock(
     logger.debug("Trying to run migration to %s...", migration.label)
     await registry_session.execute_write(
         create_migration_tx,
-        project=project,
+        db=db,
         migration_version=str(migration.version),
         migration_label=migration.label,
     )
@@ -125,15 +126,15 @@ async def _migrate_with_lock(
     sig = signature(migration.migration_fn)
     first_param = list(sig.parameters)[0]
     if first_param == "tx":
-        await project_session.execute_write(migration.migration_fn)
+        await db_session.execute_write(migration.migration_fn)
     elif first_param == "sess":
-        await migration.migration_fn(project_session)
+        await migration.migration_fn(db_session)
     else:
         raise ValueError(f"Invalid migration function: {migration.migration_fn}")
     # Finally free the lock
     await registry_session.execute_write(
         complete_migration_tx,
-        project=project,
+        db=db,
         migration_version=str(migration.version),
     )
     logger.debug("Marked %s as complete !", migration.label)
@@ -142,12 +143,12 @@ async def _migrate_with_lock(
 async def create_migration_tx(
     tx: neo4j.AsyncTransaction,
     *,
-    project: str,
+    db: str,
     migration_version: str,
     migration_label: str,
 ) -> Neo4jMigration:
     query = f"""CREATE (m:{MIGRATION_NODE} {{
-    {MIGRATION_PROJECT}: $project,
+    {MIGRATION_DB}: $db,
     {MIGRATION_LABEL}: $label,
     {MIGRATION_VERSION}: $version,
     {MIGRATION_STATUS}: $status,
@@ -158,30 +159,30 @@ RETURN m as migration"""
         query,
         label=migration_label,
         version=migration_version,
-        project=project,
+        db=db,
         status=MigrationStatus.IN_PROGRESS.value,
         started=datetime.now(),
     )
     migration = await res.single()
     if migration is None:
-        raise ValueError(f"Couldn't find migration {migration_version} for {project}")
+        raise ValueError(f"Couldn't find migration {migration_version} for {db}")
     migration = Neo4jMigration.from_neo4j(migration)
     return migration
 
 
 async def complete_migration_tx(
-    tx: neo4j.AsyncTransaction, *, project: str, migration_version: str
+    tx: neo4j.AsyncTransaction, *, db: str, migration_version: str
 ) -> Neo4jMigration:
     query = f"""MATCH (m:{MIGRATION_NODE} {{
         {MIGRATION_VERSION}: $version,
-        {MIGRATION_PROJECT}: $project
+        {MIGRATION_DB}: $db
      }})
 SET m += {{ {MIGRATION_STATUS}: $status, {MIGRATION_COMPLETED}: $completed }} 
 RETURN m as migration"""
     res = await tx.run(
         query,
         version=migration_version,
-        project=project,
+        db=db,
         status=MigrationStatus.DONE.value,
         completed=datetime.now(),
     )
@@ -190,13 +191,11 @@ RETURN m as migration"""
     return migration
 
 
-async def project_migrations_tx(
-    tx: neo4j.AsyncTransaction, project: str
-) -> List[Neo4jMigration]:
-    query = f"""MATCH (m:{MIGRATION_NODE} {{ {MIGRATION_PROJECT}: $project }})
+async def db_migrations_tx(tx: neo4j.AsyncTransaction, db: str) -> List[Neo4jMigration]:
+    query = f"""MATCH (m:{MIGRATION_NODE} {{ {MIGRATION_DB}: $db }})
 RETURN m as migration
 """
-    res = await tx.run(query, project=project)
+    res = await tx.run(query, db=db)
     migrations = [Neo4jMigration.from_neo4j(rec) async for rec in res]
     return migrations
 
@@ -208,10 +207,10 @@ DETACH DELETE m"""
         await sess.run(query)
 
 
-async def retrieve_projects(neo4j_driver: neo4j.AsyncDriver) -> List[Project]:
+async def retrieve_dbs(neo4j_driver: neo4j.AsyncDriver) -> List[Database]:
     async with registry_db_session(neo4j_driver) as sess:
-        projects = await sess.execute_read(projects_tx)
-    return projects
+        dbs = await sess.execute_read(databases_tx)
+    return dbs
 
 
 async def migrate_db_schemas(
@@ -221,39 +220,37 @@ async def migrate_db_schemas(
     timeout_s: float,
     throttle_s: float,
 ):
-    projects = await retrieve_projects(neo4j_driver)
+    dbs = await retrieve_dbs(neo4j_driver)
     tasks = [
-        migrate_project_db_schema(
+        migrate_db_schema(
             neo4j_driver,
             registry,
-            project=p.name,
+            db=p.name,
             timeout_s=timeout_s,
             throttle_s=throttle_s,
         )
-        for p in projects
+        for p in dbs
     ]
     await asyncio.gather(*tasks)
 
 
-async def migrate_project_db_schema(
+async def migrate_db_schema(
     neo4j_driver: neo4j.AsyncDriver,
     registry: MigrationRegistry,
-    project: str,
+    db: str,
     *,
     timeout_s: float,
     throttle_s: float,
 ):
-    logger.info("Migrating project %s", project)
+    logger.info("Migrating DB %s", db)
     start = time.monotonic()
     if not registry:
         return
     todo = sorted(registry, key=lambda m: m.version)
     async with registry_db_session(neo4j_driver) as registry_sess:
-        async with project_db_session(neo4j_driver, project=project) as project_sess:
+        async with db_specific_session(neo4j_driver, db=db) as db_session:
             while "Waiting for DB to be migrated or for a timeout":
-                migrations = await registry_sess.execute_read(
-                    project_migrations_tx, project=project
-                )
+                migrations = await registry_sess.execute_read(db_migrations_tx, db=db)
                 in_progress = [
                     m for m in migrations if m.status is MigrationStatus.IN_PROGRESS
                 ]
@@ -277,9 +274,9 @@ async def migrate_project_db_schema(
                         break
                     try:
                         await _migrate_with_lock(
-                            project_session=project_sess,
+                            db_session=db_session,
                             registry_session=registry_sess,
-                            project=project,
+                            db=db,
                             migration=todo[0],
                         )
                         todo = todo[1:]
@@ -299,7 +296,7 @@ async def migrate_project_db_schema(
                 continue
 
 
-async def init_project(
+async def init_database(
     neo4j_driver: neo4j.AsyncDriver,
     name: str,
     registry: MigrationRegistry,
@@ -307,18 +304,18 @@ async def init_project(
     timeout_s: float,
     throttle_s: float,
 ) -> bool:
-    # Create project DB
-    await create_project_db(neo4j_driver, project=name)
+    # Create DB
+    await create_db(neo4j_driver, db=name)
 
-    # Create project
+    # Record the DB in the registry
     async with registry_db_session(neo4j_driver) as sess:
-        project, already_exists = await sess.execute_write(create_project_tx, name=name)
+        db, already_exists = await sess.execute_write(create_database_tx, name=name)
 
     # Migrate it
-    await migrate_project_db_schema(
+    await migrate_db_schema(
         neo4j_driver,
         registry=registry,
-        project=project.name,
+        db=db.name,
         timeout_s=timeout_s,
         throttle_s=throttle_s,
     )

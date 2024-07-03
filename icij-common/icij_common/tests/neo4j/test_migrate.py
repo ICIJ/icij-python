@@ -9,25 +9,25 @@ from neo4j.exceptions import ClientError
 
 import icij_common
 from icij_common.neo4j import migrate
-from icij_common.neo4j.constants import PROJECT_REGISTRY_DB
+from icij_common.neo4j.constants import DATABASE_REGISTRY_DB
 from icij_common.neo4j.migrate import (
     Migration,
     MigrationError,
     MigrationStatus,
     Neo4jMigration,
-    init_project,
+    init_database,
     migrate_db_schemas,
-    migrate_project_db_schema,
-    retrieve_projects,
+    migrate_db_schema,
+    retrieve_dbs,
 )
-from icij_common.neo4j.projects import Project, add_project_support_migration_tx
+from icij_common.neo4j.db import Database, add_multidatabase_support_migration_tx
 from icij_common.neo4j.test_utils import mock_enterprise_, mocked_is_enterprise, wipe_db
-from icij_common.test_utils import TEST_PROJECT, fail_if_exception
+from icij_common.test_utils import TEST_DB, fail_if_exception
 
 V_0_1_0 = Migration(
     version="0.1.0",
-    label="Create projects",
-    migration_fn=add_project_support_migration_tx,
+    label="Create databases",
+    migration_fn=add_multidatabase_support_migration_tx,
 )
 _BASE_REGISTRY = [V_0_1_0]
 
@@ -36,8 +36,8 @@ _BASE_REGISTRY = [V_0_1_0]
 async def _migration_index_and_constraint(
     neo4j_test_driver: neo4j.AsyncDriver,
 ) -> neo4j.AsyncDriver:
-    await init_project(
-        neo4j_test_driver, TEST_PROJECT, _BASE_REGISTRY, timeout_s=30, throttle_s=0.1
+    await init_database(
+        neo4j_test_driver, TEST_DB, _BASE_REGISTRY, timeout_s=30, throttle_s=0.1
     )
     return neo4j_test_driver
 
@@ -141,7 +141,7 @@ async def test_migrate_db_schema_should_raise_after_timeout(
     # When
     query = """CREATE (:_Migration {
     version: $version,
-    project: $project,
+    project: $db,
     label: $label,
     started: $started 
  })"""
@@ -149,7 +149,7 @@ async def test_migrate_db_schema_should_raise_after_timeout(
     await neo4j_driver.execute_query(
         query,
         version=str(_MIGRATION_0.version),
-        project=TEST_PROJECT,
+        db=TEST_DB,
         label=_MIGRATION_0.label,
         started=datetime.now(),
     )
@@ -169,11 +169,11 @@ async def test_migrate_db_schema_should_wait_when_other_migration_in_progress(
     caplog.set_level(logging.INFO, logger=icij_common.__name__)
 
     async def mocked_get_migrations(
-        sess: neo4j.AsyncSession, project: str  # pylint: disable=unused-argument
+        sess: neo4j.AsyncSession, db: str  # pylint: disable=unused-argument
     ) -> List[Neo4jMigration]:
         return [
             Neo4jMigration(
-                project=TEST_PROJECT,
+                db=TEST_DB,
                 version="0.1.0",
                 label="migration in progress",
                 status=MigrationStatus.IN_PROGRESS,
@@ -181,7 +181,7 @@ async def test_migrate_db_schema_should_wait_when_other_migration_in_progress(
             )
         ]
 
-    monkeypatch.setattr(migrate, "project_migrations_tx", mocked_get_migrations)
+    monkeypatch.setattr(migrate, "db_migrations_tx", mocked_get_migrations)
 
     # When/Then
     expected_msg = "Migration timeout expired "
@@ -213,17 +213,17 @@ async def test_migrate_db_schema_should_wait_when_other_migration_just_started(
     caplog.set_level(logging.INFO, logger=icij_common.__name__)
 
     async def mocked_get_migrations(
-        sess: neo4j.AsyncSession, project: str  # pylint: disable=unused-argument
+        sess: neo4j.AsyncSession, db: str  # pylint: disable=unused-argument
     ) -> List[Neo4jMigration]:
         return []
 
     # No migration in progress
-    monkeypatch.setattr(migrate, "project_migrations_tx", mocked_get_migrations)
+    monkeypatch.setattr(migrate, "db_migrations_tx", mocked_get_migrations)
 
     # However we simulate _MIGRATION_0 being running just before our migrate_db_schema
     # by inserting it in progress
     query = """CREATE (m:_Migration {
-    project: $project,
+    project: $db,
     version: $version, 
     label: 'someLabel', 
     started: $started
@@ -231,7 +231,7 @@ async def test_migrate_db_schema_should_wait_when_other_migration_just_started(
 """
     await neo4j_driver.execute_query(
         query,
-        project="test_project",
+        db="test_db",
         version=str(_MIGRATION_0.version),
         label=str(_MIGRATION_0.label),
         started=datetime.now(),
@@ -261,7 +261,7 @@ async def test_migrate_db_schema_should_wait_when_other_migration_just_started(
 
 
 @pytest.mark.parametrize("enterprise", [True, False])
-async def test_retrieve_project_dbs(
+async def test_retrieve_dbs(
     _migration_index_and_constraint: neo4j.AsyncDriver,
     # pylint: disable=invalid-name
     enterprise: bool,
@@ -273,10 +273,10 @@ async def test_retrieve_project_dbs(
     if enterprise:
         mock_enterprise_(monkeypatch)
 
-    projects = await retrieve_projects(neo4j_driver)
+    dbs = await retrieve_dbs(neo4j_driver)
 
     # Then
-    assert projects == [Project(name=TEST_PROJECT)]
+    assert dbs == [Database(name=TEST_DB)]
 
 
 async def test_migrate_should_use_registry_db_when_with_enterprise_support(
@@ -287,9 +287,7 @@ async def test_migrate_should_use_registry_db_when_with_enterprise_support(
     # Given
     registry = _BASE_REGISTRY
 
-    monkeypatch.setattr(
-        icij_common.neo4j.projects, "is_enterprise", mocked_is_enterprise
-    )
+    monkeypatch.setattr(icij_common.neo4j.db, "is_enterprise", mocked_is_enterprise)
     neo4j_driver = _migration_index_and_constraint
 
     # When/Then
@@ -302,32 +300,30 @@ async def test_migrate_should_use_registry_db_when_with_enterprise_support(
 
 
 @pytest.mark.parametrize("is_enterprise", [True, False])
-async def test_init_project(
+async def test_init_database(
     neo4j_test_driver: neo4j.AsyncDriver, is_enterprise: bool, monkeypatch
 ):
     # Given
     neo4j_driver = neo4j_test_driver
-    project_name = "test-project"
+    db = "test-db"
     registry = [V_0_1_0]
 
     if is_enterprise:
         mock_enterprise_(monkeypatch)
         with pytest.raises(ClientError) as ctx:
-            await init_project(
-                neo4j_driver, project_name, registry, timeout_s=1, throttle_s=1
-            )
+            await init_database(neo4j_driver, db, registry, timeout_s=1, throttle_s=1)
         expected_code = "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
         assert ctx.value.code == expected_code
     else:
         # When
-        existed = await init_project(
-            neo4j_driver, project_name, registry, timeout_s=1, throttle_s=1
+        existed = await init_database(
+            neo4j_driver, db, registry, timeout_s=1, throttle_s=1
         )
         assert not existed
 
         # Then
-        projects = await retrieve_projects(neo4j_driver)
-        assert projects == [Project(name=project_name)]
+        dbs = await retrieve_dbs(neo4j_driver)
+        assert dbs == [Database(name=db)]
         db_migrations_recs, _, _ = await neo4j_driver.execute_query(
             "MATCH (m:_Migration) RETURN m as migration"
         )
@@ -340,24 +336,24 @@ async def test_init_project(
         assert migration.version == V_0_1_0.version
 
 
-async def test_init_project_should_be_idempotent(neo4j_test_driver: neo4j.AsyncDriver):
+async def test_init_database_should_be_idempotent(neo4j_test_driver: neo4j.AsyncDriver):
     # Given
     neo4j_driver = neo4j_test_driver
-    project_name = "test-project"
+    db = "test-db"
     registry = [V_0_1_0]
-    await init_project(neo4j_driver, project_name, registry, timeout_s=1, throttle_s=1)
+    await init_database(neo4j_driver, db, registry, timeout_s=1, throttle_s=1)
 
     # When
     with fail_if_exception("init_project is not idempotent"):
-        existed = await init_project(
-            neo4j_driver, project_name, registry, timeout_s=1, throttle_s=1
+        existed = await init_database(
+            neo4j_driver, db, registry, timeout_s=1, throttle_s=1
         )
 
     # Then
     assert existed
 
-    projects = await retrieve_projects(neo4j_driver)
-    assert projects == [Project(name=project_name)]
+    dbs = await retrieve_dbs(neo4j_driver)
+    assert dbs == [Database(name=db)]
     db_migrations_recs, _, _ = await neo4j_driver.execute_query(
         "MATCH (m:_Migration) RETURN m as migration"
     )
@@ -369,22 +365,20 @@ async def test_init_project_should_be_idempotent(neo4j_test_driver: neo4j.AsyncD
     assert migration.version == V_0_1_0.version
 
 
-async def test_init_project_should_raise_for_reserved_name(
+async def test_init_database_should_raise_for_reserved_name(
     neo4j_test_driver_session: neo4j.AsyncDriver,
 ):
     # Given
     neo4j_driver = neo4j_test_driver_session
-    project_name = PROJECT_REGISTRY_DB
+    db = DATABASE_REGISTRY_DB
 
     # When/then
     expected = (
         'Bad luck, name "datashare-project-registry" is reserved for'
-        " internal use. Can't initialize project"
+        " internal use. Can't initialize database"
     )
     with pytest.raises(ValueError, match=expected):
-        await init_project(
-            neo4j_driver, project_name, registry=[], timeout_s=1, throttle_s=1
-        )
+        await init_database(neo4j_driver, db, registry=[], timeout_s=1, throttle_s=1)
 
 
 @pytest.mark.pull("131")
@@ -394,20 +388,18 @@ async def test_migrate_project_db_schema_should_read_migrations_from_registry(
 ):
     # Given
     registry = [V_0_1_0.copy(update={"status": MigrationStatus.DONE})]
-    monkeypatch.setattr(
-        icij_common.neo4j.projects, "is_enterprise", mocked_is_enterprise
-    )
+    monkeypatch.setattr(icij_common.neo4j.db, "is_enterprise", mocked_is_enterprise)
     with mock.patch(
         "icij_common.neo4j.migrate.registry_db_session"
     ) as mocked_registry_sess:
-        with mock.patch("icij_common.neo4j.migrate.project_db_session"):
+        with mock.patch("icij_common.neo4j.migrate.db_specific_session"):
             mocked_sess = mock.AsyncMock()
             mocked_registry_sess.return_value.__aenter__.return_value = mocked_sess
             mocked_sess.execute_read.return_value = registry
-            await migrate_project_db_schema(
+            await migrate_db_schema(
                 neo4j_test_driver_session,
                 _BASE_REGISTRY,
-                TEST_PROJECT,
+                TEST_DB,
                 timeout_s=1,
                 throttle_s=1,
             )

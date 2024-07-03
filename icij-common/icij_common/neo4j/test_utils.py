@@ -7,7 +7,7 @@ import pytest
 from neo4j import AsyncGraphDatabase
 
 import icij_common
-from icij_common.neo4j.projects import NEO4J_COMMUNITY_DB
+from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
 
 NEO4J_TEST_PORT = 7688
 NEO4J_TEST_USER = "neo4j"
@@ -92,14 +92,14 @@ async def mocked_is_enterprise(_: neo4j.AsyncDriver) -> bool:
 
 
 @contextlib.asynccontextmanager
-async def _mocked_project_db_session(
-    neo4j_driver: neo4j.AsyncDriver, project: str  # pylint: disable=unused-argument
+async def _mocked_db_specific_session(
+    neo4j_driver: neo4j.AsyncDriver, db: str  # pylint: disable=unused-argument
 ) -> neo4j.AsyncSession:
     async with neo4j_driver.session(database=NEO4J_COMMUNITY_DB) as sess:
         yield sess
 
 
-async def _mocked_project_registry_db(
+async def _mocked_db_registry_db(
     neo4j_driver: neo4j.AsyncDriver,  # pylint: disable=unused-argument
 ) -> str:
     return NEO4J_COMMUNITY_DB
@@ -112,18 +112,12 @@ def mock_enterprise(monkeypatch):
 
 def mock_enterprise_(monkeypatch):
     monkeypatch.setattr(
-        icij_common.neo4j.projects, "project_db_session", _mocked_project_db_session
+        icij_common.neo4j.db, "db_specific_session", _mocked_db_specific_session
     )
     monkeypatch.setattr(
-        icij_common.neo4j.migrate,
-        "project_db_session",
-        _mocked_project_db_session,
+        icij_common.neo4j.migrate, "db_specific_session", _mocked_db_specific_session
     )
     monkeypatch.setattr(
-        icij_common.neo4j.projects,
-        "project_registry_db",
-        _mocked_project_registry_db,
+        icij_common.neo4j.db, "database_registry_db", _mocked_db_registry_db
     )
-    monkeypatch.setattr(
-        icij_common.neo4j.projects, "is_enterprise", mocked_is_enterprise
-    )
+    monkeypatch.setattr(icij_common.neo4j.db, "is_enterprise", mocked_is_enterprise)
