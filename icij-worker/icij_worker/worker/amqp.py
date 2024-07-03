@@ -100,7 +100,7 @@ class AMQPWorker(Worker):
         self._connection_timeout_s = connection_timeout_s
         self._inactive_after_s = inactive_after_s
         self._publisher = self._create_publisher()
-        self._task_connection: Optional[AbstractRobustConnection] = None
+        self._connection_: Optional[AbstractRobustConnection] = None
         self._task_queue_: Optional[RobustQueue] = None
         self._task_queue_iterator: Optional[AbstractQueueIterator] = None
         self._cancel_evt_connection: Optional[AbstractRobustConnection] = None
@@ -114,11 +114,11 @@ class AMQPWorker(Worker):
     async def _aenter__(self):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
         await self._exit_stack.enter_async_context(self._publisher)
-        self._task_connection = await self._make_connection()
-        await self._exit_stack.enter_async_context(self._task_connection)
+        self._connection_ = await self._make_connection()
+        await self._exit_stack.enter_async_context(self._connection_)
         # This one will automatically get destroyed with the connection
         self._task_queue_iterator = await self._get_queue_iterator(
-            self._task_connection,
+            self._connection_,
             self._task_routing(),
             create_queue=self._declare_exchanges,
             exchange_type=ExchangeType.DIRECT,
@@ -280,6 +280,16 @@ class AMQPWorker(Worker):
             default_queue="queueCancelledEvents",
         )
 
+    @property
+    def _connection(self) -> AbstractRobustConnection:
+        if self._connection_ is None:
+            msg = (
+                f"Publisher has no connection, please call"
+                f" {AMQPPublisher.__aenter__.__name__}"
+            )
+            raise ValueError(msg)
+        return self._connection_
+
     def _create_publisher(self) -> AMQPPublisher:
         return AMQPPublisher(
             self._logger,
@@ -287,6 +297,7 @@ class AMQPWorker(Worker):
             connection_timeout_s=self._reconnection_wait_s,
             reconnection_wait_s=self._reconnection_wait_s,
             app_id=self._app.name,
+            connection=self._connection,
         )
 
     @classmethod
