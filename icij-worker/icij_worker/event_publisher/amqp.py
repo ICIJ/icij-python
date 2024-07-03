@@ -14,6 +14,7 @@ from aio_pika import (
     RobustConnection as _RobustConnection,
     connect_robust,
 )
+from aio_pika.abc import AbstractRobustConnection
 
 from icij_common.logging_utils import LogWithNameMixin
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
@@ -53,13 +54,14 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         app_id: Optional[str] = None,
+        connection: Optional[AbstractRobustConnection] = None,
     ):
         if logger is None:
             logger = logging.getLogger(__name__)
         LogWithNameMixin.__init__(self, logger)
         self._app_id = app_id
         self._broker_url = broker_url
-        self._connection_: Optional[RobustConnection] = None
+        self._connection_ = connection
         self._channel_: Optional[RobustChannel] = None
         self._evt_exchange: Optional[AioPikaExchange] = None
         self._res_exchange: Optional[AioPikaExchange] = None
@@ -169,7 +171,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         )
 
     @property
-    def _connection(self) -> RobustConnection:
+    def _connection(self) -> AbstractRobustConnection:
         if self._connection_ is None:
             msg = (
                 f"Publisher has no connection, please call"
@@ -190,13 +192,14 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
 
     async def _connection_workflow(self):
         self.debug("creating connection...")
-        self._connection_ = await connect_robust(
-            self._broker_url,
-            timeout=self._connection_timeout_s,
-            reconnect_interval=self._reconnection_wait_s,
-            connection_class=RobustConnection,
-        )
-        await self._exit_stack.enter_async_context(self._connection)
+        if self._connection_ is None:
+            self._connection_ = await connect_robust(
+                self._broker_url,
+                timeout=self._connection_timeout_s,
+                reconnect_interval=self._reconnection_wait_s,
+                connection_class=RobustConnection,
+            )
+            await self._exit_stack.enter_async_context(self._connection)
         self.debug("creating channel...")
         self._channel_ = await self._connection.channel()
         await self._exit_stack.enter_async_context(self._channel)
