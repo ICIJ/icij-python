@@ -14,7 +14,7 @@ from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import UnknownTask
-from icij_worker.task import Task, TaskEvent, TaskStatus
+from icij_worker.objects import Task, TaskEvent, TaskStatus
 
 
 class Neo4jTaskNamespaceMixin:

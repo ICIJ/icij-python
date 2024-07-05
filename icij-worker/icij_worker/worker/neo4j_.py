@@ -50,7 +50,7 @@ from icij_worker import (
 )
 from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
 from icij_worker.exceptions import TaskAlreadyReserved, UnknownTask
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.objects import CancelledTaskEvent
 
 _TASK_MANDATORY_FIELDS_BY_ALIAS = {
     f for f in Task.schema(by_alias=True)["required"] if f != "id"

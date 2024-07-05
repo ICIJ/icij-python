@@ -33,7 +33,7 @@ from icij_worker.event_publisher.amqp import (
     RobustConnection,
     Routing,
 )
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.objects import CancelledTaskEvent
 from icij_worker.utils.from_config import T
 
 # TODO: remove this when project information is inside the tasks

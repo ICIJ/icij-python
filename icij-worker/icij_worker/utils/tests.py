@@ -44,7 +44,7 @@ from icij_worker import (
 )
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskAlreadyExists, TaskQueueIsFull, UnknownTask
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.objects import CancelledTaskEvent
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
