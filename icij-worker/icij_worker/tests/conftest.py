@@ -21,17 +21,19 @@ from icij_common.logging_utils import (
     DATE_FMT,
     STREAM_HANDLER_FMT,
 )
+from icij_common.neo4j.db import (
+    add_multidatabase_support_migration_tx,
+)
 from icij_common.neo4j.migrate import (
     Migration,
-    init_project,
+    init_database,
 )
-from icij_common.neo4j.projects import add_project_support_migration_tx
 
 # noinspection PyUnresolvedReferences
 from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
-from icij_common.test_utils import TEST_PROJECT
+from icij_common.test_utils import TEST_DB
 from icij_worker import AsyncApp, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.task import CancelledTaskEvent, TaskStatus
@@ -65,7 +67,7 @@ def rabbit_mq_test_session() -> aiohttp.ClientSession:
 
 
 async def migration_v_0_1_0_tx(tx: neo4j.AsyncTransaction):
-    await add_project_support_migration_tx(tx)
+    await add_multidatabase_support_migration_tx(tx)
     await add_support_for_async_task_tx(tx)
 
 
@@ -95,7 +97,9 @@ def amqp_loggers():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def populate_tasks(neo4j_async_app_driver: neo4j.AsyncDriver) -> List[Task]:
+async def populate_tasks(
+    neo4j_async_app_driver: neo4j.AsyncDriver,
+) -> List[Task]:
     query_0 = """CREATE (task:_Task:QUEUED {
     id: 'task-0', 
     type: 'hello_world',
@@ -106,7 +110,7 @@ RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now()
     )
-    t_0 = Task.from_neo4j(recs_0[0], project_id=TEST_PROJECT)
+    t_0 = Task.from_neo4j(recs_0[0])
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
     type: 'hello_world',
@@ -119,7 +123,7 @@ RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
         query_1, now=datetime.now()
     )
-    t_1 = Task.from_neo4j(recs_1[0], project_id=TEST_PROJECT)
+    t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
 
 
@@ -133,7 +137,7 @@ RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now(), taskId=populate_tasks[0].id
     )
-    return [CancelledTaskEvent.from_neo4j(recs_0[0], project_id=TEST_PROJECT)]
+    return [CancelledTaskEvent.from_neo4j(recs_0[0])]
 
 
 class Recoverable(ValueError):
@@ -167,9 +171,9 @@ def test_failing_async_app() -> AsyncApp:
 async def neo4j_async_app_driver(
     neo4j_test_driver: neo4j.AsyncDriver,
 ) -> neo4j.AsyncDriver:
-    await init_project(
+    await init_database(
         neo4j_test_driver,
-        name=TEST_PROJECT,
+        name=TEST_DB,
         registry=TEST_MIGRATIONS,
         timeout_s=0.001,
         throttle_s=0.001,
@@ -323,7 +327,6 @@ class TestableAMQPPublisher(AMQPPublisher):
 def hello_world_task() -> Task:
     task = Task(
         id="some-id",
-        project_id=TEST_PROJECT,
         type="hello_world",
         inputs={"greeted": "world"},
         status=TaskStatus.CREATED,

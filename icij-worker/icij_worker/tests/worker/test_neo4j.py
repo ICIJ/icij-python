@@ -6,20 +6,19 @@ from typing import List
 import neo4j
 import pytest
 
-from icij_common.neo4j.projects import project_db_session
+from icij_common.neo4j.db import db_specific_session
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_PROJECT, fail_if_exception
+from icij_common.test_utils import TEST_DB, fail_if_exception
 from icij_worker import (
     AsyncApp,
     Neo4JTaskManager,
     Neo4jWorker,
-    Task,
     TaskError,
     TaskEvent,
     TaskResult,
     TaskStatus,
 )
-from icij_worker.task import CancelledTaskEvent, StacktraceItem
+from icij_worker.task import CancelledTaskEvent, StacktraceItem, Task
 
 
 @pytest.fixture(scope="function")
@@ -36,10 +35,10 @@ def worker(
     return worker
 
 
-async def _count_locks(driver: neo4j.AsyncDriver, project: str) -> int:
+async def _count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
     # Now let's check that no lock if left in the DB
     count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
-    async with project_db_session(driver, project=project) as sess:
+    async with db_specific_session(driver, db=db) as sess:
         recs = await sess.run(count_locks_query)
         counts = await recs.single(strict=True)
     return counts["nLocks"]
@@ -48,7 +47,7 @@ async def _count_locks(driver: neo4j.AsyncDriver, project: str) -> int:
 async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWorker):
     # pylint: disable=unused-argument
     # Given
-    project = TEST_PROJECT
+    db = TEST_DB
     # When
     task = asyncio.create_task(worker.consume())
     # Then
@@ -58,7 +57,7 @@ async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWork
 
     # Now let's check that no lock if left in the DB
     count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
-    async with project_db_session(worker.driver, project) as sess:
+    async with db_specific_session(worker.driver, db) as sess:
         recs = await sess.run(count_locks_query)
         counts = await recs.single(strict=True)
     assert counts["nLocks"] == 1
@@ -78,7 +77,6 @@ async def test_worker_consume_cancel_event(
         pytest.fail(f"failed to consume task in less than {timeout}s")
     event = task.result()
     assert event == populate_cancel_events[0]
-    assert event.project_id == TEST_PROJECT
 
 
 async def test_worker_negatively_acknowledge(
@@ -89,7 +87,7 @@ async def test_worker_negatively_acknowledge(
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
     # When
     task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, project=task.project_id)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 1
     await worker.negatively_acknowledge(task, requeue=False)
     nacked = await task_manager.get_task(task_id=task.id)
@@ -98,7 +96,7 @@ async def test_worker_negatively_acknowledge(
     update = {"status": TaskStatus.ERROR}
     expected_nacked = safe_copy(task, update=update)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, project=task.project_id)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 0
 
 
@@ -108,27 +106,25 @@ async def test_worker_negatively_acknowledge_and_requeue(
     # pylint: disable=unused-argument
     # Given
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
-        project_id=project,
         id="some-id",
         type="hello_world",
         created_at=created_at,
         status=TaskStatus.CREATED,
     )
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 0
 
     # When
-    await task_manager.enqueue(task)
+    await task_manager.enqueue(task, db=TEST_DB)
     task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
-    event = TaskEvent(task_id=task.id, progress=50.0)
-    await worker.publish_event(event, task)
+    event = TaskEvent.from_task(task=task, progress=50.0)
+    await worker.publish_event(event)
     with_progress = safe_copy(task, update={"progress": event.progress})
     await worker.negatively_acknowledge(task, requeue=True)
     nacked = await task_manager.get_task(task_id=task.id)
@@ -137,7 +133,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
     update = {"status": TaskStatus.QUEUED, "progress": 0.0, "retries": 1.0}
     expected_nacked = safe_copy(with_progress, update=update)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 0
 
 
@@ -148,27 +144,25 @@ async def test_worker_negatively_acknowledge_and_cancel(
     # pylint: disable=unused-argument
     # Given
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
-    project = TEST_PROJECT
     created_at = datetime.now()
     task = Task(
         id="some-id",
         type="hello_world",
-        project_id=TEST_PROJECT,
         created_at=created_at,
         status=TaskStatus.CREATED,
     )
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 0
 
     # When
-    await task_manager.enqueue(task)
+    await task_manager.enqueue(task, db=TEST_DB)
     task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
-    event = TaskEvent(task_id=task.id, progress=50.0)
-    await worker.publish_event(event, task)
+    event = TaskEvent.from_task(task, progress=50.0)
+    await worker.publish_event(event)
     with_progress = safe_copy(task, update={"progress": event.progress})
     await worker.negatively_acknowledge(task, cancel=True, requeue=requeue)
     nacked = await task_manager.get_task(task_id=task.id)
@@ -184,18 +178,17 @@ async def test_worker_negatively_acknowledge_and_cancel(
     expected_nacked = safe_copy(with_progress, update=update)
     expected_nacked = expected_nacked.dict(exclude_unset=True)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, project=project)
+    n_locks = await _count_locks(worker.driver, db=TEST_DB)
     assert n_locks == 0
 
 
 async def test_worker_save_result(populate_tasks: List[Task], worker: Neo4jWorker):
     # Given
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
-    project = TEST_PROJECT
     task = populate_tasks[0]
     assert task.status == TaskStatus.QUEUED
     result = "hello everyone"
-    task_result = TaskResult(task_id=task.id, project_id=project, result=result)
+    task_result = TaskResult.from_task(task=task, result=result)
 
     # When
     await worker.save_result(result=task_result)
@@ -211,11 +204,10 @@ async def test_worker_should_raise_when_saving_existing_result(
     populate_tasks: List[Task], worker: Neo4jWorker
 ):
     # Given
-    project = TEST_PROJECT
     task = populate_tasks[0]
     assert task.status == TaskStatus.QUEUED
     result = "hello everyone"
-    task_result = TaskResult(task_id=task.id, project_id=project, result=result)
+    task_result = TaskResult.from_task(task=task, result=result)
 
     # When
     await worker.save_result(result=task_result)
@@ -257,11 +249,10 @@ async def test_worker_save_error(populate_tasks: List[Task], worker: Neo4jWorker
     # pylint: disable=unused-argument
     # Given
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
-    project = TEST_PROJECT
+    first_task = populate_tasks[0]
     error = TaskError(
         id="error-id",
-        task_id=populate_tasks[0].id,
-        project_id=project,
+        task_id=first_task.id,
         name="someErrorTitle",
         message="with_details",
         stacktrace=[

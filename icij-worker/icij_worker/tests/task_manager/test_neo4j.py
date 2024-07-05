@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_PROJECT
+from icij_common.test_utils import TEST_DB
 from icij_worker import Neo4JTaskManager, Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
 from icij_worker.task import CancelledTaskEvent, StacktraceItem
@@ -63,9 +63,7 @@ RETURN error"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, taskId=task_with_error.id, now=datetime.now()
     )
-    e_0 = TaskError.from_neo4j(
-        recs_0[0], task_id=task_with_error.id, project_id=TEST_PROJECT
-    )
+    e_0 = TaskError.from_neo4j(recs_0[0], task_id=task_with_error.id)
     query_1 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
     id: 'error-1',
@@ -81,9 +79,7 @@ RETURN error"""
         taskId=task_with_error.id,
         now=datetime.now(),
     )
-    e_1 = TaskError.from_neo4j(
-        recs_1[0], task_id=task_with_error.id, project_id=TEST_PROJECT
-    )
+    e_1 = TaskError.from_neo4j(recs_1[0], task_id=task_with_error.id)
     return list(zip(populate_tasks, [[], [e_0, e_1]]))
 
 
@@ -106,8 +102,8 @@ RETURN task, result"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_1, now=now, after=after
     )
-    t_2 = Task.from_neo4j(recs_0[0], project_id=TEST_PROJECT)
-    r_2 = TaskResult.from_neo4j(recs_0[0], project_id=t_2.project_id)
+    t_2 = Task.from_neo4j(recs_0[0])
+    r_2 = TaskResult.from_neo4j(recs_0[0])
     tasks = populate_tasks + [t_2]
     return list(zip(tasks, [None, None, r_2]))
 
@@ -127,7 +123,6 @@ async def test_task_manager_get_task(
     expected_task = Task(
         id="task-1",
         type="hello_world",
-        project_id=TEST_PROJECT,
         inputs={"greeted": "1"},
         status=TaskStatus.RUNNING,
         progress=66.6,
@@ -178,12 +173,11 @@ async def test_task_manager_get_tasks(
     expected_ix: List[int],
 ):
     # Given
-    project = TEST_PROJECT
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
 
     # When
     tasks = await task_manager.get_tasks(
-        project_id=project, status=statuses, task_type=task_type
+        status=statuses, task_type=task_type, db=TEST_DB
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 
@@ -202,7 +196,6 @@ async def test_task_manager_get_tasks(
                 TaskError(
                     id="error-0",
                     task_id="task-1",
-                    project_id=TEST_PROJECT,
                     name="error",
                     message="with details",
                     occurred_at=datetime.now(),
@@ -214,7 +207,6 @@ async def test_task_manager_get_tasks(
                 TaskError(
                     id="error-1",
                     task_id="task-1",
-                    project_id=TEST_PROJECT,
                     name="error",
                     message="same error again",
                     stacktrace=[
@@ -258,7 +250,10 @@ async def test_get_task_errors(
         ("task-1", None),
         (
             "task-2",
-            TaskResult(task_id="task-2", project_id=TEST_PROJECT, result="Hello 2"),
+            TaskResult(
+                task_id="task-2",
+                result="Hello 2",
+            ),
         ),
     ],
 )
@@ -292,34 +287,12 @@ async def test_task_manager_enqueue(
     task = hello_world_task
 
     # When
-    queued = await task_manager.enqueue(task)
+    queued = await task_manager.enqueue(task, db=TEST_DB)
 
     # Then
     update = {"status": TaskStatus.QUEUED}
     expected = safe_copy(task, update=update)
     assert queued == expected
-
-
-async def test_task_manager_enqueue_should_raise_for_missing_project(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
-):
-    # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    task = Task(
-        id="some-id",
-        type="hello_world",
-        status=TaskStatus.CREATED,
-        created_at=datetime.now(),
-        inputs={"greeted": "world"},
-    )
-
-    # When/Then
-    expected = (
-        "neo4j expects project to be provided in order to fetch tasks from"
-        " the project's DB"
-    )
-    with pytest.raises(ValueError, match=expected):
-        await task_manager.enqueue(task)
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
@@ -328,16 +301,18 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     # Given
     task = hello_world_task
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    await task_manager.enqueue(task)
+    await task_manager.enqueue(task, db=TEST_DB)
 
     # When/Then
     with pytest.raises(TaskAlreadyExists):
-        await task_manager.enqueue(task)
+        await task_manager.enqueue(task, db=TEST_DB)
 
 
 @pytest.mark.parametrize("requeue", [True, False])
 async def test_task_manager_cancel(
-    neo4j_async_app_driver: neo4j.AsyncDriver, requeue: bool, hello_world_task: Task
+    neo4j_async_app_driver: neo4j.AsyncDriver,
+    requeue: bool,
+    hello_world_task: Task,
 ):
     # Given
     driver = neo4j_async_app_driver
@@ -345,14 +320,14 @@ async def test_task_manager_cancel(
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
 
     # When
-    task = await task_manager.enqueue(task)
+    task = await task_manager.enqueue(task, db=TEST_DB)
     await task_manager.cancel(task_id=task.id, requeue=requeue)
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
 RETURN task, event"""
     recs, _, _ = await driver.execute_query(query, taskId=task.id)
     assert len(recs) == 1
-    event = CancelledTaskEvent.from_neo4j(recs[0], project_id=task.project_id)
+    event = CancelledTaskEvent.from_neo4j(recs[0])
     # Then
     assert event.task_id == task.id
     assert event.created_at is not None
@@ -367,7 +342,7 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
 
     # When
     with pytest.raises(TaskQueueIsFull):
-        await task_manager.enqueue(task)
+        await task_manager.enqueue(task, db=TEST_DB)
 
 
 async def test_migrate_task_errors_v0_tx(
@@ -385,7 +360,6 @@ async def test_migrate_task_errors_v0_tx(
     retrieved_errors = await task_manager.get_task_errors(task_id=task_id)
     expected_errors = [
         TaskError(
-            project_id="test_project",
             id="error-1",
             task_id="task-1",
             name="error",
@@ -395,7 +369,6 @@ async def test_migrate_task_errors_v0_tx(
             occurred_at=datetime.now(),
         ),
         TaskError(
-            project_id="test_project",
             id="error-0",
             task_id="task-1",
             name="error",

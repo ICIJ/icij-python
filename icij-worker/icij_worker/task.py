@@ -4,12 +4,12 @@ import json
 import logging
 import traceback
 import uuid
-from abc import ABC
+from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
-from typing import Any, Dict, List, Optional
 
 from pydantic import Field, validator
+from typing_extensions import Any, Dict, List, Optional, final
 
 from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_CREATED_AT,
@@ -18,7 +18,6 @@ from icij_common.neo4j.constants import (
     TASK_NODE,
 )
 from icij_common.pydantic_utils import (
-    ICIJModel,
     ISODatetime,
     LowerCamelCaseModel,
     NoEnumModel,
@@ -29,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_HANDLER_ARG = "progress_handler"
 _TASK_SCHEMA = None
+
+
+class FromTask(ABC):
+
+    @classmethod
+    @abstractmethod
+    def from_task(cls, task: Task, **kwargs) -> FromTask: ...
 
 
 @unique
@@ -100,9 +106,8 @@ class Neo4jDatetimeMixin(ISODatetime):
 
 class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
-    project_id: Optional[str] = Field(None, alias="project")
     type: str
-    inputs: Optional[Dict[str, Any]] = None
+    inputs: Optional[Dict[str, object]] = None
     status: TaskStatus
     progress: Optional[float] = None
     created_at: datetime
@@ -158,14 +163,9 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             logger.error("progress is expected to be in [0, 100], found %s", value)
         return value
 
+    @final
     @classmethod
-    def from_neo4j(
-        cls,
-        record: "neo4j.Record",
-        *,
-        project_id: str,
-        key: str = "task",
-    ) -> Task:
+    def from_neo4j(cls, record: "neo4j.Record", *, key: str = "task") -> Task:
         node = record[key]
         labels = node.labels
         node = dict(node)
@@ -180,9 +180,9 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if "inputs" in node:
             node["inputs"] = json.loads(node["inputs"])
         node["status"] = status
-        node["project"] = project_id
         return cls.parse_obj(node)
 
+    @final
     @classmethod
     def mandatory_fields(cls, event: TaskEvent | Task, keep_id: bool) -> Dict[str, Any]:
         event = event.dict(by_alias=True, exclude_unset=True)
@@ -197,6 +197,7 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             mandatory[task_field] = v
         return mandatory
 
+    @final
     def resolve_event(self, event: TaskEvent) -> Optional[TaskEvent]:
         if self.status in READY_STATES:
             return None
@@ -217,6 +218,7 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         resolved = safe_copy(base_resolved, update=resolved)
         return resolved
 
+    @final
     @classmethod
     def _schema(cls, by_alias: bool) -> Dict[str, Any]:
         global _TASK_SCHEMA
@@ -227,26 +229,16 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return _TASK_SCHEMA[by_alias]
 
 
-class WithProjectIDMixin(ICIJModel, ABC):
-    project_id: Optional[str]
-
-    def with_project_id(self, task: Task) -> WithProjectIDMixin:
-        if self.project_id is None and task.project_id is not None:
-            return safe_copy(self, update={"project_id": task.project_id})
-        return self
-
-
 class StacktraceItem(LowerCamelCaseModel):
     name: str
     file: str
     lineno: int
 
 
-class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
+class TaskError(LowerCamelCaseModel, FromTask):
     # This helps to know if an error has already been processed or not
     id: str
     task_id: str
-    project_id: Optional[str] = Field(None, alias="project")
     # Follow the "problem detail" spec: https://datatracker.ietf.org/doc/html/rfc9457,
     # the type is omitted for now since we gave no URI to resolve errors yet
     name: str
@@ -270,10 +262,9 @@ class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
         cause = exception.__cause__
         if cause is not None:
             cause = str(cause)
-        error = TaskError(
+        error = cls.from_task(
+            task,
             id=error_id,
-            task_id=task.id,
-            project_id=task.project_id,
             name=name,
             message=message,
             cause=cause,
@@ -283,16 +274,15 @@ class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
         return error
 
     @classmethod
+    def from_task(cls, task: Task, **kwargs) -> TaskError:
+        return cls(task_id=task.id, **kwargs)
+
+    @classmethod
     def from_neo4j(
-        cls,
-        record: "neo4j.Record",
-        *,
-        task_id: str,
-        project_id: str,
-        key: str = "error",
+        cls, record: "neo4j.Record", *, task_id: str, key: str = "error"
     ) -> TaskError:
         task = dict(record.value(key))
-        task.update({"taskId": task_id, "project": project_id})
+        task.update({"taskId": task_id})
         if "occurredAt" in task:
             task["occurredAt"] = task["occurredAt"].to_native()
         if "stacktrace" in task:
@@ -312,9 +302,8 @@ class TaskError(LowerCamelCaseModel, WithProjectIDMixin):
         return trace
 
 
-class TaskEvent(NoEnumModel, LowerCamelCaseModel, WithProjectIDMixin):
+class TaskEvent(NoEnumModel, LowerCamelCaseModel, FromTask):
     task_id: str
-    project_id: Optional[str] = Field(None, alias="project")
     task_type: Optional[str] = None
     status: Optional[TaskStatus] = None
     progress: Optional[float] = None
@@ -323,34 +312,26 @@ class TaskEvent(NoEnumModel, LowerCamelCaseModel, WithProjectIDMixin):
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
+    _excluded_from_task = {"id", "type", "inputs", "cancelled_at"}
+
     @classmethod
-    def from_task(cls, task: Task):
-        as_event = task.dict()
-        as_event["task_id"] = as_event.pop("id")
-        as_event["task_type"] = as_event.pop("type")
-        as_event.pop("inputs")
-        return cls(**as_event)
+    def from_task(cls, task: Task, **kwargs) -> TaskEvent:
+        event = cls(task_id=task.id, task_type=task.type, **kwargs)
+        return event
 
     @classmethod
     def from_error(
-        cls, error: TaskError, task_id: str, retries: Optional[int] = None
+        cls, error: TaskError, task_id: str, retries: Optional[int] = None, **kwargs
     ) -> TaskEvent:
         status = TaskStatus.QUEUED if retries is not None else TaskStatus.ERROR
-        event = TaskEvent(
-            task_id=task_id,
-            status=status,
-            retries=retries,
-            error=error,
-            project_id=error.project_id,
+        event = cls(
+            task_id=task_id, status=status, retries=retries, error=error, **kwargs
         )
         return event
 
 
-class CancelledTaskEvent(
-    NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, WithProjectIDMixin
-):
+class CancelledTaskEvent(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     task_id: str
-    project_id: Optional[str] = Field(None, alias="project")
     requeue: bool
     created_at: datetime
 
@@ -360,30 +341,19 @@ class CancelledTaskEvent(
 
     @classmethod
     def from_neo4j(
-        cls,
-        record: "neo4j.Record",
-        *,
-        project_id: str,
-        event_key: str = "event",
-        task_key: str = "task",
+        cls, record: "neo4j.Record", *, event_key: str = "event", task_key: str = "task"
     ) -> CancelledTaskEvent:
         task = record.get(task_key)
         event = record.get(event_key)
         task_id = task[TASK_ID]
         requeue = event[TASK_CANCEL_EVENT_REQUEUE]
         created_at = event[TASK_CANCEL_EVENT_CREATED_AT]
-        return cls(
-            project_id=project_id,
-            task_id=task_id,
-            requeue=requeue,
-            created_at=created_at,
-        )
+        return cls(task_id=task_id, requeue=requeue, created_at=created_at)
 
 
-class TaskResult(LowerCamelCaseModel, WithProjectIDMixin):
-    task_id: str
-    project_id: Optional[str] = Field(None, alias="project")
+class TaskResult(LowerCamelCaseModel, FromTask):
     # TODO: we could use generics here
+    task_id: str
     result: object
 
     @classmethod
@@ -391,18 +361,20 @@ class TaskResult(LowerCamelCaseModel, WithProjectIDMixin):
         cls,
         record: "neo4j.Record",
         *,
-        project_id: str,
         task_key: str = "task",
         result_key: str = "result",
     ) -> TaskResult:
         result = record.get(result_key)
         if result is not None:
             result = json.loads(result["result"])
-        return cls(project_id=project_id, task_id=record[task_key]["id"], result=result)
+        task_id = record[task_key]["id"]
+        as_dict = {"result": result, "task_id": task_id}
+        return cls(**as_dict)
 
     @classmethod
-    def from_task(cls, result: object, task: Task) -> TaskResult:
-        return cls(result=result, task_id=task.id).with_project_id(task)
+    def from_task(cls, task: Task, result: object, **kwargs) -> TaskResult:
+        # pylint: disable=arguments-differ
+        return cls(task_id=task.id, result=result, **kwargs)
 
 
 def _id_title(title: str) -> str:
