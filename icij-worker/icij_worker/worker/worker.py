@@ -31,6 +31,7 @@ from icij_worker import (
     TaskStatus,
 )
 from icij_worker.app import RegisteredTask
+from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import (
     MaxRetriesExceeded,
     RecoverableError,
@@ -42,7 +43,6 @@ from icij_worker.exceptions import (
 from icij_worker.task import CancelledTaskEvent
 from icij_worker.utils import Registrable
 from icij_worker.worker.process import HandleSignalsMixin
-from icij_worker.event_publisher.event_publisher import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +52,7 @@ C = TypeVar("C", bound="WorkerConfig")
 
 
 class Worker(
-    EventPublisher,
-    Registrable,
-    HandleSignalsMixin,
-    AbstractAsyncContextManager,
+    EventPublisher, Registrable, HandleSignalsMixin, AbstractAsyncContextManager
 ):
     def __init__(
         self,
@@ -180,8 +177,10 @@ class Worker(
         progress = 0.0
         update = {"progress": progress}
         task = safe_copy(task, update=update)
-        event = TaskEvent(task_id=task.id, progress=progress, status=TaskStatus.RUNNING)
-        await self.publish_event(event, task)
+        event = TaskEvent.from_task(
+            task=task, progress=progress, status=TaskStatus.RUNNING
+        )
+        await self.publish_event(event)
         return task
 
     @final
@@ -252,16 +251,12 @@ class Worker(
         self._current = None
         self.info('Task(id="%s") acknowledged', task.id)
         self.debug('Task(id="%s") publishing acknowledgement event', task.id)
-        task_event = TaskEvent(
-            task_id=task.id,
-            status=TaskStatus.DONE,
-            progress=100,
-            completed_at=completed_at,
-            project_id=task.project_id,
+        task_event = TaskEvent.from_task(
+            task=task, status=TaskStatus.DONE, progress=100, completed_at=completed_at
         )
         event = task_event
         # Tell the listeners that the task succeeded
-        await self.publish_event(event, task)
+        await self.publish_event(event)
         self.info('Task(id="%s") successful !', task.id)
 
     @abstractmethod
@@ -334,13 +329,19 @@ class Worker(
     ):
         # Tell the listeners that the task failed
         self.debug('Task(id="%s") publish error event', task.id)
-        event = TaskEvent.from_error(error, task.id, retries)
-        await self.publish_event(event, task)
+        event = TaskEvent.from_error(
+            error,
+            task.id,
+            task_type=task.type,
+            retries=retries,
+            created_at=task.created_at,
+        )
+        await self.publish_event(event)
 
     @final
     async def _publish_progress(self, progress: float, task: Task):
         event = TaskEvent(progress=progress, task_id=task.id)
-        await self.publish_event(event, task)
+        await self.publish_event(event)
 
     @final
     def parse_task(self, task: Task) -> Tuple[Callable, Tuple[Type[Exception], ...]]:
@@ -382,7 +383,7 @@ class Worker(
                 await self._work_once_task
         except Exception as fatal_error:
             if self._current is not None:
-                await self._handle_fatal_error(fatal_error, *self._current)
+                await self._handle_fatal_error(fatal_error, self._current)
             raise fatal_error
         except asyncio.CancelledError as e:
             logger.info("cancelling cancelled task watch !")
@@ -506,7 +507,7 @@ async def _retry_task(
     if retries:
         # In the case of the retry, let's reset the progress
         event = TaskEvent(task_id=task.id, progress=0.0)
-        await worker.publish_event(event, task)
+        await worker.publish_event(event)
     try:
         task_res = task_fn(**task_inputs)
         if isawaitable(task_res):

@@ -6,22 +6,22 @@ from icij_worker import Task, TaskError, TaskResult, TaskStatus
 
 class TaskManager(ABC):
     @final
-    async def enqueue(self, task: Task) -> Task:
+    async def enqueue(self, task: Task, **kwargs) -> Task:
         if task.status is not TaskStatus.CREATED:
             msg = f"invalid status {task.status}, expected {TaskStatus.CREATED}"
             raise ValueError(msg)
-        task = await self._enqueue(task)
-        if task.status is not TaskStatus.QUEUED:
-            msg = f"invalid status {task.status}, expected {TaskStatus.QUEUED}"
+        queued = await self._enqueue(task, **kwargs)
+        if queued.status is not TaskStatus.QUEUED:
+            msg = f"invalid status {queued.status}, expected {TaskStatus.QUEUED}"
             raise ValueError(msg)
-        return task
+        return queued
 
     @final
     async def cancel(self, *, task_id: str, requeue: bool):
         await self._cancel(task_id=task_id, requeue=requeue)
 
     @abstractmethod
-    async def _enqueue(self, task: Task) -> Task:
+    async def _enqueue(self, task: Task, **kwargs) -> Task:
         pass
 
     @abstractmethod
@@ -43,8 +43,9 @@ class TaskManager(ABC):
     @abstractmethod
     async def get_tasks(
         self,
-        project_id: Optional[str] = None,
+        *,
         task_type: Optional[str] = None,
         status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
+        **kwargs,
     ) -> List[Task]:
         pass

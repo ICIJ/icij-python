@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import itertools
 import neo4j
@@ -33,7 +33,7 @@ from icij_common.neo4j.constants import (
     TASK_TYPE,
 )
 from icij_worker import Task, TaskError, TaskResult, TaskStatus
-from icij_worker.event_publisher.neo4j_ import Neo4jTaskProjectMixin
+from icij_worker.event_publisher.neo4j_ import Neo4jTaskNamespaceMixin
 from icij_worker.exceptions import (
     MissingTaskResult,
     TaskAlreadyExists,
@@ -43,75 +43,59 @@ from icij_worker.exceptions import (
 from icij_worker.task_manager import TaskManager
 
 
-class Neo4JTaskManager(TaskManager, Neo4jTaskProjectMixin):
-    def __init__(self, driver: neo4j.AsyncDriver, max_queue_size: int):
-        self._driver = driver
+class Neo4JTaskManager(TaskManager, Neo4jTaskNamespaceMixin):
+    def __init__(self, driver: neo4j.AsyncDriver, max_queue_size: int) -> None:
+        super(TaskManager, self).__init__(driver)
         self._max_queue_size = max_queue_size
-        self._task_projects: Dict[str, str] = dict()
 
     @property
     def driver(self) -> neo4j.AsyncDriver:
         return self._driver
 
     async def get_task(self, *, task_id: str) -> Task:
-        project_id = await self._get_task_project_id(task_id)
-        async with self._project_session(project_id) as sess:
-            return await sess.execute_read(
-                _get_task_tx, task_id=task_id, project_id=project_id
-            )
+        async with self._task_session(task_id) as sess:
+            return await sess.execute_read(_get_task_tx, task_id=task_id)
 
     async def get_task_errors(self, task_id: str) -> List[TaskError]:
-        project_id = await self._get_task_project_id(task_id)
-        async with self._project_session(project_id) as sess:
-            return await sess.execute_read(
-                _get_task_errors_tx, task_id=task_id, project_id=project_id
-            )
+        async with self._task_session(task_id) as sess:
+            recs = await sess.execute_read(_get_task_errors_tx, task_id=task_id)
+        errors = [TaskError.from_neo4j(rec, task_id=task_id) for rec in recs]
+        return errors
 
     async def get_task_result(self, task_id: str) -> TaskResult:
-        project_id = await self._get_task_project_id(task_id)
-        async with self._project_session(project_id) as sess:
-            return await sess.execute_read(
-                _get_task_result_tx, task_id=task_id, project_id=project_id
-            )
+        async with self._task_session(task_id) as sess:
+            return await sess.execute_read(_get_task_result_tx, task_id=task_id)
 
     async def get_tasks(
         self,
-        project_id: Optional[str] = None,
+        *,
         task_type: Optional[str] = None,
         status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
+        db: str,
+        **kwargs,
     ) -> List[Task]:
-        if project_id is None:
-            raise ValueError(
-                "neo4j expects project to be provided in order to fetch tasks from the"
-                " project's DB"
-            )
-        async with self._project_session(project_id) as sess:
-            return await _get_tasks(
-                sess, status=status, task_type=task_type, project_id=project_id
-            )
+        # pylint: disable=arguments-differ
+        async with self._db_session(db) as sess:
+            recs = await _get_tasks(sess, status=status, task_type=task_type)
+        tasks = [Task.from_neo4j(r) for r in recs]
+        return tasks
 
-    async def _enqueue(self, task: Task) -> Task:
-        project_id = task.project_id
-        if project_id is None:
-            raise ValueError(
-                "neo4j expects project to be provided in order to fetch tasks from the"
-                " project's DB"
-            )
-        async with self._project_session(project_id) as sess:
+    async def _enqueue(self, task: Task, db: str, **kwargs) -> Task:
+        # pylint: disable=arguments-differ
+        self._task_dbs[task.id] = db
+        async with self._db_session(db) as sess:
             inputs = json.dumps(task.inputs)
             return await sess.execute_write(
                 _enqueue_task_tx,
                 task_id=task.id,
                 task_type=task.type,
-                project_id=project_id,
                 created_at=task.created_at,
                 max_queue_size=self._max_queue_size,
                 inputs=inputs,
             )
 
     async def _cancel(self, *, task_id: str, requeue: bool):
-        project_id = await self._get_task_project_id(task_id)
-        async with self._project_session(project_id) as sess:
+        async with self._task_session(task_id) as sess:
             await sess.execute_write(_cancel_task_tx, task_id=task_id, requeue=requeue)
 
 
@@ -152,35 +136,26 @@ async def _get_tasks(
     sess: neo4j.AsyncSession,
     status: Optional[Union[List[TaskStatus], TaskStatus]],
     task_type: Optional[str],
-    project_id: str,
-) -> List[Task]:
+) -> List[neo4j.Record]:
     if isinstance(status, TaskStatus):
         status = [status]
     if status is not None:
         status = [s.value for s in status]
-    return await sess.execute_read(
-        _get_tasks_tx, status=status, task_type=task_type, project_id=project_id
-    )
+    return await sess.execute_read(_get_tasks_tx, status=status, task_type=task_type)
 
 
-async def _get_task_tx(
-    tx: neo4j.AsyncTransaction, *, task_id: str, project_id: str
-) -> Task:
+async def _get_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str) -> Task:
     query = f"MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }}) RETURN task"
     res = await tx.run(query, taskId=task_id)
-    tasks = [Task.from_neo4j(t, project_id=project_id) async for t in res]
+    tasks = [Task.from_neo4j(t) async for t in res]
     if not tasks:
         raise UnknownTask(task_id)
     return tasks[0]
 
 
 async def _get_tasks_tx(
-    tx: neo4j.AsyncTransaction,
-    status: Optional[List[str]],
-    *,
-    task_type: Optional[str],
-    project_id: str,
-) -> List[Task]:
+    tx: neo4j.AsyncTransaction, status: Optional[List[str]], *, task_type: Optional[str]
+) -> List[neo4j.Record]:
     where = ""
     if task_type:
         where = f"WHERE task.{TASK_TYPE} = $type"
@@ -202,35 +177,32 @@ async def _get_tasks_tx(
 RETURN task
 ORDER BY task.{TASK_CREATED_AT} DESC"""
     res = await tx.run(query, status=status, type=task_type)
-    tasks = [Task.from_neo4j(t, project_id=project_id) async for t in res]
-    return tasks
+    recs = [rec async for rec in res]
+    return recs
 
 
 async def _get_task_errors_tx(
-    tx: neo4j.AsyncTransaction, *, task_id: str, project_id: str
-) -> List[TaskError]:
+    tx: neo4j.AsyncTransaction, *, task_id: str
+) -> List[neo4j.Record]:
     query = f"""MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
 MATCH (error:{TASK_ERROR_NODE})-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
 RETURN error
 ORDER BY error.{TASK_ERROR_OCCURRED_AT} DESC
 """
     res = await tx.run(query, taskId=task_id)
-    errors = [
-        TaskError.from_neo4j(t, task_id=task_id, project_id=project_id)
-        async for t in res
-    ]
+    errors = [err async for err in res]
     return errors
 
 
 async def _get_task_result_tx(
-    tx: neo4j.AsyncTransaction, *, task_id: str, project_id: str
+    tx: neo4j.AsyncTransaction, *, task_id: str
 ) -> TaskResult:
     query = f"""MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
 MATCH (task)-[:{TASK_HAS_RESULT_TYPE}]->(result:{TASK_RESULT_NODE})
 RETURN task, result
 """
     res = await tx.run(query, taskId=task_id)
-    results = [TaskResult.from_neo4j(t, project_id=project_id) async for t in res]
+    results = [TaskResult.from_neo4j(t) async for t in res]
     if not results:
         raise MissingTaskResult(task_id)
     return results[0]
@@ -241,7 +213,6 @@ async def _enqueue_task_tx(
     *,
     task_id: str,
     task_type: str,
-    project_id: str,
     created_at: datetime,
     inputs: str,
     max_queue_size: int,
@@ -273,7 +244,7 @@ RETURN task
         task = await res.single(strict=True)
     except ConstraintError as e:
         raise TaskAlreadyExists() from e
-    return Task.from_neo4j(task, project_id=project_id)
+    return Task.from_neo4j(task)
 
 
 async def _cancel_task_tx(tx: neo4j.AsyncTransaction, task_id: str, requeue: bool):

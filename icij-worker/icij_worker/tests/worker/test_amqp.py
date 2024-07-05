@@ -10,11 +10,7 @@ from aio_pika import ExchangeType, Message, connect_robust
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import (
-    TEST_PROJECT,
-    async_true_after,
-    fail_if_exception,
-)
+from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import (
     AsyncApp,
     Task,
@@ -350,7 +346,7 @@ async def test_publish_event(
     event = TaskEvent(task_id=task.id, progress=50.0)
     # When
     async with amqp_worker:
-        await amqp_worker.publish_event(event, task)
+        await amqp_worker.publish_event(event)
 
         # Then
         connection = await connect_robust(url=broker_url)
@@ -361,8 +357,7 @@ async def test_publish_event(
             async for message in messages:
                 received_event = TaskEvent.parse_raw(message.body)
                 break
-        expected = safe_copy(event, update={"project_id": TEST_PROJECT})
-        assert received_event == expected
+        assert received_event == event
 
 
 async def test_publish_error(

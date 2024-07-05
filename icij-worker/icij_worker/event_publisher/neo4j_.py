@@ -10,45 +10,52 @@ from icij_common.neo4j.constants import (
     TASK_ID,
     TASK_NODE,
 )
-from icij_common.neo4j.migrate import retrieve_projects
-from icij_common.neo4j.projects import project_db_session
+from icij_common.neo4j.db import db_specific_session
+from icij_common.neo4j.migrate import retrieve_dbs
 from icij_worker.event_publisher.event_publisher import EventPublisher
-from icij_worker.task import Task, TaskEvent, TaskStatus
 from icij_worker.exceptions import UnknownTask
+from icij_worker.task import Task, TaskEvent, TaskStatus
 
 
-class Neo4jTaskProjectMixin:
-    _driver: neo4j.AsyncDriver
-    _task_projects: Dict[str, str] = dict()
+class Neo4jTaskNamespaceMixin:
+    def __init__(self, driver: neo4j.AsyncDriver):
+        self._driver = driver
+        self._task_dbs: Dict[str, str] = dict()
 
     @asynccontextmanager
-    async def _project_session(
-        self, project_id: str
-    ) -> AsyncGenerator[neo4j.AsyncSession, None]:
-        async with project_db_session(self._driver, project_id) as sess:
+    async def _db_session(self, db: str) -> AsyncGenerator[neo4j.AsyncSession, None]:
+        async with db_specific_session(self._driver, db) as sess:
             yield sess
 
-    async def _get_task_project_id(self, task_id: str) -> str:
-        if task_id not in self._task_projects:
-            await self._refresh_task_projects()
+    @asynccontextmanager
+    async def _task_session(
+        self, task_id: str
+    ) -> AsyncGenerator[neo4j.AsyncSession, None]:
+        db = await self._get_task_db(task_id)
+        async with self._db_session(db) as sess:
+            yield sess
+
+    async def _get_task_db(self, task_id: str) -> str:
+        if task_id not in self._task_dbs:
+            await self._refresh_task_dbs()
         try:
-            return self._task_projects[task_id]
+            return self._task_dbs[task_id]
         except KeyError as e:
             raise UnknownTask(task_id) from e
 
-    async def _refresh_task_projects(self):
-        projects = await retrieve_projects(self._driver)
-        for p in projects:
-            async with self._project_session(p) as sess:
+    async def _refresh_task_dbs(self):
+        dbs = await retrieve_dbs(self._driver)
+        for db in dbs:
+            async with self._db_session(db) as sess:
                 # Here we make the assumption that task IDs are unique across
                 # projects and not per project
-                task_projects = {
-                    t: p.name for t in await sess.execute_read(_get_task_ids_tx)
+                task_dbs = {
+                    t_id: db for t_id in await sess.execute_read(_get_tasks_meta_tx)
                 }
-                self._task_projects.update(task_projects)
+                self._task_dbs.update(task_dbs)
 
 
-async def _get_task_ids_tx(tx: neo4j.AsyncTransaction) -> List[str]:
+async def _get_tasks_meta_tx(tx: neo4j.AsyncTransaction) -> List[str]:
     query = f"""MATCH (task:{TASK_NODE})
 RETURN task.{TASK_ID} as taskId"""
     res = await tx.run(query)
@@ -56,19 +63,10 @@ RETURN task.{TASK_ID} as taskId"""
     return ids
 
 
-class Neo4jEventPublisher(Neo4jTaskProjectMixin, EventPublisher):
-    def __init__(self, driver: neo4j.AsyncDriver):
-        self._driver = driver
+class Neo4jEventPublisher(Neo4jTaskNamespaceMixin, EventPublisher):
 
     async def _publish_event(self, event: TaskEvent):
-        project_id = event.project_id
-        if project_id is None:
-            msg = (
-                "neo4j expects project_id to be provided in order to fetch tasks from"
-                " the project_id's DB"
-            )
-            raise ValueError(msg)
-        async with self._project_session(project_id) as sess:
+        async with self._task_session(event.task_id) as sess:
             await _publish_event(sess, event)
 
     @property
@@ -88,7 +86,6 @@ async def _publish_event_tx(
     tx: neo4j.AsyncTransaction, event: Dict, error: Optional[Dict]
 ):
     task_id = event["taskId"]
-    project_id = event["project"]
     create_task = f"""MERGE (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
 ON CREATE SET task += $createProps"""
     status = event.get("status")
@@ -99,7 +96,7 @@ ON CREATE SET task += $createProps"""
     create_props = Task.mandatory_fields(event_as_event, keep_id=False)
     create_props.pop("status", None)
     res = await tx.run(create_task, taskId=task_id, createProps=create_props)
-    tasks = [Task.from_neo4j(rec, project_id=project_id) async for rec in res]
+    tasks = [Task.from_neo4j(rec) async for rec in res]
     task = tasks[0]
     resolved = task.resolve_event(event_as_event)
     resolved = (

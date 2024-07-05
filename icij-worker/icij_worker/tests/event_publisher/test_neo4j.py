@@ -6,7 +6,6 @@ import neo4j
 import pytest
 
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_PROJECT
 from icij_worker import (
     Neo4JTaskManager,
     Neo4jEventPublisher,
@@ -41,7 +40,7 @@ async def test_worker_publish_event(
     )
 
     # When
-    await publisher.publish_event(event, task)
+    await publisher.publish_event(event)
     saved_task = await task_manager.get_task(task_id=task.id)
 
     # Then
@@ -66,7 +65,7 @@ async def test_worker_publish_done_task_event_should_not_update_task(
     async with publisher.driver.session() as sess:
         res = await sess.run(query, now=datetime.now())
         completed = await res.single()
-    completed = Task.from_neo4j(completed, project_id=TEST_PROJECT)
+    completed = Task.from_neo4j(completed)
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
     event = TaskEvent(
         task_id=completed.id,
@@ -76,13 +75,17 @@ async def test_worker_publish_done_task_event_should_not_update_task(
     )
 
     # When
-    await publisher.publish_event(event, completed)
+    await publisher.publish_event(event)
     saved_task = await task_manager.get_task(task_id=completed.id)
 
     # Then
     assert saved_task == completed
 
 
+@pytest.mark.xfail(
+    reason="worker and event publish should always know from which DB is task is"
+    " coming from"
+)
 async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublisher):
     # This is useful when task is not reserved yet
     # Given
@@ -93,7 +96,6 @@ async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublis
     task = Task(
         id=task_id,
         type=task_type,
-        project_id=TEST_PROJECT,
         created_at=created_at,
         status=TaskStatus.QUEUED,
     )
@@ -105,7 +107,7 @@ async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublis
     )
 
     # When
-    await publisher.publish_event(event, task)
+    await publisher.publish_event(event)
     saved_task = await task_manager.get_task(task_id=task_id)
 
     # Then
@@ -123,7 +125,7 @@ async def test_worker_publish_event_should_use_status_resolution(
     event = TaskEvent(task_id=task.id, status=TaskStatus.CREATED)
 
     # When
-    await publisher.publish_event(event, task)
+    await publisher.publish_event(event)
     saved_task = await task_manager.get_task(task_id=task.id)
 
     # Then

@@ -2,7 +2,6 @@ import pytest
 from aio_pika import ExchangeType, connect_robust
 from aiormq import ChannelNotFoundEntity
 
-from icij_common.pydantic_utils import safe_copy
 from icij_worker import Task, TaskEvent, TaskStatus
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
@@ -46,7 +45,7 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
 
     # When
     async with publisher:
-        await publisher.publish_event(event, task)
+        await publisher.publish_event(event)
 
     # Then
     connection = await connect_robust(url=broker_url)
@@ -56,8 +55,7 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
         async for message in messages:
             received_event = TaskEvent.parse_raw(message.body)
             break
-    expected = safe_copy(event, update={"project_id": task.project_id})
-    assert received_event == expected
+    assert received_event == event
 
 
 async def test_publisher_not_create_and_bind_exchanges_and_queues(rabbit_mq: str):
