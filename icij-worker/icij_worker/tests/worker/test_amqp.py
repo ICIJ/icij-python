@@ -22,7 +22,7 @@ from icij_worker import (
     WorkerConfig,
 )
 from icij_worker.event_publisher.amqp import AMQPPublisher, Exchange, Routing
-from icij_worker.task import CancelledTaskEvent, StacktraceItem
+from icij_worker.objects import CancelledTaskEvent, StacktraceItem
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     RABBITMQ_TEST_HOST,

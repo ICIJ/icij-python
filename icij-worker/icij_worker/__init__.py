@@ -1,5 +1,5 @@
 from .app import AsyncApp
-from .task import Task, TaskError, TaskEvent, TaskResult, TaskStatus
+from .objects import Task, TaskError, TaskEvent, TaskResult, TaskStatus
 from .task_manager import TaskManager
 from .worker import Worker, WorkerConfig, WorkerType
 

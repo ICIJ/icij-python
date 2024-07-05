@@ -18,7 +18,7 @@ from icij_worker import (
     TaskResult,
     TaskStatus,
 )
-from icij_worker.task import CancelledTaskEvent, StacktraceItem, Task
+from icij_worker.objects import CancelledTaskEvent, StacktraceItem, Task
 
 
 @pytest.fixture(scope="function")

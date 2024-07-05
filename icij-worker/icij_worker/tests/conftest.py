@@ -36,7 +36,7 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 from icij_common.test_utils import TEST_DB
 from icij_worker import AsyncApp, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.task import CancelledTaskEvent, TaskStatus
+from icij_worker.objects import CancelledTaskEvent, TaskStatus
 from icij_worker.task_manager.neo4j_ import add_support_for_async_task_tx
 from icij_worker.typing_ import PercentProgress
 

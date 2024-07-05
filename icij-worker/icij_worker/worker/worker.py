@@ -40,7 +40,7 @@ from icij_worker.exceptions import (
     UnknownTask,
     UnregisteredTask,
 )
-from icij_worker.task import CancelledTaskEvent
+from icij_worker.objects import CancelledTaskEvent
 from icij_worker.utils import Registrable
 from icij_worker.worker.process import HandleSignalsMixin
 

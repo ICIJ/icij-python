@@ -5,7 +5,7 @@ from typing import Optional
 
 import pytest
 
-from icij_worker.task import (
+from icij_worker.objects import (
     PRECEDENCE,
     READY_STATES,
     StacktraceItem,

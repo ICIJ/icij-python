@@ -9,7 +9,7 @@ from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB
 from icij_worker import Neo4JTaskManager, Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
-from icij_worker.task import CancelledTaskEvent, StacktraceItem
+from icij_worker.objects import CancelledTaskEvent, StacktraceItem
 from icij_worker.task_manager.neo4j_ import migrate_task_errors_v0_tx
 
 
