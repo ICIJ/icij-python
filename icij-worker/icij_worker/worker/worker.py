@@ -26,7 +26,6 @@ from icij_worker import (
     AsyncApp,
     Task,
     TaskError,
-    TaskEvent,
     TaskResult,
     TaskStatus,
 )
@@ -40,7 +39,7 @@ from icij_worker.exceptions import (
     UnknownTask,
     UnregisteredTask,
 )
-from icij_worker.objects import CancelledTaskEvent
+from icij_worker.objects import CancelledTaskEvent, ErrorEvent, ProgressEvent
 from icij_worker.utils import Registrable
 from icij_worker.worker.process import HandleSignalsMixin
 
@@ -175,11 +174,9 @@ class Worker(
         async with self._current_lock:
             self._current = task
         progress = 0.0
-        update = {"progress": progress}
+        update = {"progress": progress, "status": TaskStatus.RUNNING}
         task = safe_copy(task, update=update)
-        event = TaskEvent.from_task(
-            task=task, progress=progress, status=TaskStatus.RUNNING
-        )
+        event = ProgressEvent.from_task(task)
         await self.publish_event(event)
         return task
 
@@ -246,21 +243,26 @@ class Worker(
     @final
     async def acknowledge(self, task: Task):
         completed_at = datetime.now()
+        update = {
+            "completed_at": completed_at,
+            "progress": 100.0,
+            "status": TaskStatus.DONE,
+        }
+        task = safe_copy(task, update=update)
         self.info('Task(id="%s") acknowledging...', task.id)
-        await self._acknowledge(task, completed_at)
+        await self._acknowledge(task, completed_at=task.completed_at)
         self._current = None
         self.info('Task(id="%s") acknowledged', task.id)
         self.debug('Task(id="%s") publishing acknowledgement event', task.id)
-        task_event = TaskEvent.from_task(
-            task=task, status=TaskStatus.DONE, progress=100, completed_at=completed_at
-        )
-        event = task_event
+        progress_event = ProgressEvent.from_task(task=task)
         # Tell the listeners that the task succeeded
-        await self.publish_event(event)
+        await self.publish_event(progress_event)
         self.info('Task(id="%s") successful !', task.id)
 
     @abstractmethod
     async def _acknowledge(self, task: Task, completed_at: datetime) -> Task: ...
+
+    # TODO: remove the completed_at ?
 
     @final
     async def negatively_acknowledge(
@@ -329,18 +331,13 @@ class Worker(
     ):
         # Tell the listeners that the task failed
         self.debug('Task(id="%s") publish error event', task.id)
-        event = TaskEvent.from_error(
-            error,
-            task.id,
-            task_type=task.type,
-            retries=retries,
-            created_at=task.created_at,
-        )
-        await self.publish_event(event)
+        error_event = ErrorEvent.from_error(error, task.id, retries=retries)
+        await self.publish_event(error_event)
 
     @final
     async def _publish_progress(self, progress: float, task: Task):
-        event = TaskEvent(progress=progress, task_id=task.id)
+        with_progress = safe_copy(task, update={"progress": progress})
+        event = ProgressEvent.from_task(with_progress)
         await self.publish_event(event)
 
     @final
@@ -506,7 +503,7 @@ async def _retry_task(
     retries = task.retries or 0
     if retries:
         # In the case of the retry, let's reset the progress
-        event = TaskEvent(task_id=task.id, progress=0.0)
+        event = ProgressEvent.from_task(task=task)
         await worker.publish_event(event)
     try:
         task_res = task_fn(**task_inputs)

@@ -14,11 +14,10 @@ from icij_worker import (
     Neo4JTaskManager,
     Neo4jWorker,
     TaskError,
-    TaskEvent,
     TaskResult,
     TaskStatus,
 )
-from icij_worker.objects import CancelledTaskEvent, StacktraceItem, Task
+from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem, Task
 
 
 @pytest.fixture(scope="function")
@@ -123,7 +122,8 @@ async def test_worker_negatively_acknowledge_and_requeue(
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
-    event = TaskEvent.from_task(task=task, progress=50.0)
+    task = safe_copy(task, update={"progress": 50.0})
+    event = ProgressEvent.from_task(task=task)
     await worker.publish_event(event)
     with_progress = safe_copy(task, update={"progress": event.progress})
     await worker.negatively_acknowledge(task, requeue=True)
@@ -161,7 +161,8 @@ async def test_worker_negatively_acknowledge_and_cancel(
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
-    event = TaskEvent.from_task(task, progress=50.0)
+    task = safe_copy(task, update={"progress": 50.0})
+    event = ProgressEvent.from_task(task)
     await worker.publish_event(event)
     with_progress = safe_copy(task, update={"progress": event.progress})
     await worker.negatively_acknowledge(task, cancel=True, requeue=requeue)

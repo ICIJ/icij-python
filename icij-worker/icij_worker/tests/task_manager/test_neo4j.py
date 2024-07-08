@@ -5,12 +5,16 @@ import neo4j
 import pytest
 import pytest_asyncio
 
+from icij_common.neo4j.constants import TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB
 from icij_worker import Neo4JTaskManager, Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
 from icij_worker.objects import CancelledTaskEvent, StacktraceItem
-from icij_worker.task_manager.neo4j_ import migrate_task_errors_v0_tx
+from icij_worker.task_manager.neo4j_ import (
+    migrate_cancelled_event_created_at_v0_tx,
+    migrate_task_errors_v0_tx,
+)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -330,7 +334,7 @@ RETURN task, event"""
     event = CancelledTaskEvent.from_neo4j(recs[0])
     # Then
     assert event.task_id == task.id
-    assert event.created_at is not None
+    assert event.cancelled_at is not None
     assert event.requeue == requeue
 
 
@@ -385,3 +389,31 @@ async def test_migrate_task_errors_v0_tx(
     for e in retrieved_errors:
         e.pop("occurred_at")
     assert retrieved_errors == expected_errors
+
+
+async def test_migrate_cancelled_event_created_at_v0_tx(
+    neo4j_test_driver: neo4j.AsyncDriver,
+):
+    # Given
+    created_at = datetime.now()
+    driver = neo4j_test_driver
+    query = f""" CREATE (task:_Task {{ taskID: $taskId }})-[
+    :_CANCELLED_BY]->(:_CancelEvent {{ 
+        {TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}: $createdAt, 
+        effective: false,
+        requeue: false
+    }})
+"""
+    await driver.execute_query(query, createdAt=created_at, taskId="some-id")
+
+    # When
+    async with driver.session() as sess:
+        await sess.execute_write(migrate_cancelled_event_created_at_v0_tx)
+        event_query = "MATCH (evt:_CancelEvent) RETURN evt"
+        res = await sess.run(event_query)
+        rec = await res.single(strict=True)
+
+    # Then
+    rec = rec["evt"]
+    assert "createdAt" not in rec
+    assert rec["cancelledAt"].to_native() == created_at

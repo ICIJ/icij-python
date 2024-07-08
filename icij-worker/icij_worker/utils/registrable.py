@@ -31,10 +31,12 @@ _T = TypeVar("_T")
 _C = TypeVar("_C", bound="RegistrableConfig")
 _RegistrableT = TypeVar("_RegistrableT", bound="Registrable")
 _SubclassRegistry = Dict[str, _RegistrableT]
+_SubclssNames = Dict[_SubclassRegistry, str]
 
 
 class RegistrableMixin(ABC):
     _registry: ClassVar[DefaultDict[type, _SubclassRegistry]] = defaultdict(dict)
+    _registered_names: ClassVar[DefaultDict[type, _SubclssNames]] = defaultdict(dict)
 
     default_implementation: Optional[str] = None
 
@@ -44,6 +46,7 @@ class RegistrableMixin(ABC):
     ) -> Callable[[Type[_T]], Type[_T]]:
         # pylint: disable=protected-access
         registry = Registrable._registry[cls]
+        registered_names = Registrable._registered_names[cls]
 
         def add_subclass_to_registry(subclass: Type[_T]) -> Type[_T]:
             registered_name = name
@@ -70,6 +73,7 @@ class RegistrableMixin(ABC):
                     )
                     raise ValueError(msg)
             registry[registered_name] = subclass
+            registered_names[subclass] = registered_name
             return subclass
 
         return add_subclass_to_registry
@@ -83,9 +87,16 @@ class RegistrableMixin(ABC):
     @classmethod
     def resolve_class_name(cls: Type[_RegistrableT], name: str) -> Type[_RegistrableT]:
         # pylint: disable=protected-access
-        if name in Registrable._registry[cls]:
-            subclass = Registrable._registry[cls][name]
-            return subclass
+        sub_registry = Registrable._registry.get(cls, None)
+        if sub_registry is None:
+            for k, v in Registrable._registry.items():
+                if issubclass(cls, k):
+                    sub_registry = v
+                    break
+        if sub_registry is not None:
+            subclass = sub_registry.get(name, None)
+            if subclass is not None:
+                return subclass
         if "." in name:
             try:
                 subclass = import_variable(name)
@@ -116,6 +127,17 @@ If your registered class comes from custom code, you'll need to import the\
         # pylint: disable=protected-access
         keys = list(Registrable._registry[cls].keys())
         return keys
+
+    @classmethod
+    @property
+    def registered_name(cls) -> str:
+        for (
+            names
+        ) in Registrable._registered_names.values():  # pylint: disable=protected-access
+            name = names.get(cls)
+            if name is not None:
+                return name
+        raise ValueError("registration inconsistancy")
 
 
 class RegistrableConfig(BaseSettings, RegistrableMixin):

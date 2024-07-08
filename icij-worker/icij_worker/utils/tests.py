@@ -210,7 +210,7 @@ if _has_pytest:
             db = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db)
             event = CancelledTaskEvent(
-                task_id=task_id, requeue=requeue, created_at=datetime.now()
+                task_id=task_id, requeue=requeue, cancelled_at=datetime.now()
             )
             db = self._read()
             db[self._cancel_event_collection][key] = event.dict()
@@ -222,7 +222,7 @@ if _has_pytest:
             db = self._read()
             try:
                 tasks = db[self._task_collection]
-                return Task(**tasks[key])
+                return Task.parse_obj(tasks[key])
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
@@ -241,7 +241,7 @@ if _has_pytest:
             db = self._read()
             results = db[self._result_collection]
             try:
-                return TaskResult(**results[key])
+                return TaskResult.parse_obj(results[key])
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
@@ -285,9 +285,9 @@ if _has_pytest:
             db = self._read()
             try:
                 task = self._get_db_task(db, task_id=event.task_id, db_name=db_name)
-                task = Task(**task)
+                task = Task.parse_obj(task)
             except UnknownTask:
-                task = Task(**Task.mandatory_fields(event, keep_id=True))
+                task = Task.parse_obj(Task.mandatory_fields(event, keep_id=True))
             update = task.resolve_event(event)
             if update is not None:
                 task = task.dict(exclude_unset=True, by_alias=True)
@@ -296,6 +296,7 @@ if _has_pytest:
                     for k, v in event.dict(by_alias=True, exclude_unset=True).items()
                     if v is not None
                 }
+                update.pop("@type")
                 if "taskId" in update:
                     update["id"] = update.pop("taskId")
                 if "taskType" in update:
@@ -425,7 +426,7 @@ if _has_pytest:
                 saved_task = tasks[key]
             except KeyError as e:
                 raise UnknownTask(task.id) from e
-            saved_task = Task(**saved_task)
+            saved_task = Task.parse_obj(saved_task)
             update = {
                 "completed_at": completed_at,
                 "status": TaskStatus.DONE,
@@ -464,7 +465,7 @@ if _has_pytest:
             return await self._consume_(
                 self._cancel_event_collection,
                 CancelledTaskEvent,
-                order=lambda e: e.created_at,
+                order=lambda e: e.cancelled_at,
             )
 
         async def _consume_(
@@ -477,7 +478,7 @@ if _has_pytest:
             while "i'm waiting until I find something interesting":
                 db = self._read()
                 selected = db[collection]
-                selected = [(k, consumed_cls(**t)) for k, t in selected.items()]
+                selected = [(k, consumed_cls.parse_obj(t)) for k, t in selected.items()]
                 if select is not None:
                     selected = [(k, t) for k, t in selected if select(t)]
                 if selected:

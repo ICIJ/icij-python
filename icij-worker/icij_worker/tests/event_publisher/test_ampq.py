@@ -8,6 +8,7 @@ from icij_worker.event_publisher.amqp import (
     Exchange,
     Routing,
 )
+from icij_worker.objects import ProgressEvent
 from icij_worker.tests.conftest import (
     TestableAMQPPublisher,
 )
@@ -39,9 +40,7 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     publisher = TestableAMQPPublisher(
         broker_url=broker_url, connection_timeout_s=2, reconnection_wait_s=1
     )
-    event = TaskEvent(
-        task_id=task.id, task_type="hello_world", status=TaskStatus.CREATED
-    )
+    event = ProgressEvent(task_id=task.id, status=TaskStatus.RUNNING, progress=0.0)
 
     # When
     async with publisher:

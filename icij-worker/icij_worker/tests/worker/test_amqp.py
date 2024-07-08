@@ -6,7 +6,7 @@ from functools import lru_cache
 from typing import ClassVar, Dict, List, Optional
 
 import pytest
-from aio_pika import ExchangeType, Message, connect_robust
+from aio_pika import ExchangeType, Message as AMQPMessage, connect_robust
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
@@ -15,14 +15,14 @@ from icij_worker import (
     AsyncApp,
     Task,
     TaskError,
-    TaskEvent,
+    Message,
     TaskResult,
     TaskStatus,
     Worker,
     WorkerConfig,
 )
 from icij_worker.event_publisher.amqp import AMQPPublisher, Exchange, Routing
-from icij_worker.objects import CancelledTaskEvent, StacktraceItem
+from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     RABBITMQ_TEST_HOST,
@@ -169,7 +169,7 @@ async def populate_tasks(rabbit_mq: str):
         )
         await task_queue.bind(task_ex, routing_key=task_routing.routing_key)
         for task in tasks:
-            msg = Message(task.json().encode())
+            msg = AMQPMessage(task.json().encode())
             await task_ex.publish(msg, task_routing.routing_key)
     return tasks
 
@@ -177,13 +177,15 @@ async def populate_tasks(rabbit_mq: str):
 async def _publish_cancel_event(rabbit_mq: str, task_id: str):
     connection = await connect_robust(rabbit_mq)
     cancel_event_routing = TestableAMQPWorker.cancel_event_routing
-    event = CancelledTaskEvent(task_id=task_id, created_at=datetime.now(), requeue=True)
+    event = CancelledTaskEvent(
+        task_id=task_id, cancelled_at=datetime.now(), requeue=True
+    )
     async with connection:
         channel = await connection.channel()
         cancel_event_ex = await channel.declare_exchange(
             cancel_event_routing.exchange.name, durable=True, type=ExchangeType.FANOUT
         )
-        msg = Message(event.json().encode())
+        msg = AMQPMessage(event.json().encode())
         await cancel_event_ex.publish(msg, cancel_event_routing.routing_key)
     return event
 
@@ -230,7 +232,9 @@ async def test_worker_consume_task(
             f"failed to consume task in less than {consume_timeout}s"
         ):
             await asyncio.wait([consume_task], timeout=consume_timeout)
-        expected_task = safe_copy(populate_tasks[0], update={"progress": 0.0})
+        expected_task = safe_copy(
+            populate_tasks[0], update={"progress": 0.0, "status": "RUNNING"}
+        )
         consumed = consume_task.result()
         assert consumed == expected_task
 
@@ -343,7 +347,7 @@ async def test_publish_event(
     # Given
     broker_url = rabbit_mq
     task = hello_world_task
-    event = TaskEvent(task_id=task.id, progress=50.0)
+    event = ProgressEvent(task_id=task.id, progress=50.0)
     # When
     async with amqp_worker:
         await amqp_worker.publish_event(event)
@@ -355,7 +359,7 @@ async def test_publish_event(
         queue = await channel.get_queue(event_routing.default_queue)
         async with queue.iterator(timeout=2.0) as messages:
             async for message in messages:
-                received_event = TaskEvent.parse_raw(message.body)
+                received_event = Message.parse_raw(message.body)
                 break
         assert received_event == event
 

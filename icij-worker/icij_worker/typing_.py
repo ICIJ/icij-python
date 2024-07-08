@@ -1,8 +1,11 @@
 from types import TracebackType
 from typing import (
+    Any,
     Awaitable,
     Callable,
     Coroutine,
+    Dict,
+    Mapping,
     Optional,
     Protocol,
     Tuple,
@@ -10,12 +13,19 @@ from typing import (
     Union,
 )
 
+from typing_extensions import AbstractSet
+
 DependencyLabel = Optional[str]
 DependencySetup = Callable[..., None]
 DependencyAsyncSetup = Callable[..., Coroutine[None, None, None]]
 
 PercentProgress = Callable[[float], Awaitable[None]]
 RawProgress = Callable[[int], Awaitable[None]]
+
+DictStrAny = Dict[str, Any]
+IntStr = Union[int, str]
+AbstractSetIntStr = AbstractSet[IntStr]
+MappingIntStrAny = Mapping[IntStr, Any]
 
 
 class DependencyTeardown(Protocol):

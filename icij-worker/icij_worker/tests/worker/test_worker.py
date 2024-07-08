@@ -13,8 +13,9 @@ import pytest
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB, async_true_after, fail_if_exception
-from icij_worker import AsyncApp, Task, TaskError, TaskEvent, TaskResult, TaskStatus
+from icij_worker import AsyncApp, Task, TaskError, TaskResult, TaskStatus
 from icij_worker.exceptions import TaskAlreadyCancelled
+from icij_worker.objects import ErrorEvent, ProgressEvent
 from icij_worker.utils.tests import MockManager, MockWorker
 from icij_worker.worker.worker import add_missing_args
 
@@ -69,17 +70,11 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     expected_task.pop("completedAt")
     assert saved_task == expected_task
     expected_events = [
-        TaskEvent(
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", progress=0.1),
+        ProgressEvent(task_id="some-id", progress=0.99),
+        ProgressEvent(
             task_id="some-id",
-            task_type="hello_world",
-            status=TaskStatus.RUNNING,
-            progress=0.0,
-        ),
-        TaskEvent(task_id="some-id", progress=0.1),
-        TaskEvent(task_id="some-id", progress=0.99),
-        TaskEvent(
-            task_id="some-id",
-            task_type="hello_world",
             status=TaskStatus.DONE,
             progress=100.0,
             completed_at=completed_at,
@@ -130,15 +125,9 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     expected_task.pop("completedAt")
     assert saved_task == expected_task
     expected_events = [
-        TaskEvent(
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(
             task_id="some-id",
-            task_type="hello_world_sync",
-            status=TaskStatus.RUNNING,
-            progress=0.0,
-        ),
-        TaskEvent(
-            task_id="some-id",
-            task_type="hello_world_sync",
             status=TaskStatus.DONE,
             progress=100.0,
             completed_at=completed_at,
@@ -202,18 +191,11 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     assert saved_result == expected_result
 
     expected_events = [
-        TaskEvent(
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ErrorEvent(
             task_id="some-id",
-            task_type="recovering_task",
-            status=TaskStatus.RUNNING,
-            progress=0.0,
-        ),
-        TaskEvent(
-            task_id="some-id",
-            task_type="recovering_task",
             status=TaskStatus.QUEUED,
             retries=1,
-            progress=None,  # The progress should be left as is waiting before retry
             error=TaskError(
                 id="",
                 task_id="some-id",
@@ -221,25 +203,18 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
                 message="i can recover from this",
                 occurred_at=datetime.now(),
             ),
-            created_at=created_at,
         ),
-        TaskEvent(
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(
             task_id="some-id",
-            task_type="recovering_task",
-            status=TaskStatus.RUNNING,
-            progress=0.0,
-        ),
-        TaskEvent(task_id="some-id", progress=0.0),
-        TaskEvent(
-            task_id="some-id",
-            task_type="recovering_task",
             status=TaskStatus.DONE,
             progress=100.0,
             completed_at=completed_at,
         ),
     ]
     events = [e.dict(by_alias=True) for e in worker.published_events]
-    event_errors = [e.pop("error") for e in events]
+    event_errors = [e.pop("error", None) for e in events]
     event_error_titles = [e["name"] if e is not None else e for e in event_errors]
     assert event_error_titles == [None, "Recoverable", None, None, None]
     event_error_titles = [e["message"] if e is not None else e for e in event_errors]
@@ -250,7 +225,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     assert event_error_occurred_at == [None, True, None, None, None]
     expected_events = [e.dict(by_alias=True) for e in expected_events]
     for e in expected_events:
-        e.pop("error")
+        e.pop("error", None)
     assert events == expected_events
 
 
@@ -290,16 +265,10 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     assert isinstance(saved_error.occurred_at, datetime)
 
     expected_events = [
-        TaskEvent(
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", progress=0.1),
+        ErrorEvent(
             task_id="some-id",
-            task_type="fatal_error_task",
-            status=TaskStatus.RUNNING,
-            progress=0.0,
-        ),
-        TaskEvent(task_id="some-id", progress=0.1),
-        TaskEvent(
-            task_id="some-id",
-            task_type="fatal_error_task",
             status=TaskStatus.ERROR,
             error=TaskError(
                 id="",
@@ -308,7 +277,6 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
                 message="this is fatal",
                 occurred_at=datetime.now(),
             ),
-            created_at=created_at,
         ),
     ]
     assert len(worker.published_events) == len(expected_events)
@@ -361,17 +329,10 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     assert isinstance(saved_error.occurred_at, datetime)
 
     expected_events = [
-        TaskEvent(
+        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ErrorEvent(
             task_id="some-id",
-            task_type="i_dont_exist",
-            status=TaskStatus.RUNNING,
-            progress=0.0,
-        ),
-        TaskEvent(
-            task_id="some-id",
-            task_type="i_dont_exist",
             status=TaskStatus.ERROR,
-            created_at=created_at,
             error=TaskError(
                 id="error-id",
                 task_id="some-id",

@@ -20,7 +20,7 @@ from pydantic import Field
 from icij_common.neo4j.constants import (
     TASK_CANCELLED_AT,
     TASK_CANCELLED_BY_EVENT_REL,
-    TASK_CANCEL_EVENT_CREATED_AT,
+    TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_EFFECTIVE,
     TASK_CANCEL_EVENT_NODE,
     TASK_ERROR_NODE,
@@ -228,7 +228,7 @@ async def _consume_cancelled_task_tx(
 ]->(event:{TASK_CANCEL_EVENT_NODE})
 WHERE NOT event.{TASK_CANCEL_EVENT_EFFECTIVE}
 RETURN task, event
-ORDER BY event.{TASK_CANCEL_EVENT_CREATED_AT} ASC
+ORDER BY event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED} ASC
 LIMIT 1
 """
     res = await tx.run(get_event_query)
