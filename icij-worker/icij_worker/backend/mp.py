@@ -41,20 +41,23 @@ def _mp_work_forever(
             app_deps_extras = dict()
         # For multiprocessing, lifespan dependencies need to be run once per process
         app = AsyncApp.load(app)
+        worker = Worker.from_config(
+            config, app=app, worker_id=worker_id, **worker_extras
+        )
         deps_cm = app.lifetime_dependencies(
             worker_id=worker_id, worker_config=config, **app_deps_extras
+        )
+        # From now on, the deps_cm should have setup loggers, we can let it log errors,
+        # we get out of here
+        # This is ugly, but we have to work around the fact that we can't use asyncio
+        # code here
+        worker.loop.run_until_complete(
+            deps_cm.__aenter__()  # pylint: disable=unnecessary-dunder-call
         )
     except BaseException as e:
         msg = "Error occurred during app loading or dependency injection: %s"
         logger.error(msg, e, exc_info=True)
         raise e
-    # From now on, the deps_cm should have setup loggers, we can let it log errors
-    worker = Worker.from_config(config, app=app, worker_id=worker_id, **worker_extras)
-    # This is ugly, but we have to work around the fact that we can't use asyncio code
-    # here
-    worker.loop.run_until_complete(
-        deps_cm.__aenter__()  # pylint: disable=unnecessary-dunder-call
-    )
     try:
         worker.work_forever()
     finally:
