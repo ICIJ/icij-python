@@ -417,3 +417,12 @@ async def test_publish_result(
                 received_result = TaskResult.parse_raw(message.body)
                 break
         assert received_result == result
+
+
+async def test_amqp_config_uri():
+    # Given
+    config = AMQPWorkerConfig()
+    # When
+    url = config.broker_url
+    # Then
+    assert url == "amqp://127.0.0.1:5672/%2F"

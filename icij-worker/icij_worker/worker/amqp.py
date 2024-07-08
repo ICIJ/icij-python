@@ -62,8 +62,8 @@ class AMQPWorkerConfig(WorkerConfig):
             if amqp_userinfo:
                 amqp_userinfo += "@"
         amqp_authority = (
-            f"{amqp_userinfo}{self.rabbitmq_host}"
-            f"{f':{self.rabbitmq_port}' if self.rabbitmq_port else ''}"
+            f"{amqp_userinfo or ''}{self.rabbitmq_host}"
+            f"{f':{self.rabbitmq_port}' or ''}"
         )
         amqp_uri = f"amqp://{amqp_authority}"
         if self.rabbitmq_vhost is not None:
