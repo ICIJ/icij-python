@@ -1,4 +1,6 @@
+import json
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import AsyncGenerator, Dict, List, Optional
 
 import neo4j
@@ -14,7 +16,7 @@ from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import UnknownTask
-from icij_worker.objects import Task, TaskEvent, TaskStatus
+from icij_worker.objects import Message, Task, TaskEvent, TaskStatus
 
 
 class Neo4jTaskNamespaceMixin:
@@ -79,6 +81,8 @@ async def _publish_event(sess: neo4j.AsyncSession, event: TaskEvent):
     if "status" in event:
         event["status"] = event["status"].value
     error = event.pop("error", None)
+    if error is not None:
+        error["stacktrace"] = [json.dumps(item) for item in error["stacktrace"]]
     await sess.execute_write(_publish_event_tx, event, error)
 
 
@@ -92,13 +96,18 @@ ON CREATE SET task += $createProps"""
     if status:
         create_task += f", task:`{status}`"
     create_task += "\nRETURN task"
-    event_as_event = TaskEvent(**event)
-    create_props = Task.mandatory_fields(event_as_event, keep_id=False)
+    if error is not None:
+        event["error"] = deepcopy(error)
+        event["error"]["stacktrace"] = [
+            json.loads(item) for item in event["error"]["stacktrace"]
+        ]
+    as_event = Message.parse_obj(event)
+    create_props = Task.mandatory_fields(as_event, keep_id=False)
     create_props.pop("status", None)
     res = await tx.run(create_task, taskId=task_id, createProps=create_props)
     tasks = [Task.from_neo4j(rec) async for rec in res]
     task = tasks[0]
-    resolved = task.resolve_event(event_as_event)
+    resolved = task.resolve_event(as_event)
     resolved = (
         resolved.dict(exclude_unset=True, by_alias=True)
         if resolved is not None
@@ -108,6 +117,8 @@ ON CREATE SET task += $createProps"""
         resolved.pop("taskId")
         # Status can't be updated by event, only by ack, nack, enqueue and so on
         resolved.pop("status", None)
+        resolved.pop("error", None)
+        resolved.pop("occurredAt", None)
         update_task = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
 SET task += $updateProps
 RETURN count(*) as numTasks"""

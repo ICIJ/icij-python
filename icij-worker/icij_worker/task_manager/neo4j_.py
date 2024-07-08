@@ -8,7 +8,8 @@ from neo4j.exceptions import ConstraintError
 
 from icij_common.neo4j.constants import (
     TASK_CANCELLED_BY_EVENT_REL,
-    TASK_CANCEL_EVENT_CREATED_AT,
+    TASK_CANCEL_EVENT_CANCELLED_AT,
+    TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_EFFECTIVE,
     TASK_CANCEL_EVENT_NODE,
     TASK_CANCEL_EVENT_REQUEUE,
@@ -252,12 +253,12 @@ async def _cancel_task_tx(tx: neo4j.AsyncTransaction, task_id: str, requeue: boo
 CREATE (task)-[
     :{TASK_CANCELLED_BY_EVENT_REL}
 ]->(:{TASK_CANCEL_EVENT_NODE} {{ 
-        {TASK_CANCEL_EVENT_CREATED_AT}: $createdAt, 
+        {TASK_CANCEL_EVENT_CANCELLED_AT}: $cancelledAt, 
         {TASK_CANCEL_EVENT_EFFECTIVE}: false,
         {TASK_CANCEL_EVENT_REQUEUE}: $requeue
     }})
 """
-    await tx.run(query, taskId=task_id, requeue=requeue, createdAt=datetime.now())
+    await tx.run(query, taskId=task_id, requeue=requeue, cancelledAt=datetime.now())
 
 
 async def migrate_task_errors_v0_tx(tx: neo4j.AsyncSession):
@@ -268,5 +269,15 @@ SET error.{TASK_ERROR_NAME} = error.{TASK_ERROR_TITLE_DEPRECATED},
     error.{TASK_ERROR_STACKTRACE} = []
 REMOVE error.{TASK_ERROR_TITLE_DEPRECATED}, error.{TASK_ERROR_DETAIL_DEPRECATED}
 RETURN error
+"""
+    await tx.run(query)
+
+
+async def migrate_cancelled_event_created_at_v0_tx(tx: neo4j.AsyncSession):
+    query = f"""MATCH (event:{TASK_CANCEL_EVENT_NODE})
+SET event.{TASK_CANCEL_EVENT_CANCELLED_AT} 
+    = event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
+REMOVE event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
+RETURN event
 """
     await tx.run(query)

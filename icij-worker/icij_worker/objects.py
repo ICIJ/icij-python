@@ -7,22 +7,27 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
+from typing import Callable, ClassVar, Literal, Union, cast
 
 from pydantic import Field, validator
+from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
 from icij_common.neo4j.constants import (
-    TASK_CANCEL_EVENT_CREATED_AT,
+    TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_REQUEUE,
     TASK_ID,
     TASK_NODE,
 )
 from icij_common.pydantic_utils import (
+    ICIJModel,
     ISODatetime,
     LowerCamelCaseModel,
     NoEnumModel,
     safe_copy,
 )
+from icij_worker.typing_ import AbstractSetIntStr, DictStrAny, MappingIntStrAny
+from icij_worker.utils.registrable import RegistrableMixin
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,7 @@ class FromTask(ABC):
 
 
 @unique
-class TaskStatus(Enum):
+class TaskStatus(str, Enum):
     CREATED = "CREATED"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
@@ -47,7 +52,7 @@ class TaskStatus(Enum):
     CANCELLED = "CANCELLED"
 
     @classmethod
-    def resolve_event_status(cls, stored: Task, event: TaskEvent) -> TaskStatus:
+    def resolve_event_status(cls, stored: Task, event: TaskUpdate) -> TaskStatus:
         # A done task is always done
         if stored.status is TaskStatus.DONE:
             return stored.status
@@ -104,7 +109,81 @@ class Neo4jDatetimeMixin(ISODatetime):
         return value
 
 
-class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+def _encode_registrable(v, **kwargs):
+    return json.dumps(v.dict(exclude_unset=True), **kwargs)
+
+
+class Registrable(ICIJModel, RegistrableMixin, ABC):
+    registry_key: ClassVar[str] = Field(const=True, default="@type")
+
+    class Config:
+        json_encoders = {"Registrable": _encode_registrable}
+
+    @classmethod
+    def parse_obj(cls, obj: Dict) -> Registrable:
+        key = obj.pop(cls.registry_key.default)
+        subcls = cls.resolve_class_name(key)
+        return subcls(**obj)
+
+    def dict(
+        self,
+        *,
+        include: Optional[Union[AbstractSetIntStr, MappingIntStrAny]] = None,
+        exclude: Optional[Union[AbstractSetIntStr, MappingIntStrAny]] = None,
+        by_alias: bool = False,
+        skip_defaults: Optional[bool] = None,
+        exclude_unset: bool = False,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+    ) -> DictStrAny:
+        as_dict = super().dict(
+            include=include,
+            exclude=exclude,
+            by_alias=by_alias,
+            skip_defaults=skip_defaults,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        )
+        as_dict[self.__class__.registry_key.default] = self.__class__.registered_name
+        return as_dict
+
+    def json(
+        self,
+        *,
+        include: Optional[Union["AbstractSetIntStr", "MappingIntStrAny"]] = None,
+        exclude: Optional[Union["AbstractSetIntStr", "MappingIntStrAny"]] = None,
+        by_alias: bool = False,
+        exclude_unset: bool = False,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        encoder: Optional[Callable[[Any], Any]] = None,
+        models_as_dict: bool = True,
+        **dumps_kwargs: Any,
+    ) -> str:
+        encoder = cast(Callable[[Any], Any], encoder or self.__json_encoder__)
+        data = dict(
+            self._iter(
+                to_dict=models_as_dict,
+                by_alias=by_alias,
+                include=include,
+                exclude=exclude,
+                exclude_unset=exclude_unset,
+                exclude_defaults=exclude_defaults,
+                exclude_none=exclude_none,
+            )
+        )
+        if self.__custom_root_type__:
+            data = data[ROOT_KEY]
+        data[self.__class__.registry_key.default] = self.__class__.registered_name
+        return self.__config__.json_dumps(data, default=encoder, **dumps_kwargs)
+
+
+class Message(Registrable): ...  # pylint: disable=multiple-statements
+
+
+@Message.register("task")
+class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     type: str
     inputs: Optional[Dict[str, object]] = None
@@ -180,7 +259,7 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if "inputs" in node:
             node["inputs"] = json.loads(node["inputs"])
         node["status"] = status
-        return cls.parse_obj(node)
+        return cls(**node)
 
     @final
     @classmethod
@@ -198,25 +277,26 @@ class Task(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return mandatory
 
     @final
-    def resolve_event(self, event: TaskEvent) -> Optional[TaskEvent]:
+    def resolve_event(self, event: TaskEvent) -> Optional[TaskUpdate]:
         if self.status in READY_STATES:
             return None
-        resolved = event.dict(exclude_unset=True, by_alias=False)
-        resolved.pop("task_id")
-        resolved.pop("created_at", None)
-        resolved.pop("task_type", None)
-        resolved.pop("completed_at", None)
-        # Update the status to make it consistent in case of race condition
-        if event.status is not None:
-            resolved["status"] = TaskStatus.resolve_event_status(self, event)
-        # Copy the event a first time to unset non-updatable field
-        if not resolved:
+        updated = event.dict(exclude_unset=True, by_alias=False)
+        updated.pop("created_at", None)
+        updated.pop("task_type", None)
+        updated.pop("completed_at", None)
+        updated.pop(event.registry_key.default, None)
+        if not updated:
             return None
-        base_resolved = TaskEvent(task_id=event.task_id)
-        if "error" in resolved:
-            resolved["error"] = TaskError.parse_obj(resolved["error"])
-        resolved = safe_copy(base_resolved, update=resolved)
-        return resolved
+        update = dict()
+        # Copy the event a first time to unset non-updatable field
+        if isinstance(event, ErrorEvent):
+            update["error"] = TaskError.parse_obj(updated["error"])
+        updated = TaskUpdate(**updated)
+        # Update the status to make it consistent in case of race condition
+        if isinstance(event, (ProgressEvent, ErrorEvent)) and event.status is not None:
+            update["status"] = TaskStatus.resolve_event_status(self, updated)
+        updated = safe_copy(updated, update=update)
+        return updated
 
     @final
     @classmethod
@@ -235,6 +315,7 @@ class StacktraceItem(LowerCamelCaseModel):
     lineno: int
 
 
+@Message.register("task-error")
 class TaskError(LowerCamelCaseModel, FromTask):
     # This helps to know if an error has already been processed or not
     id: str
@@ -302,40 +383,65 @@ class TaskError(LowerCamelCaseModel, FromTask):
         return trace
 
 
-class TaskEvent(NoEnumModel, LowerCamelCaseModel, FromTask):
+class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, ABC):
     task_id: str
-    task_type: Optional[str] = None
-    status: Optional[TaskStatus] = None
-    progress: Optional[float] = None
-    retries: Optional[int] = None
-    error: Optional[TaskError] = None
-    created_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-
-    _excluded_from_task = {"id", "type", "inputs", "cancelled_at"}
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> TaskEvent:
         event = cls(task_id=task.id, task_type=task.type, **kwargs)
         return event
 
+
+@Message.register("error-event")
+class ErrorEvent(TaskEvent):
+    error: TaskError
+    retries: Optional[int] = None
+    status: Literal[TaskStatus.QUEUED, TaskStatus.ERROR]
+
     @classmethod
     def from_error(
-        cls, error: TaskError, task_id: str, retries: Optional[int] = None, **kwargs
-    ) -> TaskEvent:
+        cls, error: TaskError, task_id: str, retries: Optional[int] = None
+    ) -> ErrorEvent:
         status = TaskStatus.QUEUED if retries is not None else TaskStatus.ERROR
+        event = cls(task_id=task_id, error=error, retries=retries, status=status)
+        return event
+
+
+@Message.register("progress-event")
+class ProgressEvent(TaskEvent, FromTask):
+    progress: float
+    status: Optional[Literal[TaskStatus.RUNNING, TaskStatus.DONE]]
+    completed_at: Optional[datetime] = None
+
+    @validator("status")
+    def _validate_status(cls, v: Any, values):  # pylint: disable=no-self-argument
+        if v is TaskStatus.DONE and values["progress"] != 100:
+            raise ValueError("Done task should have a 100 progress !")
+        return v
+
+    @classmethod
+    def from_task(cls, task: Task, **kwargs) -> ProgressEvent:
+        status = task.status
+        if status is TaskStatus.RUNNING and task.progress > 0:
+            # Publish status updates only at task start and completion
+            status = None
         event = cls(
-            task_id=task_id, status=status, retries=retries, error=error, **kwargs
+            task_id=task.id,
+            progress=task.progress,
+            status=status,
+            completed_at=task.completed_at,
+            **kwargs,
         )
         return event
 
 
+@Message.register("cancelled-task-event")
 class CancelledTaskEvent(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     task_id: str
     requeue: bool
-    created_at: datetime
+    cancelled_at: datetime
 
-    @validator("created_at", pre=True)
+    @validator("cancelled_at", pre=True)
     def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
         return cls._validate_neo4j_datetime(value)
 
@@ -347,10 +453,22 @@ class CancelledTaskEvent(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         event = record.get(event_key)
         task_id = task[TASK_ID]
         requeue = event[TASK_CANCEL_EVENT_REQUEUE]
-        created_at = event[TASK_CANCEL_EVENT_CREATED_AT]
-        return cls(task_id=task_id, requeue=requeue, created_at=created_at)
+        cancelled_at = event[TASK_CANCEL_EVENT_CANCELLED_AT]
+        return cls(task_id=task_id, requeue=requeue, cancelled_at=cancelled_at)
 
 
+class TaskUpdate(NoEnumModel, LowerCamelCaseModel):
+    task_id: str
+    status: Optional[TaskStatus] = None
+    progress: Optional[float] = None
+    retries: Optional[int] = None
+    error: Optional[TaskError] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    occurred_at: Optional[datetime] = None
+
+
+@Message.register("task-result")
 class TaskResult(LowerCamelCaseModel, FromTask):
     # TODO: we could use generics here
     task_id: str
@@ -384,3 +502,6 @@ def _id_title(title: str) -> str:
             id_title.append("-")
         id_title.append(letter.lower())
     return "".join(id_title)
+
+
+Registrable.update_forward_refs()

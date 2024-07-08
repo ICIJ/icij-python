@@ -132,7 +132,7 @@ async def populate_cancel_events(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
 ) -> List[CancelledTaskEvent]:
     query_0 = """MATCH (task:_Task { id: $taskId })
-CREATE (task)-[:_CANCELLED_BY]->(event:_CancelEvent { requeue: false, effective: false, createdAt: $now }) 
+CREATE (task)-[:_CANCELLED_BY]->(event:_CancelEvent { requeue: false, effective: false, cancelledAt: $now }) 
 RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now(), taskId=populate_tasks[0].id
