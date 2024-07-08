@@ -72,5 +72,6 @@ def start_workers(
     else:
         logger.info("Loading worker configuration from env...")
         config = WorkerConfig.from_env()
+    logger.info("worker config: %s", config.json(indent=2))
 
     backend.run(app, n_workers=n_workers, config=config)
