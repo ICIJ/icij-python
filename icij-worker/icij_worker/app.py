@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import functools
-import importlib
+import logging
 from contextlib import asynccontextmanager
-from functools import cached_property
 from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
 from pydantic import Field
 
 from icij_common.pydantic_utils import ICIJModel
-from icij_worker.exceptions import UnknownApp
+from icij_worker.namespacing import Namespacing
 from icij_worker.typing_ import Dependency
 from icij_worker.utils import run_deps
+from icij_worker.utils.imports import import_variable
+
+logger = logging.getLogger(__name__)
 
 
 class RegisteredTask(ICIJModel):
@@ -22,33 +24,51 @@ class RegisteredTask(ICIJModel):
 
 
 class AsyncApp:
-    def __init__(self, name: str, dependencies: Optional[List[Dependency]] = None):
+    def __init__(
+        self,
+        name: str,
+        dependencies: Optional[List[Dependency]] = None,
+        namespacing: Optional[Namespacing] = None,
+    ):
         self._name = name
         self._registry = dict()
         if dependencies is None:
             dependencies = []
         self._dependencies = dependencies
+        self._namespacing = namespacing
 
-    @cached_property
+    @property
     def registry(self) -> Dict[str, RegisteredTask]:
         return self._registry
 
     @property
+    def registered_keys(self) -> List[str]:
+        return sorted(self._registry)
+
+    @functools.cached_property
     def name(self) -> str:
         return self._name
 
+    @functools.cached_property
+    def namespacing(self) -> Optional[Namespacing]:
+        return self._namespacing
+
+    def with_namespacing(self, ns: Namespacing) -> AsyncApp:
+        self._namespacing = ns
+        return self
+
     def task(
         self,
-        name: Optional[str] = None,
+        key: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
     ) -> Callable:
-        if callable(name) and not recover_from and max_retries is None:
-            f = name
+        if callable(key) and not recover_from and max_retries is None:
+            f = key
             return functools.partial(self._register_task, name=f.__name__)(f)
         return functools.partial(
             self._register_task,
-            name=name,
+            name=key,
             recover_from=recover_from,
             max_retries=max_retries,
         )
@@ -85,14 +105,23 @@ class AsyncApp:
 
     @classmethod
     def load(cls, app_path: str) -> AsyncApp:
-        app_path = app_path.split(".")
-        module, app_name = app_path[:-1], app_path[-1]
-        module = ".".join(module)
-        try:
-            module = importlib.import_module(module)
-        except ModuleNotFoundError as e:
-            msg = f'Expected app_path to be the fully qualified path to a \
-            {AsyncApp.__name__} instance "my_module.my_app_instance"'
-            raise UnknownApp(msg) from e
-        app = getattr(module, app_name)
+        app = import_variable(app_path)
+        app.filter_tasks()
         return app
+
+    def filter_tasks(self) -> AsyncApp:
+        if self._namespacing is None:
+            return self
+        kept = {
+            task_name
+            for task_name in self._registry
+            if self._namespacing.should_run_task(task_name)
+        }
+        discarded = set(self._registry) - kept
+        logger.info(
+            "Applied namespace filtering:\n- running: %s\n- discarded: %s",
+            ", ".join(sorted(kept)),
+            ", ".join(sorted(discarded)),
+        )
+        self._registry = {k: self._registry[k] for k in kept}
+        return self
