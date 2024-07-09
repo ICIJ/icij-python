@@ -186,6 +186,8 @@ class Message(Registrable): ...  # pylint: disable=multiple-statements
 class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     type: str
+    # TODO: should it be optional or default to "" ?
+    namespace: str
     inputs: Optional[Dict[str, object]] = None
     status: TaskStatus
     progress: Optional[float] = None

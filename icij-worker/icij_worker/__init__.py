@@ -2,6 +2,7 @@ from .app import AsyncApp
 from .objects import Task, TaskError, TaskEvent, TaskResult, TaskStatus, Message
 from .task_manager import TaskManager
 from .worker import Worker, WorkerConfig, WorkerType
+from .namespacing import Namespacing
 
 try:
     from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
