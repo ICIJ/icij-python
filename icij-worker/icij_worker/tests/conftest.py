@@ -22,6 +22,7 @@ from icij_common.logging_utils import (
     STREAM_HANDLER_FMT,
 )
 from icij_common.neo4j.db import (
+    NEO4J_COMMUNITY_DB,
     add_multidatabase_support_migration_tx,
 )
 from icij_common.neo4j.migrate import (
@@ -33,11 +34,15 @@ from icij_common.neo4j.migrate import (
 from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
-from icij_common.test_utils import TEST_DB
-from icij_worker import AsyncApp, Task
+from icij_worker import AsyncApp, Namespacing, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.objects import CancelledTaskEvent, TaskStatus
-from icij_worker.task_manager.neo4j_ import add_support_for_async_task_tx
+from icij_worker.task_manager.neo4j_ import (
+    add_support_for_async_task_tx,
+    migrate_add_index_to_task_namespace_v0_tx,
+    migrate_cancelled_event_created_at_v0_tx,
+    migrate_task_errors_v0_tx,
+)
 from icij_worker.typing_ import PercentProgress
 
 # noinspection PyUnresolvedReferences
@@ -77,7 +82,22 @@ TEST_MIGRATIONS = [
         label="create migration and project and constraints as well as task"
         " related stuff",
         migration_fn=migration_v_0_1_0_tx,
-    )
+    ),
+    Migration(
+        version="0.2.0",
+        label="migrate tasks errors",
+        migration_fn=migrate_task_errors_v0_tx,
+    ),
+    Migration(
+        version="0.3.0",
+        label="rename cancelled event createdAt",
+        migration_fn=migrate_cancelled_event_created_at_v0_tx,
+    ),
+    Migration(
+        version="0.4.0",
+        label="add index on task namespace",
+        migration_fn=migrate_add_index_to_task_namespace_v0_tx,
+    ),
 ]
 
 
@@ -98,9 +118,15 @@ def amqp_loggers():
 
 @pytest_asyncio.fixture(scope="function")
 async def populate_tasks(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
+    neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[Task]:
+    namespacing = Namespacing()
+    namespace = getattr(request, "param", None)
+    ns_key = None
+    if namespace is not None:
+        ns_key = namespacing.namespace_to_db_key(namespace)
     query_0 = """CREATE (task:_Task:QUEUED {
+    namespace: $namespaceKey,
     id: 'task-0', 
     type: 'hello_world',
     createdAt: $now,
@@ -108,11 +134,12 @@ async def populate_tasks(
  }) 
 RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=datetime.now()
+        query_0, now=datetime.now(), namespaceKey=ns_key
     )
     t_0 = Task.from_neo4j(recs_0[0])
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
+    namespace: $namespaceKey,
     type: 'hello_world',
     progress: 66.6,
     createdAt: $now,
@@ -121,7 +148,7 @@ RETURN task"""
  }) 
 RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
-        query_1, now=datetime.now()
+        query_1, now=datetime.now(), namespaceKey=ns_key
     )
     t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
@@ -129,13 +156,19 @@ RETURN task"""
 
 @pytest_asyncio.fixture(scope="function")
 async def populate_cancel_events(
-    populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
+    populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[CancelledTaskEvent]:
+    namespacing = Namespacing()
+    namespace = getattr(request, "param", None)
+    ns_key = None
+    if namespace is not None:
+        ns_key = namespacing.namespace_to_db_key(namespace)
     query_0 = """MATCH (task:_Task { id: $taskId })
+SET task.namespace = $namespaceKey
 CREATE (task)-[:_CANCELLED_BY]->(event:_CancelEvent { requeue: false, effective: false, cancelledAt: $now }) 
 RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=datetime.now(), taskId=populate_tasks[0].id
+        query_0, now=datetime.now(), taskId=populate_tasks[0].id, namespaceKey=ns_key
     )
     return [CancelledTaskEvent.from_neo4j(recs_0[0])]
 
@@ -173,7 +206,7 @@ async def neo4j_async_app_driver(
 ) -> neo4j.AsyncDriver:
     await init_database(
         neo4j_test_driver,
-        name=TEST_DB,
+        name=NEO4J_COMMUNITY_DB,
         registry=TEST_MIGRATIONS,
         timeout_s=0.001,
         throttle_s=0.001,
@@ -320,7 +353,7 @@ class TestableAMQPPublisher(AMQPPublisher):
 
     @property
     def event_queue(self) -> str:
-        return self.__class__.evt_routing().default_queue
+        return self.__class__.evt_routing().queue_name
 
 
 @pytest.fixture(scope="session")

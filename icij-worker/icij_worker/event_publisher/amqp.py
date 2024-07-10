@@ -17,22 +17,12 @@ from aio_pika import (
 from aio_pika.abc import AbstractRobustConnection
 
 from icij_common.logging_utils import LogWithNameMixin
-from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
 from icij_worker import TaskError, TaskEvent, TaskResult
 from . import EventPublisher
+from ..namespacing import Exchange, Routing
 
 
 # TODO: move these to a upper level
-class Exchange(NoEnumModel, LowerCamelCaseModel):
-    name: str
-    type: ExchangeType
-
-
-class Routing(LowerCamelCaseModel):
-    exchange: Exchange
-    routing_key: str
-    default_queue: str
-    dead_letter_routing: Optional[Routing] = None
 
 
 class RobustConnection(_RobustConnection):
@@ -89,7 +79,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         return Routing(
             exchange=Exchange(name="exchangeMainEvents", type=ExchangeType.FANOUT),
             routing_key="routingKeyMainEvents",
-            default_queue="queueMainEvents",
+            queue_name="queueMainEvents",
         )
 
     @classmethod
@@ -98,7 +88,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         return Routing(
             exchange=Exchange(name="exchangeTaskResults", type=ExchangeType.DIRECT),
             routing_key="routingKeyMainTaskResults",
-            default_queue="queueMainTaskResults",
+            queue_name="queueMainTaskResults",
         )
 
     @classmethod
@@ -107,7 +97,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         return Routing(
             exchange=Exchange(name="exchangeMainErrors", type=ExchangeType.DIRECT),
             routing_key="routingKeyMainErrors",
-            default_queue="queueMainErrors",
+            queue_name="queueMainErrors",
         )
 
     @cached_property
@@ -246,9 +236,9 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
     async def _declare_and_bind_queues(self):
         if self._declare_and_bind:
             for routing in self._routings:
-                self.debug("(re)declaring queues %s...", routing.default_queue)
+                self.debug("(re)declaring queues %s...", routing.queue_name)
                 queue = await self._channel.declare_queue(
-                    routing.default_queue, durable=True
+                    routing.queue_name, durable=True
                 )
-                self.debug("binding queues, %s...", routing.default_queue)
+                self.debug("binding queues, %s...", routing.queue_name)
                 await queue.bind(routing.exchange.name, routing_key=routing.routing_key)

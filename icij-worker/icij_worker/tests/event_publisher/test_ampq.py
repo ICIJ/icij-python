@@ -5,9 +5,8 @@ from aiormq import ChannelNotFoundEntity
 from icij_worker import Task, TaskEvent, TaskStatus
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
-    Exchange,
-    Routing,
 )
+from icij_worker.namespacing import Exchange, Routing
 from icij_worker.objects import ProgressEvent
 from icij_worker.tests.conftest import (
     TestableAMQPPublisher,
@@ -16,19 +15,19 @@ from icij_worker.tests.conftest import (
 _EVENT_ROUTING = Routing(
     exchange=Exchange(name="event-ex", type=ExchangeType.FANOUT),
     routing_key="event",
-    default_queue="event-q",
+    queue_name="event-q",
 )
 
 _ERROR_ROUTING = Routing(
     exchange=Exchange(name="error-ex", type=ExchangeType.TOPIC),
     routing_key="error",
-    default_queue="error-q",
+    queue_name="error-q",
 )
 
 _RESULT_ROUTING = Routing(
     exchange=Exchange(name="result-ex", type=ExchangeType.TOPIC),
     routing_key="result",
-    default_queue="result-q",
+    queue_name="result-q",
 )
 
 

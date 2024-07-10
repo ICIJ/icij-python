@@ -1,4 +1,6 @@
 # pylint: disable=redefined-outer-name
+from typing import List
+
 import pytest
 
 from icij_worker import AsyncApp, Namespacing
@@ -6,33 +8,38 @@ from icij_worker import AsyncApp, Namespacing
 
 class DummyNamespacing(Namespacing):
 
-    def should_run_task(self, task_key: str) -> bool:
-        return "running" in task_key
+    def app_tasks_filter(self, *, task_key: str, app_namespace: str) -> bool:
+        return task_key.endswith(app_namespace)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def namespaced_app() -> AsyncApp:
     app = AsyncApp("namespaced-app")
 
-    @app.task(key="i_m_running")
-    def running_hello_world():
-        return "I'm running"
+    @app.task(key="i_m_a")
+    def im_a_task():
+        return "I'm a"
 
-    @app.task(key="i_m_filtered")
-    def filtered_hello_world():
-        return "I'm not running"
+    @app.task(key="i_m_b")
+    def im_b_task():
+        return "I'm b"
 
     return app
 
 
-def test_filter_tasks(namespaced_app: AsyncApp):
+@pytest.mark.parametrize(
+    "namespace,expected_keys",
+    [("", ["i_m_a", "i_m_b"]), ("a", ["i_m_a"]), ("b", ["i_m_b"])],
+)
+def test_filter_tasks(
+    namespaced_app: AsyncApp, namespace: str, expected_keys: List[str]
+):
     # Given
     app = namespaced_app
     namespacing = DummyNamespacing()
 
     # When
-    app = namespaced_app.with_namespacing(namespacing).filter_tasks()
+    app = app.with_namespacing(namespacing).filter_tasks(namespace)
 
     # Then
-    expected_keys = ["i_m_running"]
     assert app.registered_keys == expected_keys

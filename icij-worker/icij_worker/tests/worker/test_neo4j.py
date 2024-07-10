@@ -1,16 +1,18 @@
 # pylint: disable=redefined-outer-name
 import asyncio
 from datetime import datetime
-from typing import List
+from typing import Callable, List
 
 import neo4j
 import pytest
+from neo4j.exceptions import ClientError
 
-from icij_common.neo4j.db import db_specific_session
+from icij_common.neo4j.db import Database, NEO4J_COMMUNITY_DB, db_specific_session
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_DB, fail_if_exception
+from icij_common.test_utils import fail_if_exception
 from icij_worker import (
     AsyncApp,
+    Namespacing,
     Neo4JTaskManager,
     Neo4jWorker,
     TaskError,
@@ -18,16 +20,20 @@ from icij_worker import (
     TaskStatus,
 )
 from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem, Task
+from icij_worker.tests.worker.conftest import make_app
+from icij_worker.worker import neo4j_
 
 
 @pytest.fixture(scope="function")
 def worker(
-    test_app: AsyncApp, neo4j_async_app_driver: neo4j.AsyncDriver
+    test_app: AsyncApp, neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> Neo4jWorker:
+    namespace = getattr(request, "param", None)
     worker = Neo4jWorker(
         test_app,
         "test-worker",
-        neo4j_async_app_driver,
+        namespace=namespace,
+        driver=neo4j_async_app_driver,
         cancelled_tasks_refresh_interval_s=0.1,
         new_tasks_refresh_interval_s=0.1,
     )
@@ -43,10 +49,13 @@ async def _count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
     return counts["nLocks"]
 
 
+@pytest.mark.parametrize(
+    "populate_tasks,worker",
+    [("some-namespace", "some-namespace"), (None, None)],
+    indirect=["populate_tasks", "worker"],
+)
 async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWorker):
     # pylint: disable=unused-argument
-    # Given
-    db = TEST_DB
     # When
     task = asyncio.create_task(worker.consume())
     # Then
@@ -56,10 +65,60 @@ async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWork
 
     # Now let's check that no lock if left in the DB
     count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
-    async with db_specific_session(worker.driver, db) as sess:
+    async with db_specific_session(worker.driver, NEO4J_COMMUNITY_DB) as sess:
         recs = await sess.run(count_locks_query)
         counts = await recs.single(strict=True)
     assert counts["nLocks"] == 1
+
+
+async def test_should_consume_with_namespace(
+    populate_tasks, neo4j_async_app_driver: neo4j.AsyncDriver, monkeypatch
+):
+    # pylint: disable=unused-argument
+    # Given
+    mocked_other_db = "other-db"
+
+    async def _mocked_retrieved_db(driver: neo4j.AsyncDriver) -> List[Database]:
+        # pylint: disable=unused-argument
+        return [Database(name=mocked_other_db)]
+
+    monkeypatch.setattr(neo4j_, "retrieve_dbs", _mocked_retrieved_db)
+    other_namespace = "some-namespace"
+
+    class MockedNamespacing(Namespacing):
+        @staticmethod
+        def db_filter_factory(worker_namespace: str) -> Callable[[str], bool]:
+            return lambda x: x == mocked_other_db
+
+        @staticmethod
+        def neo4j_db(namespace: str) -> str:
+            if namespace == other_namespace:
+                return mocked_other_db
+            return super().neo4j_db(namespace)
+
+    namespacing = MockedNamespacing()
+    app = make_app(namespacing)
+    refresh_interval = 0.1
+    worker = Neo4jWorker(
+        app,
+        "test-worker",
+        namespace=other_namespace,
+        driver=neo4j_async_app_driver,
+        cancelled_tasks_refresh_interval_s=refresh_interval,
+        new_tasks_refresh_interval_s=refresh_interval,
+    )
+    # When
+    async with worker:
+        # Then
+        with pytest.raises(ClientError) as ex:
+            await worker.consume()
+
+    assert ex.value.code == "Neo.ClientError.Database.DatabaseNotFound"
+    expected = (
+        "Unable to get a routing table for database 'other-db' because"
+        " this database does not exist"
+    )
+    assert ex.value.message == expected
 
 
 async def test_worker_consume_cancel_event(
@@ -86,7 +145,7 @@ async def test_worker_negatively_acknowledge(
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
     # When
     task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 1
     await worker.negatively_acknowledge(task, requeue=False)
     nacked = await task_manager.get_task(task_id=task.id)
@@ -95,7 +154,7 @@ async def test_worker_negatively_acknowledge(
     update = {"status": TaskStatus.ERROR}
     expected_nacked = safe_copy(task, update=update)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
 
@@ -112,13 +171,13 @@ async def test_worker_negatively_acknowledge_and_requeue(
         created_at=created_at,
         status=TaskStatus.CREATED,
     )
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
     # When
-    await task_manager.enqueue(task, db=TEST_DB)
+    await task_manager.enqueue(task, namespace=None)
     task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
@@ -133,7 +192,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
     update = {"status": TaskStatus.QUEUED, "progress": 0.0, "retries": 1.0}
     expected_nacked = safe_copy(with_progress, update=update)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
 
@@ -151,13 +210,13 @@ async def test_worker_negatively_acknowledge_and_cancel(
         created_at=created_at,
         status=TaskStatus.CREATED,
     )
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
     # When
-    await task_manager.enqueue(task, db=TEST_DB)
+    await task_manager.enqueue(task, namespace="some-placeholder-namespace")
     task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
@@ -179,7 +238,7 @@ async def test_worker_negatively_acknowledge_and_cancel(
     expected_nacked = safe_copy(with_progress, update=update)
     expected_nacked = expected_nacked.dict(exclude_unset=True)
     assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, db=TEST_DB)
+    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
 

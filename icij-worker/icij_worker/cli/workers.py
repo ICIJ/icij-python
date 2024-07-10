@@ -15,7 +15,10 @@ By default, the configuration is read from the environment.
 If present, file values will override environment variables values."""
 _N_HELP = "Number of workers."
 _BACKEND_HELP = "Python asynchronous backend used to create the worker pool."
-
+_NS_HELP = """Worker namespace. The worker will only consume task coming from this
+ namespace.
+By default the worker will consume all tasks from the app namespace. 
+"""
 _DEFAULT_BACKEND = WorkerBackend.MULTIPROCESSING
 
 worker_app = typer.Typer(name="workers")
@@ -36,5 +39,11 @@ def start(
             show_default=_DEFAULT_BACKEND.value,
         ),
     ] = _DEFAULT_BACKEND,
+    namespace: Annotated[
+        Optional[str],
+        typer.Option("--namespace", "--ns", help=_NS_HELP),
+    ] = None,
 ):
-    start_workers(app=app, n_workers=n, config_path=config, backend=backend)
+    start_workers(
+        app=app, n_workers=n, config_path=config, backend=backend, namespace=namespace
+    )

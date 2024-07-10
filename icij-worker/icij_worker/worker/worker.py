@@ -39,6 +39,7 @@ from icij_worker.exceptions import (
     UnknownTask,
     UnregisteredTask,
 )
+from icij_worker.namespacing import Namespacing
 from icij_worker.objects import CancelledTaskEvent, ErrorEvent, ProgressEvent
 from icij_worker.utils import Registrable
 from icij_worker.worker.process import HandleSignalsMixin
@@ -57,6 +58,8 @@ class Worker(
         self,
         app: AsyncApp,
         worker_id: str,
+        *,
+        namespace: Optional[str],
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
     ):
@@ -65,6 +68,7 @@ class Worker(
         HandleSignalsMixin.__init__(self, logger, handle_signals=handle_signals)
         self._app = app
         self._id = worker_id
+        self._namespace = namespace
         self._teardown_dependencies = teardown_dependencies
         self._graceful_shutdown = True
         self._loop = asyncio.get_event_loop()
@@ -99,6 +103,10 @@ class Worker(
     def loop(self) -> asyncio.AbstractEventLoop:
         return self._loop
 
+    @property
+    def _namespacing(self) -> Optional[Namespacing]:
+        return self._app.namespacing
+
     @functools.cached_property
     def id(self) -> str:
         return self._id
@@ -107,6 +115,7 @@ class Worker(
     def work_forever(self):
         # This is a bit cosmetic but the sync one is useful to be run inside Python
         # worker multiprocessing Pool, while async one is more convenient for testing
+        # Start watching cancelled tasks
         self._work_forever_task = self._loop.create_task(self._work_forever_async())
         self._loop.run_until_complete(self._work_forever_task)
 
@@ -305,6 +314,9 @@ class Worker(
     async def _consume(self) -> Task: ...
 
     @abstractmethod
+    async def _consume_cancelled(self) -> CancelledTaskEvent: ...
+
+    @abstractmethod
     async def _save_result(self, result: TaskResult):
         """Save the result in a safe place"""
 
@@ -385,9 +397,6 @@ class Worker(
         except asyncio.CancelledError as e:
             logger.info("cancelling cancelled task watch !")
             raise e
-
-    @abstractmethod
-    async def _consume_cancelled(self) -> CancelledTaskEvent: ...
 
     @final
     def check_retries(self, retries: int, task: Task):
