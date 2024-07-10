@@ -19,7 +19,7 @@ from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import Message, Task, TaskEvent, TaskStatus
 
 
-class Neo4jTaskNamespaceMixin:
+class Neo4jDBMixin:
     def __init__(self, driver: neo4j.AsyncDriver):
         self._driver = driver
         self._task_dbs: Dict[str, str] = dict()
@@ -48,11 +48,12 @@ class Neo4jTaskNamespaceMixin:
     async def _refresh_task_dbs(self):
         dbs = await retrieve_dbs(self._driver)
         for db in dbs:
-            async with self._db_session(db) as sess:
+            async with self._db_session(db.name) as sess:
                 # Here we make the assumption that task IDs are unique across
                 # projects and not per project
                 task_dbs = {
-                    t_id: db for t_id in await sess.execute_read(_get_tasks_meta_tx)
+                    t_id: db.name
+                    for t_id in await sess.execute_read(_get_tasks_meta_tx)
                 }
                 self._task_dbs.update(task_dbs)
 
@@ -65,7 +66,7 @@ RETURN task.{TASK_ID} as taskId"""
     return ids
 
 
-class Neo4jEventPublisher(Neo4jTaskNamespaceMixin, EventPublisher):
+class Neo4jEventPublisher(Neo4jDBMixin, EventPublisher):
 
     async def _publish_event(self, event: TaskEvent):
         async with self._task_session(event.task_id) as sess:

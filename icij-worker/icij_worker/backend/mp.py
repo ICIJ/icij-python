@@ -30,6 +30,7 @@ def _mp_work_forever(
     config: WorkerConfig,
     worker_id: str,
     *,
+    worker_namespace: Optional[str],
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
 ):
@@ -41,8 +42,14 @@ def _mp_work_forever(
             app_deps_extras = dict()
         # For multiprocessing, lifespan dependencies need to be run once per process
         app = AsyncApp.load(app)
+        if worker_namespace is not None:
+            app.filter_tasks(worker_namespace)
         worker = Worker.from_config(
-            config, app=app, worker_id=worker_id, **worker_extras
+            config,
+            app=app,
+            worker_id=worker_id,
+            namespace=worker_namespace,
+            **worker_extras,
         )
         deps_cm = app.lifetime_dependencies(
             worker_id=worker_id, worker_config=config, **app_deps_extras
@@ -85,6 +92,7 @@ def _get_mp_async_runner(
     *,
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
+    namespace: Optional[str],
 ) -> Tuple[ProcessPoolExecutor, List[Tuple[str, Callable]]]:
     # This function is here to avoid code duplication, it will be removed
 
@@ -101,6 +109,7 @@ def _get_mp_async_runner(
         "app": app,
         "config": config,
         "worker_extras": worker_extras,
+        "worker_namespace": namespace,
         "app_deps_extras": app_deps_extras,
     }
     futures = []
@@ -151,6 +160,7 @@ def run_workers_with_multiprocessing_cm(
     *,
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
+    namespace: Optional[str],
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
@@ -161,6 +171,7 @@ def run_workers_with_multiprocessing_cm(
         n_workers,
         worker_extras=worker_extras,
         app_deps_extras=app_deps_extras,
+        namespace=namespace,
     )
     futures = set()
     for w_id, process_runner in worker_runners:
@@ -179,6 +190,7 @@ def run_workers_with_multiprocessing(
     *,
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
+    namespace: Optional[str],
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
@@ -189,6 +201,7 @@ def run_workers_with_multiprocessing(
         n_workers,
         worker_extras=worker_extras,
         app_deps_extras=app_deps_extras,
+        namespace=namespace,
     )
     setup_main_process_signal_handlers()
     futures = set()

@@ -4,14 +4,22 @@ from typing import List, Optional, Tuple
 import neo4j
 import pytest
 import pytest_asyncio
+from neo4j.exceptions import ClientError
 
 from icij_common.neo4j.constants import TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_DB
-from icij_worker import Neo4JTaskManager, Task, TaskError, TaskResult, TaskStatus
+from icij_worker import (
+    Namespacing,
+    Neo4JTaskManager,
+    Task,
+    TaskError,
+    TaskResult,
+    TaskStatus,
+)
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
 from icij_worker.objects import CancelledTaskEvent, StacktraceItem
 from icij_worker.task_manager.neo4j_ import (
+    migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
     migrate_task_errors_v0_tx,
 )
@@ -181,7 +189,7 @@ async def test_task_manager_get_tasks(
 
     # When
     tasks = await task_manager.get_tasks(
-        status=statuses, task_type=task_type, db=TEST_DB
+        status=statuses, task_type=task_type, namespace="mock_enqueued_ns"
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 
@@ -291,12 +299,60 @@ async def test_task_manager_enqueue(
     task = hello_world_task
 
     # When
-    queued = await task_manager.enqueue(task, db=TEST_DB)
+    queued = await task_manager.enqueue(task, namespace=None)
 
     # Then
     update = {"status": TaskStatus.QUEUED}
     expected = safe_copy(task, update=update)
     assert queued == expected
+
+
+async def test_task_manager_enqueue_with_namespace(
+    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+):
+    # Given
+    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
+    task = hello_world_task
+    namespace = "some.namespace"
+
+    # When
+    await task_manager.enqueue(task, namespace=namespace)
+    query = "MATCH (task:_Task) RETURN task"
+    recs, _, _ = await neo4j_async_app_driver.execute_query(query)
+    assert len(recs) == 1
+    task = recs[0]
+    expected_ns_key = task_manager._namespacing.namespace_to_db_key(  # pylint: disable=protected-access
+        namespace
+    )
+    assert task["task"]["namespace"] == expected_ns_key
+
+
+async def test_task_manager_enqueue_with_namespace_in_the_appropriate_db(
+    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+):
+    # Given
+    class MockedNamespacing(Namespacing):
+        @staticmethod
+        def neo4j_db(namespace: str) -> str:
+            db_name = namespace.split(".")[0]
+            return db_name
+
+    namespacing = MockedNamespacing()
+    task_manager = Neo4JTaskManager(
+        neo4j_async_app_driver, max_queue_size=10, namespacing=namespacing
+    )
+    task = hello_world_task
+    namespace = "some_db_name.some_task_name"
+
+    # When
+    with pytest.raises(ClientError) as ex:
+        await task_manager.enqueue(task, namespace=namespace)
+    assert ex.value.code == "Neo.ClientError.Database.DatabaseNotFound"
+    expected = (
+        "Unable to get a routing table for database 'some_db_name' because"
+        " this database does not exist"
+    )
+    assert ex.value.message == expected
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
@@ -305,11 +361,11 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     # Given
     task = hello_world_task
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    await task_manager.enqueue(task, db=TEST_DB)
+    await task_manager.enqueue(task, namespace=None)
 
     # When/Then
     with pytest.raises(TaskAlreadyExists):
-        await task_manager.enqueue(task, db=TEST_DB)
+        await task_manager.enqueue(task, namespace=None)
 
 
 @pytest.mark.parametrize("requeue", [True, False])
@@ -324,7 +380,7 @@ async def test_task_manager_cancel(
     task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
 
     # When
-    task = await task_manager.enqueue(task, db=TEST_DB)
+    task = await task_manager.enqueue(task, namespace=None)
     await task_manager.cancel(task_id=task.id, requeue=requeue)
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
@@ -346,7 +402,7 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
 
     # When
     with pytest.raises(TaskQueueIsFull):
-        await task_manager.enqueue(task, db=TEST_DB)
+        await task_manager.enqueue(task, namespace=None)
 
 
 async def test_migrate_task_errors_v0_tx(
@@ -417,3 +473,24 @@ async def test_migrate_cancelled_event_created_at_v0_tx(
     rec = rec["evt"]
     assert "createdAt" not in rec
     assert rec["cancelledAt"].to_native() == created_at
+
+
+async def test_migrate_add_index_to_task_namespace_v0_tx(
+    neo4j_test_driver: neo4j.AsyncDriver,
+):
+    async with neo4j_test_driver.session() as sess:
+        indexes_res = await sess.run("SHOW INDEXES")
+        existing_indexes = set()
+        async for rec in indexes_res:
+            existing_indexes.add(rec["name"])
+        assert "index_task_namespace" not in existing_indexes
+
+        # When
+        await sess.execute_write(migrate_add_index_to_task_namespace_v0_tx)
+
+        # Then
+        indexes_res = await sess.run("SHOW INDEXES")
+        existing_indexes = set()
+        async for rec in indexes_res:
+            existing_indexes.add(rec["name"])
+        assert "index_task_namespace" in existing_indexes

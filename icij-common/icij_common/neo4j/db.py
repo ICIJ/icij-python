@@ -126,7 +126,6 @@ def databases_index(db: str) -> str:
 async def db_specific_session(
     neo4j_driver: neo4j.AsyncDriver, db: str
 ) -> AsyncGenerator[neo4j.AsyncSession, None]:
-    db = await db_name(neo4j_driver, db)
     sess_ctx = neo4j_driver.session(database=db)
     async with sess_ctx as sess:
         yield sess

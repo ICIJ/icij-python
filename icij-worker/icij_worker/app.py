@@ -35,6 +35,8 @@ class AsyncApp:
         if dependencies is None:
             dependencies = []
         self._dependencies = dependencies
+        if namespacing is None:
+            namespacing = Namespacing()
         self._namespacing = namespacing
 
     @property
@@ -106,16 +108,15 @@ class AsyncApp:
     @classmethod
     def load(cls, app_path: str) -> AsyncApp:
         app = import_variable(app_path)
-        app.filter_tasks()
         return app
 
-    def filter_tasks(self) -> AsyncApp:
-        if self._namespacing is None:
-            return self
+    def filter_tasks(self, namespace: str) -> AsyncApp:
         kept = {
             task_name
             for task_name in self._registry
-            if self._namespacing.should_run_task(task_name)
+            if self._namespacing.app_tasks_filter(
+                task_key=task_name, app_namespace=namespace
+            )
         }
         discarded = set(self._registry) - kept
         logger.info(

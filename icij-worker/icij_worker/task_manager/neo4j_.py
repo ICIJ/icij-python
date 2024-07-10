@@ -29,12 +29,13 @@ from icij_common.neo4j.constants import (
     TASK_LOCK_NODE,
     TASK_LOCK_TASK_ID,
     TASK_LOCK_WORKER_ID,
+    TASK_NAMESPACE,
     TASK_NODE,
     TASK_RESULT_NODE,
     TASK_TYPE,
 )
-from icij_worker import Task, TaskError, TaskResult, TaskStatus
-from icij_worker.event_publisher.neo4j_ import Neo4jTaskNamespaceMixin
+from icij_worker import Namespacing, Task, TaskError, TaskResult, TaskStatus
+from icij_worker.event_publisher.neo4j_ import Neo4jDBMixin
 from icij_worker.exceptions import (
     MissingTaskResult,
     TaskAlreadyExists,
@@ -44,8 +45,14 @@ from icij_worker.exceptions import (
 from icij_worker.task_manager import TaskManager
 
 
-class Neo4JTaskManager(TaskManager, Neo4jTaskNamespaceMixin):
-    def __init__(self, driver: neo4j.AsyncDriver, max_queue_size: int) -> None:
+class Neo4JTaskManager(TaskManager, Neo4jDBMixin):
+    def __init__(
+        self,
+        driver: neo4j.AsyncDriver,
+        max_queue_size: int,
+        namespacing: Optional[Namespacing] = None,
+    ) -> None:
+        super().__init__(namespacing)
         super(TaskManager, self).__init__(driver)
         self._max_queue_size = max_queue_size
 
@@ -69,20 +76,28 @@ class Neo4JTaskManager(TaskManager, Neo4jTaskNamespaceMixin):
 
     async def get_tasks(
         self,
+        namespace: Optional[str],
         *,
         task_type: Optional[str] = None,
         status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
-        db: str,
         **kwargs,
     ) -> List[Task]:
         # pylint: disable=arguments-differ
+        if namespace is None:
+            msg = "namespace is mandatory to fetch the task from the appropriate DB"
+            raise ValueError(msg)
+        db = self._namespacing.neo4j_db(namespace)
         async with self._db_session(db) as sess:
             recs = await _get_tasks(sess, status=status, task_type=task_type)
         tasks = [Task.from_neo4j(r) for r in recs]
         return tasks
 
-    async def _enqueue(self, task: Task, db: str, **kwargs) -> Task:
+    async def _enqueue(self, task: Task, namespace: Optional[str], **kwargs) -> Task:
         # pylint: disable=arguments-differ
+        db = self._namespacing.neo4j_db(namespace)
+        ns_key = None
+        if namespace is not None:
+            ns_key = self._namespacing.namespace_to_db_key(namespace)
         self._task_dbs[task.id] = db
         async with self._db_session(db) as sess:
             inputs = json.dumps(task.inputs)
@@ -90,6 +105,7 @@ class Neo4JTaskManager(TaskManager, Neo4jTaskNamespaceMixin):
                 _enqueue_task_tx,
                 task_id=task.id,
                 task_type=task.type,
+                namespace_key=ns_key,
                 created_at=task.created_at,
                 max_queue_size=self._max_queue_size,
                 inputs=inputs,
@@ -214,6 +230,7 @@ async def _enqueue_task_tx(
     *,
     task_id: str,
     task_type: str,
+    namespace_key: str,
     created_at: datetime,
     inputs: str,
     max_queue_size: int,
@@ -230,8 +247,9 @@ RETURN count(task.id) AS nQueued
     query = f"""CREATE (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
 SET task:{TaskStatus.QUEUED.value},
     task.{TASK_TYPE} = $taskType,
+    task.{TASK_NAMESPACE} = $namespaceKey,
     task.{TASK_INPUTS} = $inputs,
-    task.{TASK_CREATED_AT} = $createdAt 
+    task.{TASK_CREATED_AT} = $createdAt
 RETURN task
 """
     try:
@@ -239,6 +257,7 @@ RETURN task
             query,
             taskId=task_id,
             taskType=task_type,
+            namespaceKey=namespace_key,
             createdAt=created_at,
             inputs=inputs,
         )
@@ -281,3 +300,20 @@ REMOVE event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
 RETURN event
 """
     await tx.run(query)
+
+
+async def migrate_add_index_to_task_namespace_v0_tx(tx: neo4j.AsyncSession):
+    create_index = f"""
+CREATE INDEX index_task_namespace IF NOT EXISTS
+FOR (task:{TASK_NAMESPACE})
+ON (task.{TASK_NAMESPACE})
+"""
+    await tx.run(create_index)
+
+
+# pylint: disable=line-too-long
+MIGRATIONS = {
+    "migrate_task_errors_v0": migrate_task_errors_v0_tx,
+    "migrate_cancelled_event_created_at_v0": migrate_cancelled_event_created_at_v0_tx,
+    "migrate_add_index_to_task_namespace_v0_tx": migrate_add_index_to_task_namespace_v0_tx,
+}

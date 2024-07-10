@@ -8,6 +8,7 @@ import logging
 import signal
 import tempfile
 from abc import ABC
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import (
@@ -31,8 +32,10 @@ from icij_common.pydantic_utils import (
     jsonable_encoder,
     safe_copy,
 )
+from icij_common.test_utils import TEST_DB
 from icij_worker import (
     AsyncApp,
+    Namespacing,
     Task,
     TaskError,
     TaskEvent,
@@ -69,7 +72,9 @@ if _has_pytest:
         _result_collection = "results"
         _cancel_event_collection = "cancel_events"
 
-        def __init__(self, db_path: Path):
+        _namespacing: Namespacing
+
+        def __init__(self, db_path: Path) -> None:
             self._db_path = db_path
             self._task_dbs: Dict[str, str] = dict()
 
@@ -184,13 +189,25 @@ if _has_pytest:
         return AsyncApp.load(f"{__name__}.APP")
 
     class MockManager(TaskManager, DBMixin):
-        def __init__(self, db_path: Path, max_queue_size: int):
-            super().__init__(db_path)
+        def __init__(
+            self,
+            db_path: Path,
+            max_queue_size: int,
+            namespacing: Optional[Namespacing] = None,
+        ):
+            super().__init__(namespacing)
+            super(TaskManager, self).__init__(db_path)
             self._max_queue_size = max_queue_size
 
-        async def _enqueue(self, task: Task, db: str, **kwargs) -> Task:
+        async def _enqueue(
+            self, task: Task, namespace: Optional[str], **kwargs
+        ) -> Task:
             # pylint: disable=arguments-differ
-            key = self._task_key(task.id, db)
+            if namespace is not None:
+                db = self._namespacing.test_db(namespace)
+            else:
+                db = TEST_DB
+            key = self._task_key(task.id, db=db)
             db = self._read()
             tasks = db[self._task_collection]
             n_queued = sum(
@@ -202,7 +219,12 @@ if _has_pytest:
                 raise TaskAlreadyExists(task.id)
             update = {"status": TaskStatus.QUEUED}
             task = safe_copy(task, update=update)
-            tasks[key] = task.dict()
+            task_dict = task.dict()
+            if namespace is not None:
+                task_dict["namespace"] = self._namespacing.namespace_to_db_key(
+                    namespace
+                )
+            tasks[key] = task_dict
             self._write(db)
             return task
 
@@ -332,11 +354,13 @@ if _has_pytest:
             self,
             app: AsyncApp,
             worker_id: str,
+            *,
+            namespace: Optional[str],
             db_path: Path,
             task_queue_poll_interval_s: float,
             **kwargs,
         ):
-            super().__init__(app, worker_id, **kwargs)
+            super().__init__(app, worker_id, namespace=namespace, **kwargs)
             MockEventPublisher.__init__(self, db_path)
             self._task_queue_poll_interval_s = task_queue_poll_interval_s
             self._worker_id = worker_id
@@ -454,17 +478,25 @@ if _has_pytest:
             self._write(db)
 
         async def _consume(self) -> Task:
+            ns_key = None
+            if self._namespace is not None:
+                ns_key = self._namespacing.namespace_to_db_key(self._namespace)
             return await self._consume_(
                 self._task_collection,
                 Task,
+                ns_key=ns_key,
                 select=lambda t: t.status is TaskStatus.QUEUED,
                 order=lambda t: t.created_at,
             )
 
         async def _consume_cancelled(self) -> CancelledTaskEvent:
+            ns_key = None
+            if self._namespace is not None:
+                ns_key = self._namespacing.namespace_to_db_key(self._namespace)
             return await self._consume_(
                 self._cancel_event_collection,
                 CancelledTaskEvent,
+                ns_key=ns_key,
                 order=lambda e: e.cancelled_at,
             )
 
@@ -472,13 +504,24 @@ if _has_pytest:
             self,
             collection: str,
             consumed_cls: Type[R],
+            ns_key: Optional[str] = None,
             select: Optional[Callable[[R], bool]] = None,
             order: Optional[Callable[[R], Any]] = None,
         ) -> R:
             while "i'm waiting until I find something interesting":
                 db = self._read()
-                selected = db[collection]
-                selected = [(k, consumed_cls.parse_obj(t)) for k, t in selected.items()]
+                selected = deepcopy(db[collection])
+                if ns_key is not None:
+                    selected = [
+                        (k, t)
+                        for k, t in selected.items()
+                        if t.get("namespace") == ns_key
+                    ]
+                    for k, t in selected:
+                        t.pop("namespace")
+                else:
+                    selected = selected.items()
+                selected = [(k, consumed_cls.parse_obj(t)) for k, t in selected]
                 if select is not None:
                     selected = [(k, t) for k, t in selected if select(t)]
                 if selected:

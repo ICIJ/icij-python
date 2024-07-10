@@ -30,6 +30,7 @@ from icij_common.neo4j.constants import (
     TASK_LOCK_NODE,
     TASK_LOCK_TASK_ID,
     TASK_LOCK_WORKER_ID,
+    TASK_NAMESPACE,
     TASK_NODE,
     TASK_PROGRESS,
     TASK_RESULT_NODE,
@@ -94,19 +95,31 @@ class Neo4jWorkerConfig(WorkerConfig):
         return driver
 
 
+def _no_filter(namespace: str) -> bool:
+    # pylint: disable=unused-argument
+    return True
+
+
 @Worker.register(WorkerType.neo4j)
 class Neo4jWorker(Worker, Neo4jEventPublisher):
     def __init__(
         self,
         app: AsyncApp,
         worker_id: str,
+        *,
+        namespace: Optional[str],
         driver: neo4j.AsyncDriver,
         new_tasks_refresh_interval_s: float,
         cancelled_tasks_refresh_interval_s: float,
         **kwargs,
     ):
-        super().__init__(app, worker_id, **kwargs)
+        super().__init__(app, worker_id, namespace=namespace, **kwargs)
         super(Worker, self).__init__(driver)
+        if self._namespace is not None:
+            db_filter = self._namespacing.db_filter_factory(self._namespace)
+        else:
+            db_filter = _no_filter
+        self._db_filter: Callable[[str], bool] = db_filter
         self._cancelled_tasks_refresh_interval_s = cancelled_tasks_refresh_interval_s
         self._new_tasks_refresh_interval_s = new_tasks_refresh_interval_s
 
@@ -123,25 +136,32 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
         return worker
 
     async def _consume(self) -> Task:
+        ns_key = None
+        if self._namespace is not None:
+            ns_key = self._namespacing.namespace_to_db_key(self._namespace)
         return await self._consume_(
-            _consume_task_tx,
+            functools.partial(_consume_task_tx, namespace_key=ns_key),
             refresh_interval_s=self._new_tasks_refresh_interval_s,
         )
 
     async def _consume_cancelled(self) -> CancelledTaskEvent:
+        ns_key = None
+        if self._namespace is not None:
+            ns_key = self._namespacing.namespace_to_db_key(self._namespace)
         return await self._consume_(
-            _consume_cancelled_task_tx,
+            functools.partial(_consume_cancelled_task_tx, namespace_key=ns_key),
             refresh_interval_s=self._cancelled_tasks_refresh_interval_s,
         )
 
     async def _consume_(self, consume_tx: ConsumeT, refresh_interval_s: float) -> T:
         dbs = []
-        refresh_projects_i = 0
+        refresh_dbs_i = 0
         while "i'm waiting until I find something interesting":
             # Refresh project list once in an while
-            refresh_projects = refresh_projects_i % 10
-            if not refresh_projects:
+            refresh_dbs = (refresh_dbs_i % 10) == 0
+            if refresh_dbs:
                 dbs = await retrieve_dbs(self._driver)
+                dbs = [db for db in dbs if self._db_filter(db.name)]
             for db in dbs:
                 async with self._db_session(db.name) as sess:
                     received = await sess.execute_write(consume_tx, worker_id=self.id)
@@ -150,7 +170,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
                     if received is not None:
                         return received
             await asyncio.sleep(refresh_interval_s)
-            refresh_projects_i += 1
+            refresh_dbs_i += 1
 
     async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
         if nacked.status is TaskStatus.QUEUED:
@@ -197,9 +217,16 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
 
 
 async def _consume_task_tx(
-    tx: neo4j.AsyncTransaction, *, worker_id: str
+    tx: neo4j.AsyncTransaction,
+    *,
+    worker_id: str,
+    namespace_key: Optional[str],
 ) -> Optional[Task]:
+    where_ns = ""
+    if namespace_key is not None:
+        where_ns = f"WHERE t.{TASK_NAMESPACE} = $namespaceKey"
     query = f"""MATCH (t:{TASK_NODE}:`{TaskStatus.QUEUED.value}`)
+{where_ns}
 WITH t
 LIMIT 1
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
@@ -210,7 +237,9 @@ CREATE (lock:{TASK_LOCK_NODE} {{
 }})
 RETURN task"""
     labels = [TASK_NODE, TaskStatus.RUNNING.value]
-    res = await tx.run(query, workerId=worker_id, labels=labels)
+    res = await tx.run(
+        query, workerId=worker_id, labels=labels, namespaceKey=namespace_key
+    )
     try:
         task = await res.single(strict=True)
     except ResultNotSingleError:
@@ -221,17 +250,20 @@ RETURN task"""
 
 
 async def _consume_cancelled_task_tx(
-    tx: neo4j.AsyncTransaction, **_
+    tx: neo4j.AsyncTransaction, namespace_key: Optional[str], **_
 ) -> Optional[CancelledTaskEvent]:
+    where_ns = ""
+    if namespace_key is not None:
+        where_ns = f"AND task.{TASK_NAMESPACE} = $namespaceKey"
     get_event_query = f"""MATCH (task:{TASK_NODE})-[
     :{TASK_CANCELLED_BY_EVENT_REL}
 ]->(event:{TASK_CANCEL_EVENT_NODE})
-WHERE NOT event.{TASK_CANCEL_EVENT_EFFECTIVE}
+WHERE NOT event.{TASK_CANCEL_EVENT_EFFECTIVE}{where_ns}
 RETURN task, event
 ORDER BY event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED} ASC
 LIMIT 1
 """
-    res = await tx.run(get_event_query)
+    res = await tx.run(get_event_query, namespaceKey=namespace_key)
     try:
         event = await res.single(strict=True)
     except ResultNotSingleError:

@@ -20,7 +20,11 @@ from icij_common.neo4j.migrate import (
     migrate_db_schema,
     retrieve_dbs,
 )
-from icij_common.neo4j.db import Database, add_multidatabase_support_migration_tx
+from icij_common.neo4j.db import (
+    Database,
+    NEO4J_COMMUNITY_DB,
+    add_multidatabase_support_migration_tx,
+)
 from icij_common.neo4j.test_utils import mock_enterprise_, mocked_is_enterprise, wipe_db
 from icij_common.test_utils import TEST_DB, fail_if_exception
 
@@ -37,7 +41,11 @@ async def _migration_index_and_constraint(
     neo4j_test_driver: neo4j.AsyncDriver,
 ) -> neo4j.AsyncDriver:
     await init_database(
-        neo4j_test_driver, TEST_DB, _BASE_REGISTRY, timeout_s=30, throttle_s=0.1
+        neo4j_test_driver,
+        NEO4J_COMMUNITY_DB,
+        _BASE_REGISTRY,
+        timeout_s=30,
+        throttle_s=0.1,
     )
     return neo4j_test_driver
 
@@ -149,7 +157,7 @@ async def test_migrate_db_schema_should_raise_after_timeout(
     await neo4j_driver.execute_query(
         query,
         version=str(_MIGRATION_0.version),
-        db=TEST_DB,
+        db=NEO4J_COMMUNITY_DB,
         label=_MIGRATION_0.label,
         started=datetime.now(),
     )
@@ -231,7 +239,7 @@ async def test_migrate_db_schema_should_wait_when_other_migration_just_started(
 """
     await neo4j_driver.execute_query(
         query,
-        db="test_db",
+        db=NEO4J_COMMUNITY_DB,
         version=str(_MIGRATION_0.version),
         label=str(_MIGRATION_0.label),
         started=datetime.now(),
@@ -276,7 +284,7 @@ async def test_retrieve_dbs(
     dbs = await retrieve_dbs(neo4j_driver)
 
     # Then
-    assert dbs == [Database(name=TEST_DB)]
+    assert dbs == [Database(name=NEO4J_COMMUNITY_DB)]
 
 
 async def test_migrate_should_use_registry_db_when_with_enterprise_support(
@@ -305,16 +313,18 @@ async def test_init_database(
 ):
     # Given
     neo4j_driver = neo4j_test_driver
-    db = "test-db"
+
     registry = [V_0_1_0]
 
     if is_enterprise:
+        db = "test-db"
         mock_enterprise_(monkeypatch)
         with pytest.raises(ClientError) as ctx:
             await init_database(neo4j_driver, db, registry, timeout_s=1, throttle_s=1)
         expected_code = "Neo.ClientError.Statement.UnsupportedAdministrationCommand"
         assert ctx.value.code == expected_code
     else:
+        db = NEO4J_COMMUNITY_DB
         # When
         existed = await init_database(
             neo4j_driver, db, registry, timeout_s=1, throttle_s=1
@@ -339,7 +349,7 @@ async def test_init_database(
 async def test_init_database_should_be_idempotent(neo4j_test_driver: neo4j.AsyncDriver):
     # Given
     neo4j_driver = neo4j_test_driver
-    db = "test-db"
+    db = NEO4J_COMMUNITY_DB
     registry = [V_0_1_0]
     await init_database(neo4j_driver, db, registry, timeout_s=1, throttle_s=1)
 

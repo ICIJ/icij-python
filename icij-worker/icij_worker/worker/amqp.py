@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from datetime import datetime
-from functools import lru_cache
 from typing import ClassVar, Dict, Optional, Type, cast
 
 from aio_pika import RobustQueue, connect_robust
@@ -29,10 +28,9 @@ from icij_worker import (
 )
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
-    Exchange,
     RobustConnection,
-    Routing,
 )
+from icij_worker.namespacing import Exchange, Namespacing, Routing
 from icij_worker.objects import CancelledTaskEvent
 from icij_worker.utils.from_config import T
 
@@ -73,12 +71,12 @@ class AMQPWorkerConfig(WorkerConfig):
 
 @Worker.register(WorkerType.amqp)
 class AMQPWorker(Worker):
-
     def __init__(
         self,
         app: AsyncApp,
         worker_id: str,
         *,
+        namespace: Optional[str],
         broker_url: str,
         connection_timeout_s: Optional[float] = None,
         reconnection_wait_s: Optional[float] = None,
@@ -89,11 +87,12 @@ class AMQPWorker(Worker):
         super().__init__(
             app,
             worker_id,
+            namespace=namespace,
             handle_signals=handle_signals,
             teardown_dependencies=teardown_dependencies,
         )
         self._cancel_event_queue_name = (
-            f"{self._cancel_event_routing().default_queue}" f"-{self._id}"
+            f"{self._cancel_event_routing().queue_name}" f"-{self._id}"
         )
         self._broker_url = broker_url
         self._reconnection_wait_s = reconnection_wait_s
@@ -103,9 +102,9 @@ class AMQPWorker(Worker):
         self._connection_: Optional[AbstractRobustConnection] = None
         self._task_queue_: Optional[RobustQueue] = None
         self._task_queue_iterator: Optional[AbstractQueueIterator] = None
-        self._cancel_evt_connection: Optional[AbstractRobustConnection] = None
         self._cancel_evt_queue_: Optional[RobustQueue] = None
         self._cancel_evt_queue_iterator: Optional[AbstractQueueIterator] = None
+        self._task_routing: Optional[Routing] = None
         self._delivered: Dict[str, AbstractIncomingMessage] = dict()
         self._exit_stack = AsyncExitStack()
 
@@ -113,12 +112,19 @@ class AMQPWorker(Worker):
 
     async def _aenter__(self):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
-        self._connection_ = await self._make_connection()
-        await self._exit_stack.enter_async_context(self._connection_)
-        # This one will automatically get destroyed with the connection
+        await self._make_connection()
+        await self._bind_task_queue()
+        await self._bind_cancel_event_queue()
+        # TODO: the publisher is fanout so no need to bind the namespace here,
+        #  make updates if that changes
+        self._publisher = self._create_publisher()
+        await self._exit_stack.enter_async_context(self._publisher)
+
+    async def _bind_task_queue(self):
+        self._task_routing = self.task_routing(self._namespacing, self._namespace)
         self._task_queue_iterator = await self._get_queue_iterator(
-            self._connection_,
-            self._task_routing(),
+            self._connection,
+            self._task_routing,
             create_queue=self._declare_exchanges,
             exchange_type=ExchangeType.DIRECT,
         )
@@ -126,10 +132,10 @@ class AMQPWorker(Worker):
             AbstractAsyncContextManager, self._task_queue_iterator
         )
         await self._exit_stack.enter_async_context(self._task_queue_iterator)
-        self._cancel_evt_connection = await self._make_connection()
-        await self._exit_stack.enter_async_context(self._cancel_evt_connection)
+
+    async def _bind_cancel_event_queue(self):
         self._cancel_evt_queue_iterator = await self._get_queue_iterator(
-            self._cancel_evt_connection,
+            self._connection,
             self._cancel_event_routing(),
             create_queue=True,  # The worker always creates its own transient queue
             durable_queue=False,
@@ -140,16 +146,16 @@ class AMQPWorker(Worker):
             AbstractAsyncContextManager, self._cancel_evt_queue_iterator
         )
         await self._exit_stack.enter_async_context(self._cancel_evt_queue_iterator)
-        self._publisher = self._create_publisher()
-        await self._exit_stack.enter_async_context(self._publisher)
 
-    async def _make_connection(self) -> AbstractRobustConnection:
-        return await connect_robust(
-            self._broker_url,
-            timeout=self._connection_timeout_s,
-            reconnect_interval=self._reconnection_wait_s,
-            connection_class=RobustConnection,
-        )
+    async def _make_connection(self):
+        if self._connection_ is None:
+            self._connection_ = await connect_robust(
+                self._broker_url,
+                timeout=self._connection_timeout_s,
+                reconnect_interval=self._reconnection_wait_s,
+                connection_class=RobustConnection,
+            )
+            await self._exit_stack.enter_async_context(self._connection_)
 
     async def _aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
@@ -176,7 +182,7 @@ class AMQPWorker(Worker):
                     dl_routing.exchange.name, type=exchange_type, durable=True
                 )
                 dl_queue = await channel.declare_queue(
-                    dl_routing.default_queue, durable=True
+                    dl_routing.queue_name, durable=True
                 )
                 await dl_queue.bind(dlq_ex, routing_key=routing.routing_key)
                 arguments = {"x-dead-letter-exchange": dlq_ex.name}
@@ -187,12 +193,12 @@ class AMQPWorker(Worker):
             ex = await channel.get_exchange(routing.exchange.name)
         if create_queue:
             if created_queue_name is None:
-                created_queue_name = routing.default_queue
+                created_queue_name = routing.queue_name
             queue = await channel.declare_queue(
                 created_queue_name, durable=durable_queue, arguments=arguments
             )
         else:
-            queue = await channel.get_queue(routing.default_queue)
+            queue = await channel.get_queue(routing.queue_name)
         await queue.bind(ex, routing_key=routing.routing_key)
         kwargs = dict()
         if self._inactive_after_s is not None:
@@ -215,7 +221,7 @@ class AMQPWorker(Worker):
     def _task_messages_it(self) -> AbstractQueueIterator:
         if self._task_queue_iterator is None:
             msg = (
-                f"Worker as not task message iterator, "
+                f"Worker as no task message iterator, "
                 f"please call {AMQPWorker.__aenter__} first"
             )
             raise ValueError(msg)
@@ -225,7 +231,7 @@ class AMQPWorker(Worker):
     def _cancel_events_it(self) -> AbstractQueueIterator:
         if self._cancel_evt_queue_iterator is None:
             msg = (
-                f"Worker as not cancel events iterator, "
+                f"Worker as no cancel events iterator, "
                 f"please call {AMQPWorker.__aenter__} first"
             )
             raise ValueError(msg)
@@ -259,17 +265,10 @@ class AMQPWorker(Worker):
     async def _save_error(self, error: TaskError):
         await self._publisher.publish_error(error)
 
-    @classmethod
-    @lru_cache(maxsize=1)
-    def _task_routing(cls) -> Routing:
-        # TODO: routing must be improved here, as a worker should not listen for all
-        #  tasks but only for a subset (task should be group by semantic / duration /
-        #  resource consumption)
-        return Routing(
-            exchange=Exchange(name="exchangeMainTasks", type=ExchangeType.DIRECT),
-            routing_key="routingKeyMainTasks",
-            default_queue="queueMainTasks",
-        )
+    @staticmethod
+    def task_routing(namespacing: Namespacing, namespace: Optional[str]) -> Routing:
+        routing = namespacing.amqp_task_routing(namespace)
+        return routing
 
     @classmethod
     def _cancel_event_routing(cls) -> Routing:
@@ -278,7 +277,7 @@ class AMQPWorker(Worker):
                 name="exchangeMainCancelledEvents", type=ExchangeType.FANOUT
             ),
             routing_key="routingKeyMainCancelledEvents",
-            default_queue="queueCancelledEvents",
+            queue_name="queueCancelledEvents",
         )
 
     @property

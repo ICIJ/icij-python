@@ -186,8 +186,6 @@ class Message(Registrable): ...  # pylint: disable=multiple-statements
 class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     type: str
-    # TODO: should it be optional or default to "" ?
-    namespace: str
     inputs: Optional[Dict[str, object]] = None
     status: TaskStatus
     progress: Optional[float] = None
@@ -260,6 +258,8 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             node["completedAt"] = node["completedAt"].to_native()
         if "inputs" in node:
             node["inputs"] = json.loads(node["inputs"])
+        if "namespace" in node:
+            node.pop("namespace")
         node["status"] = status
         return cls(**node)
 
