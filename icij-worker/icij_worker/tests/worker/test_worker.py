@@ -13,7 +13,7 @@ import pytest
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
-from icij_worker import AsyncApp, Task, TaskError, TaskResult, TaskStatus
+from icij_worker import AsyncApp, Task, TaskError, TaskResult, TaskState
 from icij_worker.exceptions import TaskAlreadyCancelled
 from icij_worker.objects import ErrorEvent, ProgressEvent
 from icij_worker.utils.tests import MockManager, MockWorker
@@ -44,7 +44,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         id="some-id",
         type="hello_world",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
         inputs={"greeted": "world"},
     )
 
@@ -63,7 +63,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         type="hello_world",
         progress=100,
         created_at=created_at,
-        status=TaskStatus.DONE,
+        state=TaskState.DONE,
         inputs={"greeted": "world"},
     )
     completed_at = saved_task.completed_at
@@ -74,12 +74,12 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     expected_task.pop("completedAt")
     assert saved_task == expected_task
     expected_events = [
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
         ProgressEvent(task_id="some-id", progress=0.1),
         ProgressEvent(task_id="some-id", progress=0.99),
         ProgressEvent(
             task_id="some-id",
-            status=TaskStatus.DONE,
+            state=TaskState.DONE,
             progress=100.0,
             completed_at=completed_at,
         ),
@@ -99,7 +99,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         id="some-id",
         type="hello_world_sync",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
         inputs={"greeted": "world"},
     )
 
@@ -118,7 +118,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         type="hello_world_sync",
         progress=100,
         created_at=created_at,
-        status=TaskStatus.DONE,
+        state=TaskState.DONE,
         inputs={"greeted": "world"},
     )
     completed_at = saved_task.completed_at
@@ -129,10 +129,10 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     expected_task.pop("completedAt")
     assert saved_task == expected_task
     expected_events = [
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
         ProgressEvent(
             task_id="some-id",
-            status=TaskStatus.DONE,
+            state=TaskState.DONE,
             progress=100.0,
             completed_at=completed_at,
         ),
@@ -154,16 +154,16 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
         id="some-id",
         type="recovering_task",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
 
     # When/Then
     task = await task_manager.enqueue(task, namespace=None)
-    assert task.status is TaskStatus.QUEUED
+    assert task.state is TaskState.QUEUED
     await worker.work_once()
     retried_task = await task_manager.get_task(task_id=task.id)
 
-    assert retried_task.status is TaskStatus.QUEUED
+    assert retried_task.state is TaskState.QUEUED
     assert retried_task.retries == 1
 
     await worker.work_once()
@@ -177,7 +177,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
         type="recovering_task",
         progress=100,
         created_at=created_at,
-        status=TaskStatus.DONE,
+        state=TaskState.DONE,
         retries=1,
     )
     completed_at = saved_task.completed_at
@@ -195,10 +195,10 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     assert saved_result == expected_result
 
     expected_events = [
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
         ErrorEvent(
             task_id="some-id",
-            status=TaskStatus.QUEUED,
+            state=TaskState.QUEUED,
             retries=1,
             error=TaskError(
                 id="",
@@ -208,11 +208,11 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
                 occurred_at=datetime.now(),
             ),
         ),
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
         ProgressEvent(
             task_id="some-id",
-            status=TaskStatus.DONE,
+            state=TaskState.DONE,
             progress=100.0,
             completed_at=completed_at,
         ),
@@ -244,7 +244,7 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
         id="some-id",
         type="fatal_error_task",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
 
     # When
@@ -259,7 +259,7 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
         type="fatal_error_task",
         progress=0.1,
         created_at=created_at,
-        status=TaskStatus.ERROR,
+        state=TaskState.ERROR,
     )
     assert saved_task == expected_task
 
@@ -269,11 +269,11 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     assert isinstance(saved_error.occurred_at, datetime)
 
     expected_events = [
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
         ProgressEvent(task_id="some-id", progress=0.1),
         ErrorEvent(
             task_id="some-id",
-            status=TaskStatus.ERROR,
+            state=TaskState.ERROR,
             error=TaskError(
                 id="",
                 task_id="some-id",
@@ -308,7 +308,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
         id="some-id",
         type="i_dont_exist",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
 
     # When
@@ -323,7 +323,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
         type="i_dont_exist",
         progress=0.0,
         created_at=created_at,
-        status=TaskStatus.ERROR,
+        state=TaskState.ERROR,
     )
     assert saved_task == expected_task
 
@@ -333,10 +333,10 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     assert isinstance(saved_error.occurred_at, datetime)
 
     expected_events = [
-        ProgressEvent(task_id="some-id", status=TaskStatus.RUNNING, progress=0.0),
+        ProgressEvent(task_id="some-id", state=TaskState.RUNNING, progress=0.0),
         ErrorEvent(
             task_id="some-id",
-            status=TaskStatus.ERROR,
+            state=TaskState.ERROR,
             error=TaskError(
                 id="error-id",
                 task_id="some-id",
@@ -371,10 +371,10 @@ async def test_work_once_should_not_run_already_cancelled_task(mock_worker: Mock
         id="some-id",
         type="fatal_error_task",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
     # When
-    cancelled = safe_copy(task, update={"status": TaskStatus.CANCELLED})
+    cancelled = safe_copy(task, update={"state": TaskState.CANCELLED})
     await task_manager.enqueue(task, namespace=None)
     # We mock the fact the task is still received but cancelled right after
     with pytest.raises(TaskAlreadyCancelled):
@@ -394,7 +394,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         id="some-id",
         type="sleep_for",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
         inputs={"duration": duration},
     )
 
@@ -411,20 +411,20 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
 
         async def _assert_running() -> bool:
             saved = await task_manager.get_task(task_id=task.id)
-            return saved.status is TaskStatus.RUNNING
+            return saved.state is TaskState.RUNNING
 
         failure_msg = f"Failed to run task in less than {after_s}"
         assert await async_true_after(_assert_running, after_s=after_s), failure_msg
         await task_manager.cancel(task_id=task.id, requeue=requeue)
 
-        async def _assert_has_status(status: TaskStatus) -> bool:
+        async def _assert_has_state(state: TaskState) -> bool:
             saved = await task_manager.get_task(task_id=task.id)
-            return saved.status is status
+            return saved.state is state
 
-        expected_status = TaskStatus.QUEUED if requeue else TaskStatus.CANCELLED
+        expected_state = TaskState.QUEUED if requeue else TaskState.CANCELLED
         failure_msg = f"Failed to cancel task in less than {after_s}"
         assert await async_true_after(
-            functools.partial(_assert_has_status, expected_status), after_s=after_s
+            functools.partial(_assert_has_state, expected_state), after_s=after_s
         ), failure_msg
 
 
@@ -442,7 +442,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
         id="some-id",
         type="sleep_for",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
         inputs={"duration": duration},
     )
 
@@ -457,7 +457,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
 
         async def _assert_running() -> bool:
             saved = await task_manager.get_task(task_id=task.id)
-            return saved.status is TaskStatus.RUNNING
+            return saved.state is TaskState.RUNNING
 
         after_s = 2.0
         failure_msg = f"Failed to run task in less than {after_s}"
@@ -523,7 +523,7 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
         id="some-id",
         type="fatal_error_task",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
 
     # When/Then
@@ -543,7 +543,7 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
         id="some-id",
         type="fatal_error_task",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
 
     # When/Then

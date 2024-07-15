@@ -21,7 +21,7 @@ from icij_worker import (
     TaskError,
     TaskEvent,
     TaskResult,
-    TaskStatus,
+    TaskState,
     Worker,
     WorkerConfig,
     WorkerType,
@@ -243,7 +243,7 @@ class AMQPWorker(Worker):
         acked = safe_copy(
             task,
             update={
-                "status": TaskStatus.DONE,
+                "state": TaskState.DONE,
                 "progress": 100,
                 "completed_at": completed_at,
             },
@@ -253,7 +253,7 @@ class AMQPWorker(Worker):
     async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
         # pylint: disable=unused-argument
         message = self._delivered[nacked.id]
-        requeue = nacked.status is TaskStatus.QUEUED
+        requeue = nacked.state is TaskState.QUEUED
         await message.nack(requeue=requeue)
 
     async def _publish_event(self, event: TaskEvent):

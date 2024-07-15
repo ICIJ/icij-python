@@ -11,7 +11,7 @@ from icij_worker import (
     Neo4jEventPublisher,
     Task,
     TaskEvent,
-    TaskStatus,
+    TaskState,
 )
 from icij_worker.objects import (
     ErrorEvent,
@@ -32,7 +32,7 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
     "event,task_update",
     [
         (
-            ProgressEvent(task_id="task-0", progress=0.66, status=TaskStatus.RUNNING),
+            ProgressEvent(task_id="task-0", progress=0.66, state=TaskState.RUNNING),
             TaskUpdate(task_id="task-0", progress=0.66),
         ),
         (
@@ -51,7 +51,7 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
                     ],
                     occurred_at=datetime.now(),
                 ),
-                status=TaskStatus.QUEUED,
+                state=TaskState.QUEUED,
             ),
             TaskUpdate(
                 task_id="task-0",
@@ -68,7 +68,7 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
                     ],
                     occurred_at=datetime.now(),
                 ),
-                status=TaskStatus.QUEUED,
+                state=TaskState.QUEUED,
             ),
         ),
     ],
@@ -82,7 +82,7 @@ async def test_worker_publish_event(
     # Given
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
     task = populate_tasks[0]
-    assert task.status == TaskStatus.QUEUED
+    assert task.state == TaskState.QUEUED
     assert task.progress is None
     assert task.retries is None
     assert task.completed_at is None
@@ -141,9 +141,9 @@ async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublis
         id=task_id,
         type=task_type,
         created_at=created_at,
-        status=TaskStatus.QUEUED,
+        state=TaskState.QUEUED,
     )
-    event = ProgressEvent(task_id=task_id, status=TaskStatus.QUEUED, progress=0.0)
+    event = ProgressEvent(task_id=task_id, state=TaskState.QUEUED, progress=0.0)
 
     # When
     await publisher.publish_event(event)
@@ -153,7 +153,7 @@ async def test_worker_publish_event_for_unknown_task(publisher: Neo4jEventPublis
     assert saved_task == task
 
 
-async def test_worker_publish_event_should_use_status_resolution(
+async def test_worker_publish_event_should_use_state_resolution(
     publisher: Neo4jEventPublisher,
 ):
     # Given
@@ -170,9 +170,9 @@ RETURN task"""
         await sess.run(query, now=datetime.now(), taskId=task_id)
     task_manager = Neo4JTaskManager(publisher.driver, max_queue_size=10)
     task = await task_manager.get_task(task_id=task_id)
-    assert task.status is TaskStatus.DONE
+    assert task.state is TaskState.DONE
 
-    event = ProgressEvent(task_id=task.id, status=TaskStatus.RUNNING, progress=0.0)
+    event = ProgressEvent(task_id=task.id, state=TaskState.RUNNING, progress=0.0)
 
     # When
     await publisher.publish_event(event)

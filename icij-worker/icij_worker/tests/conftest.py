@@ -36,7 +36,7 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 )
 from icij_worker import AsyncApp, Namespacing, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.objects import CancelledTaskEvent, TaskStatus
+from icij_worker.objects import CancelledTaskEvent, TaskState
 from icij_worker.task_manager.neo4j_ import (
     add_support_for_async_task_tx,
     migrate_add_index_to_task_namespace_v0_tx,
@@ -362,7 +362,7 @@ def hello_world_task() -> Task:
         id="some-id",
         type="hello_world",
         inputs={"greeted": "world"},
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
         created_at=datetime.now(),
     )
     return task

@@ -40,7 +40,7 @@ from icij_worker import (
     TaskError,
     TaskEvent,
     TaskResult,
-    TaskStatus,
+    TaskState,
     Worker,
     WorkerConfig,
     WorkerType,
@@ -211,13 +211,13 @@ if _has_pytest:
             db = self._read()
             tasks = db[self._task_collection]
             n_queued = sum(
-                1 for t in tasks.values() if t["status"] == TaskStatus.QUEUED.value
+                1 for t in tasks.values() if t["state"] == TaskState.QUEUED.value
             )
             if n_queued > self._max_queue_size:
                 raise TaskQueueIsFull(self._max_queue_size)
             if key in tasks:
                 raise TaskAlreadyExists(task.id)
-            update = {"status": TaskStatus.QUEUED}
+            update = {"state": TaskState.QUEUED}
             task = safe_copy(task, update=update)
             task_dict = task.dict()
             if namespace is not None:
@@ -271,18 +271,18 @@ if _has_pytest:
             self,
             *,
             task_type: Optional[str] = None,
-            status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
+            state: Optional[Union[List[TaskState], TaskState]] = None,
             db: Optional[str] = None,
             **kwargs,
         ) -> List[Task]:
             # pylint: disable=arguments-differ
             db = self._read()
             tasks = db.values()
-            if status:
-                if isinstance(status, TaskStatus):
-                    status = [status]
-                status = set(status)
-                tasks = (t for t in tasks if t.status in status)
+            if state:
+                if isinstance(state, TaskState):
+                    state = [state]
+                state = set(state)
+                tasks = (t for t in tasks if t.state in state)
             return list(tasks)
 
     R = TypeVar("R", bound=ICIJModel)
@@ -453,7 +453,7 @@ if _has_pytest:
             saved_task = Task.parse_obj(saved_task)
             update = {
                 "completed_at": completed_at,
-                "status": TaskStatus.DONE,
+                "state": TaskState.DONE,
                 "progress": 100.0,
             }
             tasks[key] = safe_copy(saved_task, update=update)
@@ -467,8 +467,8 @@ if _has_pytest:
             if cancelled:
                 # Clean cancellation events
                 db[self._cancel_event_collection].pop(key)
-            update = {"status": nacked.status}
-            if nacked.status is TaskStatus.QUEUED:
+            update = {"state": nacked.state}
+            if nacked.state is TaskState.QUEUED:
                 update["progress"] = nacked.progress
                 if not cancelled:
                     update["retries"] = nacked.retries
@@ -485,7 +485,7 @@ if _has_pytest:
                 self._task_collection,
                 Task,
                 ns_key=ns_key,
-                select=lambda t: t.status is TaskStatus.QUEUED,
+                select=lambda t: t.state is TaskState.QUEUED,
                 order=lambda t: t.created_at,
             )
 

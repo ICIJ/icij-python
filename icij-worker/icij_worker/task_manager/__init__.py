@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, final
 
-from icij_worker import Task, TaskError, TaskResult, TaskStatus
+from icij_worker import Task, TaskError, TaskResult, TaskState
 from icij_worker.namespacing import Namespacing
 
 
@@ -13,12 +13,12 @@ class TaskManager(ABC):
 
     @final
     async def enqueue(self, task: Task, namespace: Optional[str], **kwargs) -> Task:
-        if task.status is not TaskStatus.CREATED:
-            msg = f"invalid status {task.status}, expected {TaskStatus.CREATED}"
+        if task.state is not TaskState.CREATED:
+            msg = f"invalid state {task.state}, expected {TaskState.CREATED}"
             raise ValueError(msg)
         queued = await self._enqueue(task, namespace=namespace, **kwargs)
-        if queued.status is not TaskStatus.QUEUED:
-            msg = f"invalid status {queued.status}, expected {TaskStatus.QUEUED}"
+        if queued.state is not TaskState.QUEUED:
+            msg = f"invalid state {queued.state}, expected {TaskState.QUEUED}"
             raise ValueError(msg)
         return queued
 
@@ -52,7 +52,7 @@ class TaskManager(ABC):
         namespace: Optional[str],
         *,
         task_type: Optional[str] = None,
-        status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
+        state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
         pass

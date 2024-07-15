@@ -34,7 +34,7 @@ from icij_common.neo4j.constants import (
     TASK_RESULT_NODE,
     TASK_TYPE,
 )
-from icij_worker import Namespacing, Task, TaskError, TaskResult, TaskStatus
+from icij_worker import Namespacing, Task, TaskError, TaskResult, TaskState
 from icij_worker.event_publisher.neo4j_ import Neo4jDBMixin
 from icij_worker.exceptions import (
     MissingTaskResult,
@@ -79,7 +79,7 @@ class Neo4JTaskManager(TaskManager, Neo4jDBMixin):
         namespace: Optional[str],
         *,
         task_type: Optional[str] = None,
-        status: Optional[Union[List[TaskStatus], TaskStatus]] = None,
+        state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
         # pylint: disable=arguments-differ
@@ -88,7 +88,7 @@ class Neo4JTaskManager(TaskManager, Neo4jDBMixin):
             raise ValueError(msg)
         db = self._namespacing.neo4j_db(namespace)
         async with self._db_session(db) as sess:
-            recs = await _get_tasks(sess, status=status, task_type=task_type)
+            recs = await _get_tasks(sess, state=state, task_type=task_type)
         tasks = [Task.from_neo4j(r) for r in recs]
         return tasks
 
@@ -151,14 +151,14 @@ ON (lock.{TASK_LOCK_WORKER_ID})"""
 
 async def _get_tasks(
     sess: neo4j.AsyncSession,
-    status: Optional[Union[List[TaskStatus], TaskStatus]],
+    state: Optional[Union[List[TaskState], TaskState]],
     task_type: Optional[str],
 ) -> List[neo4j.Record]:
-    if isinstance(status, TaskStatus):
-        status = [status]
-    if status is not None:
-        status = [s.value for s in status]
-    return await sess.execute_read(_get_tasks_tx, status=status, task_type=task_type)
+    if isinstance(state, TaskState):
+        state = [state]
+    if state is not None:
+        state = [s.value for s in state]
+    return await sess.execute_read(_get_tasks_tx, state=state, task_type=task_type)
 
 
 async def _get_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str) -> Task:
@@ -171,16 +171,16 @@ async def _get_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str) -> Task:
 
 
 async def _get_tasks_tx(
-    tx: neo4j.AsyncTransaction, status: Optional[List[str]], *, task_type: Optional[str]
+    tx: neo4j.AsyncTransaction, state: Optional[List[str]], *, task_type: Optional[str]
 ) -> List[neo4j.Record]:
     where = ""
     if task_type:
         where = f"WHERE task.{TASK_TYPE} = $type"
     all_labels = [(TASK_NODE,)]
-    if isinstance(status, str):
-        status = (status,)
-    if status is not None:
-        all_labels.append(tuple(status))
+    if isinstance(state, str):
+        state = (state,)
+    if state is not None:
+        all_labels.append(tuple(state))
     all_labels = list(itertools.product(*all_labels))
     if all_labels:
         query = "UNION\n".join(
@@ -193,7 +193,7 @@ async def _get_tasks_tx(
         query = f"""MATCH (task:{TASK_NODE})
 RETURN task
 ORDER BY task.{TASK_CREATED_AT} DESC"""
-    res = await tx.run(query, status=status, type=task_type)
+    res = await tx.run(query, state=state, type=task_type)
     recs = [rec async for rec in res]
     return recs
 
@@ -235,7 +235,7 @@ async def _enqueue_task_tx(
     inputs: str,
     max_queue_size: int,
 ) -> Task:
-    count_query = f"""MATCH (task:{TASK_NODE}:`{TaskStatus.QUEUED.value}`)
+    count_query = f"""MATCH (task:{TASK_NODE}:`{TaskState.QUEUED.value}`)
 RETURN count(task.id) AS nQueued
 """
     res = await tx.run(count_query)
@@ -245,7 +245,7 @@ RETURN count(task.id) AS nQueued
         raise TaskQueueIsFull(max_queue_size)
 
     query = f"""CREATE (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
-SET task:{TaskStatus.QUEUED.value},
+SET task:{TaskState.QUEUED.value},
     task.{TASK_TYPE} = $taskType,
     task.{TASK_NAMESPACE} = $namespaceKey,
     task.{TASK_INPUTS} = $inputs,
