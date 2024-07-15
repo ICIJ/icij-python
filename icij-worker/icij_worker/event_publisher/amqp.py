@@ -9,7 +9,7 @@ from aio_pika import (
     DeliveryMode,
     Exchange as AioPikaExchange,
     ExchangeType,
-    Message,
+    Message as AioPikaMessage,
     RobustChannel,
     RobustConnection as _RobustConnection,
     connect_robust,
@@ -17,7 +17,7 @@ from aio_pika import (
 from aio_pika.abc import AbstractRobustConnection
 
 from icij_common.logging_utils import LogWithNameMixin
-from icij_worker import TaskError, TaskEvent, TaskResult
+from icij_worker import Message, TaskError, TaskEvent, TaskResult
 from . import EventPublisher
 from ..namespacing import Exchange, Routing
 
@@ -105,9 +105,8 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         return [self.evt_routing(), self.res_routing(), self.err_routing()]
 
     async def _publish_event(self, event: TaskEvent):
-        message = event.json().encode()
         await self._publish_message(
-            message,
+            event,
             exchange=self._evt_exchange,
             routing_key=self.evt_routing().routing_key,
             mandatory=False,
@@ -121,9 +120,8 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         #  result is coming. This is limitating as for instance when as result must
         #  probably be saved in separate DBs in order to avoid project data leaking to
         #  other projects through the DB
-        message = result.json().encode()
         await self._publish_message(
-            message,
+            result,
             exchange=self._res_exchange,
             routing_key=self.res_routing().routing_key,
             mandatory=True,  # This is important
@@ -135,9 +133,9 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         #  result is coming. This is limitating as for instance when as result must
         #  probably be saved in separate DBs in order to avoid project data leaking to
         #  other projects through the DB
-        message = error.json().encode()
+
         await self._publish_message(
-            message,
+            error,
             exchange=self._err_exchange,
             routing_key=self.err_routing().routing_key,
             mandatory=True,  # This is important
@@ -145,14 +143,17 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
 
     async def _publish_message(
         self,
-        message: bytes,
+        message: Message,
         *,
         exchange: AioPikaExchange,
         delivery_mode: DeliveryMode = DeliveryMode.PERSISTENT,
         routing_key: Optional[str],
         mandatory: bool,
     ):
-        message = Message(message, delivery_mode=delivery_mode, app_id=self._app_id)
+        message = message.json(by_alias=True, exclude_unset=True).encode()
+        message = AioPikaMessage(
+            message, delivery_mode=delivery_mode, app_id=self._app_id
+        )
 
         await exchange.publish(
             message,

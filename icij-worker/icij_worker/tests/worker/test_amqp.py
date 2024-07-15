@@ -1,6 +1,7 @@
 # pylint: disable=redefined-outer-name
 import asyncio
 import functools
+import json
 from datetime import datetime
 from typing import ClassVar, Dict, List, Optional
 
@@ -389,9 +390,15 @@ async def test_publish_event(
         queue = await channel.get_queue(event_routing.queue_name)
         async with queue.iterator(timeout=2.0) as messages:
             async for message in messages:
-                received_event = Message.parse_raw(message.body)
+                received_event_json = json.loads(message.body)
                 break
-        assert received_event == event
+        expected_json = {
+            "@type": "progress-event",
+            "progress": 50.0,
+            "taskId": "some-id",
+        }
+        assert received_event_json == expected_json
+        assert Message.parse_obj(received_event_json) == event
 
 
 async def test_publish_error(
@@ -401,13 +408,14 @@ async def test_publish_error(
     # Given
     broker_url = rabbit_mq
     task = populate_tasks[0]
+    occurred_at = datetime.now()
     error = TaskError(
         id="error-id",
         task_id=task.id,
         name="someErrorTitle",
         message="with_details",
         stacktrace=[StacktraceItem(name="someErrorTitle", file="somefile", lineno=666)],
-        occurred_at=datetime.now(),
+        occurred_at=occurred_at,
     )
 
     # When
@@ -420,9 +428,21 @@ async def test_publish_error(
         error_queue = await channel.get_queue(error_routing.queue_name)
         async with error_queue.iterator(timeout=2.0) as messages:
             async for message in messages:
-                received_error = TaskError.parse_raw(message.body)
+                received_error = json.loads(message.body)
                 break
-        assert received_error == error
+        expected_json = {
+            "@type": "task-error",
+            "id": "error-id",
+            "message": "with_details",
+            "name": "someErrorTitle",
+            "occurredAt": occurred_at.isoformat(),
+            "stacktrace": [
+                {"file": "somefile", "lineno": 666, "name": "someErrorTitle"}
+            ],
+            "taskId": "task-0",
+        }
+        assert received_error == expected_json
+        assert TaskError.parse_obj(expected_json) == error
 
 
 async def test_publish_result(
@@ -444,9 +464,15 @@ async def test_publish_result(
         result_queue = await channel.get_queue(result_routing.queue_name)
         async with result_queue.iterator(timeout=2.0) as messages:
             async for message in messages:
-                received_result = TaskResult.parse_raw(message.body)
+                received_result = json.loads(message.body)
                 break
-        assert received_result == result
+        expected_json = {
+            "@type": "task-result",
+            "result": "hello world !",
+            "taskId": "task-0",
+        }
+        assert received_result == expected_json
+        assert TaskResult.parse_obj(expected_json) == result
 
 
 async def test_amqp_config_uri():
