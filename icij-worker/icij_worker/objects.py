@@ -318,7 +318,7 @@ class StacktraceItem(LowerCamelCaseModel):
 
 
 @Message.register("task-error")
-class TaskError(LowerCamelCaseModel, FromTask):
+class TaskError(Message, LowerCamelCaseModel, FromTask):
     # This helps to know if an error has already been processed or not
     id: str
     task_id: str
@@ -438,7 +438,7 @@ class ProgressEvent(TaskEvent, FromTask):
 
 
 @Message.register("cancelled-task-event")
-class CancelledTaskEvent(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     task_id: str
     requeue: bool
     cancelled_at: datetime
@@ -471,7 +471,7 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel):
 
 
 @Message.register("task-result")
-class TaskResult(LowerCamelCaseModel, FromTask):
+class TaskResult(Message, LowerCamelCaseModel, FromTask):
     # TODO: we could use generics here
     task_id: str
     result: object
