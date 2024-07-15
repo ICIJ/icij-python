@@ -84,6 +84,7 @@ async def _publish_event(sess: neo4j.AsyncSession, event: TaskEvent):
     error = event.pop("error", None)
     if error is not None:
         error["stacktrace"] = [json.dumps(item) for item in error["stacktrace"]]
+        error.pop("@type")
     await sess.execute_write(_publish_event_tx, event, error)
 
 

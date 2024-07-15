@@ -196,6 +196,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
     async def _save_error(self, error: TaskError):
         async with self._task_session(error.task_id) as sess:
             error_props = error.dict(by_alias=True)
+            error_props.pop("@type")
             error_props["stacktrace"] = [
                 json.dumps(item) for item in error_props["stacktrace"]
             ]
