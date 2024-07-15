@@ -44,7 +44,7 @@ from icij_worker import (
     Task,
     TaskError,
     TaskResult,
-    TaskStatus,
+    TaskState,
     Worker,
     WorkerConfig,
     WorkerType,
@@ -173,11 +173,11 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
             refresh_dbs_i += 1
 
     async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
-        if nacked.status is TaskStatus.QUEUED:
+        if nacked.state is TaskState.QUEUED:
             nack_fn = functools.partial(
                 _nack_and_requeue_task_tx, retries=nacked.retries, cancelled=cancelled
             )
-        elif nacked.status is TaskStatus.CANCELLED:
+        elif nacked.state is TaskState.CANCELLED:
             nack_fn = functools.partial(
                 _nack_and_cancel_task_tx, cancelled_at=nacked.cancelled_at
             )
@@ -225,7 +225,7 @@ async def _consume_task_tx(
     where_ns = ""
     if namespace_key is not None:
         where_ns = f"WHERE t.{TASK_NAMESPACE} = $namespaceKey"
-    query = f"""MATCH (t:{TASK_NODE}:`{TaskStatus.QUEUED.value}`)
+    query = f"""MATCH (t:{TASK_NODE}:`{TaskState.QUEUED.value}`)
 {where_ns}
 WITH t
 LIMIT 1
@@ -236,7 +236,7 @@ CREATE (lock:{TASK_LOCK_NODE} {{
     {TASK_LOCK_WORKER_ID}: $workerId 
 }})
 RETURN task"""
-    labels = [TASK_NODE, TaskStatus.RUNNING.value]
+    labels = [TASK_NODE, TaskState.RUNNING.value]
     res = await tx.run(
         query, workerId=worker_id, labels=labels, namespaceKey=namespace_key
     )
@@ -283,7 +283,7 @@ WITH t , lock
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 DELETE lock
 RETURN task"""
-    labels = [TASK_NODE, TaskStatus.DONE.value]
+    labels = [TASK_NODE, TaskState.DONE.value]
     res = await tx.run(
         query,
         taskId=task_id,
@@ -306,7 +306,7 @@ CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 DELETE lock
 RETURN task, lock
 """
-    labels = [TASK_NODE, TaskStatus.ERROR.value]
+    labels = [TASK_NODE, TaskState.ERROR.value]
     res = await tx.run(query, taskId=task_id, workerId=worker_id, labels=labels)
     try:
         await res.single(strict=True)
@@ -340,7 +340,7 @@ DELETE lock
 WITH t, lock
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task{clean_cancelled}
 RETURN task, lock"""
-    labels = [TASK_NODE, TaskStatus.QUEUED.value]
+    labels = [TASK_NODE, TaskState.QUEUED.value]
     res = await tx.run(
         query,
         taskId=task_id,
@@ -372,7 +372,7 @@ MATCH (lock:{TASK_LOCK_NODE} {{ {TASK_LOCK_TASK_ID}: task.{TASK_ID} }})
 DELETE lock
 RETURN task
 """
-    labels = [TASK_NODE, TaskStatus.CANCELLED.value]
+    labels = [TASK_NODE, TaskState.CANCELLED.value]
     res = await tx.run(query, taskId=task_id, labels=labels, cancelledAt=cancelled_at)
     try:
         await res.single(strict=True)

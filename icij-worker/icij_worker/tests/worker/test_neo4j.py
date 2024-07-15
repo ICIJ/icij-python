@@ -17,7 +17,7 @@ from icij_worker import (
     Neo4jWorker,
     TaskError,
     TaskResult,
-    TaskStatus,
+    TaskState,
 )
 from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem, Task
 from icij_worker.tests.worker.conftest import make_app
@@ -151,7 +151,7 @@ async def test_worker_negatively_acknowledge(
     nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
-    update = {"status": TaskStatus.ERROR}
+    update = {"state": TaskState.ERROR}
     expected_nacked = safe_copy(task, update=update)
     assert nacked == expected_nacked
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
@@ -169,7 +169,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
         id="some-id",
         type="hello_world",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
@@ -189,7 +189,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
     nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
-    update = {"status": TaskStatus.QUEUED, "progress": 0.0, "retries": 1.0}
+    update = {"state": TaskState.QUEUED, "progress": 0.0, "retries": 1.0}
     expected_nacked = safe_copy(with_progress, update=update)
     assert nacked == expected_nacked
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
@@ -208,7 +208,7 @@ async def test_worker_negatively_acknowledge_and_cancel(
         id="some-id",
         type="hello_world",
         created_at=created_at,
-        status=TaskStatus.CREATED,
+        state=TaskState.CREATED,
     )
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
@@ -230,11 +230,11 @@ async def test_worker_negatively_acknowledge_and_cancel(
     # Then
     nacked = nacked.dict(exclude_unset=True)
     if requeue:
-        update = {"status": TaskStatus.QUEUED, "progress": 0.0}
+        update = {"state": TaskState.QUEUED, "progress": 0.0}
     else:
         assert nacked["cancelled_at"] is not None
         nacked.pop("cancelled_at")
-        update = {"status": TaskStatus.CANCELLED}
+        update = {"state": TaskState.CANCELLED}
     expected_nacked = safe_copy(with_progress, update=update)
     expected_nacked = expected_nacked.dict(exclude_unset=True)
     assert nacked == expected_nacked
@@ -246,7 +246,7 @@ async def test_worker_save_result(populate_tasks: List[Task], worker: Neo4jWorke
     # Given
     task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
     task = populate_tasks[0]
-    assert task.status == TaskStatus.QUEUED
+    assert task.state == TaskState.QUEUED
     result = "hello everyone"
     task_result = TaskResult.from_task(task=task, result=result)
 
@@ -265,7 +265,7 @@ async def test_worker_should_raise_when_saving_existing_result(
 ):
     # Given
     task = populate_tasks[0]
-    assert task.status == TaskStatus.QUEUED
+    assert task.state == TaskState.QUEUED
     result = "hello everyone"
     task_result = TaskResult.from_task(task=task, result=result)
 
@@ -288,11 +288,11 @@ async def test_worker_acknowledgment_cm(
     async with worker.acknowledgment_cm():
         await worker.consume()
         task = await task_manager.get_task(task_id=created.id)
-        assert task.status is TaskStatus.RUNNING
+        assert task.state is TaskState.RUNNING
 
     # Then
     task = await task_manager.get_task(task_id=created.id)
-    update = {"progress": 100.0, "status": TaskStatus.DONE}
+    update = {"progress": 100.0, "state": TaskState.DONE}
     expected_task = safe_copy(task, update=update).dict(by_alias=True)
     expected_task.pop("completedAt")
     assert task.completed_at is not None
@@ -329,7 +329,7 @@ async def test_worker_save_error(populate_tasks: List[Task], worker: Neo4jWorker
     saved_errors = await task_manager.get_task_errors(task_id=task.id)
 
     # Then
-    # We don't expect the task status to be updated by saving the error, the negative
+    # We don't expect the task state to be updated by saving the error, the negative
     # acknowledgment will do it
     assert saved_task == task
     assert saved_errors == [error]

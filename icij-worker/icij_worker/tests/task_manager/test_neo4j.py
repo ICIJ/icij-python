@@ -14,7 +14,7 @@ from icij_worker import (
     Task,
     TaskError,
     TaskResult,
-    TaskStatus,
+    TaskState,
 )
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
 from icij_worker.objects import CancelledTaskEvent, StacktraceItem
@@ -136,7 +136,7 @@ async def test_task_manager_get_task(
         id="task-1",
         type="hello_world",
         inputs={"greeted": "1"},
-        status=TaskStatus.RUNNING,
+        state=TaskState.RUNNING,
         progress=66.6,
         created_at=datetime.now(),
         retries=1,
@@ -165,22 +165,22 @@ async def test_task_manager_get_completed_task(
 
 
 @pytest.mark.parametrize(
-    "statuses,task_type,expected_ix",
+    "states,task_type,expected_ix",
     [
         (None, None, [0, 1]),
         ([], None, [0, 1]),
         (None, "hello_word", []),
         (None, "i_dont_exists", []),
-        (TaskStatus.QUEUED, None, [0]),
-        ([TaskStatus.QUEUED], None, [0]),
-        (TaskStatus.RUNNING, None, [1]),
-        (TaskStatus.CANCELLED, None, []),
+        (TaskState.QUEUED, None, [0]),
+        ([TaskState.QUEUED], None, [0]),
+        (TaskState.RUNNING, None, [1]),
+        (TaskState.CANCELLED, None, []),
     ],
 )
 async def test_task_manager_get_tasks(
     neo4j_async_app_driver: neo4j.AsyncDriver,
     populate_tasks: List[Task],
-    statuses: Optional[List[TaskStatus]],
+    states: Optional[List[TaskState]],
     task_type: Optional[str],
     expected_ix: List[int],
 ):
@@ -189,7 +189,7 @@ async def test_task_manager_get_tasks(
 
     # When
     tasks = await task_manager.get_tasks(
-        status=statuses, task_type=task_type, namespace="mock_enqueued_ns"
+        state=states, task_type=task_type, namespace="mock_enqueued_ns"
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 
@@ -302,7 +302,7 @@ async def test_task_manager_enqueue(
     queued = await task_manager.enqueue(task, namespace=None)
 
     # Then
-    update = {"status": TaskStatus.QUEUED}
+    update = {"state": TaskState.QUEUED}
     expected = safe_copy(task, update=update)
     assert queued == expected
 

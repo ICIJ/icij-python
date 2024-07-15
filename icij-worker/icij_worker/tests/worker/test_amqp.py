@@ -16,7 +16,7 @@ from icij_worker import (
     Task,
     TaskError,
     TaskResult,
-    TaskStatus,
+    TaskState,
     Worker,
     WorkerConfig,
 )
@@ -152,14 +152,14 @@ async def populate_tasks(rabbit_mq: str, request):
             id="task-0",
             type="hello_world",
             created_at=datetime.now(),
-            status=TaskStatus.CREATED,
+            state=TaskState.CREATED,
             inputs={"greeted": "world"},
         ),
         Task(
             id="task-1",
             type="hello_world",
             created_at=datetime.now(),
-            status=TaskStatus.CREATED,
+            state=TaskState.CREATED,
             inputs={"greeted": "goodbye"},
         ),
     ]
@@ -244,7 +244,7 @@ async def test_worker_consume_task(
         ):
             await asyncio.wait([consume_task], timeout=consume_timeout)
         expected_task = safe_copy(
-            populate_tasks[0], update={"progress": 0.0, "status": "RUNNING"}
+            populate_tasks[0], update={"progress": 0.0, "state": "RUNNING"}
         )
         consumed = consume_task.result()
         assert consumed == expected_task

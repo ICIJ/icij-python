@@ -16,7 +16,7 @@ from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import UnknownTask
-from icij_worker.objects import Message, Task, TaskEvent, TaskStatus
+from icij_worker.objects import Message, Task, TaskEvent, TaskState
 
 
 class Neo4jDBMixin:
@@ -79,8 +79,8 @@ class Neo4jEventPublisher(Neo4jDBMixin, EventPublisher):
 
 async def _publish_event(sess: neo4j.AsyncSession, event: TaskEvent):
     event = {k: v for k, v in event.dict(by_alias=True).items() if v is not None}
-    if "status" in event:
-        event["status"] = event["status"].value
+    if "state" in event:
+        event["state"] = event["state"].value
     error = event.pop("error", None)
     if error is not None:
         error["stacktrace"] = [json.dumps(item) for item in error["stacktrace"]]
@@ -93,9 +93,9 @@ async def _publish_event_tx(
     task_id = event["taskId"]
     create_task = f"""MERGE (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
 ON CREATE SET task += $createProps"""
-    status = event.get("status")
-    if status:
-        create_task += f", task:`{status}`"
+    state = event.get("state")
+    if state:
+        create_task += f", task:`{state}`"
     create_task += "\nRETURN task"
     if error is not None:
         event["error"] = deepcopy(error)
@@ -104,7 +104,7 @@ ON CREATE SET task += $createProps"""
         ]
     as_event = Message.parse_obj(event)
     create_props = Task.mandatory_fields(as_event, keep_id=False)
-    create_props.pop("status", None)
+    create_props.pop("state", None)
     res = await tx.run(create_task, taskId=task_id, createProps=create_props)
     tasks = [Task.from_neo4j(rec) async for rec in res]
     task = tasks[0]
@@ -116,8 +116,8 @@ ON CREATE SET task += $createProps"""
     )
     if resolved:
         resolved.pop("taskId")
-        # Status can't be updated by event, only by ack, nack, enqueue and so on
-        resolved.pop("status", None)
+        # State can't be updated by event, only by ack, nack, enqueue and so on
+        resolved.pop("state", None)
         resolved.pop("error", None)
         resolved.pop("occurredAt", None)
         update_task = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
@@ -140,7 +140,7 @@ MERGE (error)-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
 RETURN task, error
 """
         error_id = error.pop("id")
-        labels = [TASK_NODE, TaskStatus[event["status"]].value]
+        labels = [TASK_NODE, TaskState[event["state"]].value]
         res = await tx.run(
             create_error,
             taskId=task_id,

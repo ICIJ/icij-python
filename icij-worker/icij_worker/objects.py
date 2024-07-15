@@ -43,7 +43,7 @@ class FromTask(ABC):
 
 
 @unique
-class TaskStatus(str, Enum):
+class TaskState(str, Enum):
     CREATED = "CREATED"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
@@ -52,51 +52,51 @@ class TaskStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
     @classmethod
-    def resolve_event_status(cls, stored: Task, event: TaskUpdate) -> TaskStatus:
+    def resolve_event_state(cls, stored: Task, event: TaskUpdate) -> TaskState:
         # A done task is always done
-        if stored.status is TaskStatus.DONE:
-            return stored.status
+        if stored.state is TaskState.DONE:
+            return stored.state
         # A task store as ready can't be updated unless there's a new ready state
         # (for instance ERROR -> DONE)
-        if stored.status in READY_STATES and event.status not in READY_STATES:
-            return stored.status
-        if event.status is TaskStatus.QUEUED and stored.status is TaskStatus.RUNNING:
-            # We have to store the most recent status
+        if stored.state in READY_STATES and event.state not in READY_STATES:
+            return stored.state
+        if event.state is TaskState.QUEUED and stored.state is TaskState.RUNNING:
+            # We have to store the most recent state
             if event.retries is None:
-                return stored.status
+                return stored.state
             if stored.retries is None or event.retries > stored.retries:
-                return event.status
-            return stored.status
-        # Otherwise the true status is the most advanced on in the state machine
-        return max(stored.status, event.status)
+                return event.state
+            return stored.state
+        # Otherwise the true state is the most advanced on in the state machine
+        return max(stored.state, event.state)
 
-    def __gt__(self, other: TaskStatus) -> bool:
-        return status_precedence(self) < status_precedence(other)
+    def __gt__(self, other: TaskState) -> bool:
+        return state_precedence(self) < state_precedence(other)
 
-    def __ge__(self, other: TaskStatus) -> bool:
-        return status_precedence(self) <= status_precedence(other)
+    def __ge__(self, other: TaskState) -> bool:
+        return state_precedence(self) <= state_precedence(other)
 
-    def __lt__(self, other: TaskStatus) -> bool:
-        return status_precedence(self) > status_precedence(other)
+    def __lt__(self, other: TaskState) -> bool:
+        return state_precedence(self) > state_precedence(other)
 
-    def __le__(self, other: TaskStatus) -> bool:
-        return status_precedence(self) >= status_precedence(other)
+    def __le__(self, other: TaskState) -> bool:
+        return state_precedence(self) >= state_precedence(other)
 
 
-READY_STATES = frozenset({TaskStatus.DONE, TaskStatus.ERROR, TaskStatus.CANCELLED})
+READY_STATES = frozenset({TaskState.DONE, TaskState.ERROR, TaskState.CANCELLED})
 # Greatly inspired from Celery
 PRECEDENCE = [
-    TaskStatus.DONE,
-    TaskStatus.ERROR,
-    TaskStatus.CANCELLED,
-    TaskStatus.RUNNING,
-    TaskStatus.QUEUED,
-    TaskStatus.CREATED,
+    TaskState.DONE,
+    TaskState.ERROR,
+    TaskState.CANCELLED,
+    TaskState.RUNNING,
+    TaskState.QUEUED,
+    TaskState.CREATED,
 ]
 PRECEDENCE_LOOKUP = dict(zip(PRECEDENCE, range(len(PRECEDENCE))))
 
 
-def status_precedence(state: TaskStatus) -> int:
+def state_precedence(state: TaskState) -> int:
     return PRECEDENCE_LOOKUP[state]
 
 
@@ -187,7 +187,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     type: str
     inputs: Optional[Dict[str, object]] = None
-    status: TaskStatus
+    state: TaskState
     progress: Optional[float] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
@@ -206,13 +206,13 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         cls, *, task_id: str, task_ype: str, task_inputs: Dict[str, Any]
     ) -> Task:
         created_at = datetime.now()
-        status = TaskStatus.CREATED
+        state = TaskState.CREATED
         return cls(
             id=task_id,
             type=task_ype,
             inputs=task_inputs,
             created_at=created_at,
-            status=status,
+            state=state,
         )
 
     @validator("inputs", pre=True)
@@ -250,17 +250,17 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         node = dict(node)
         if len(labels) != 2:
             raise ValueError(f"Expected task to have exactly 2 labels found {labels}")
-        status = [label for label in labels if label != TASK_NODE]
-        if len(status) != 1:
+        state = [label for label in labels if label != TASK_NODE]
+        if len(state) != 1:
             raise ValueError(f"Invalid task labels {labels}")
-        status = status[0]
+        state = state[0]
         if "completedAt" in node:
             node["completedAt"] = node["completedAt"].to_native()
         if "inputs" in node:
             node["inputs"] = json.loads(node["inputs"])
         if "namespace" in node:
             node.pop("namespace")
-        node["status"] = status
+        node["state"] = state
         return cls(**node)
 
     @final
@@ -280,7 +280,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
 
     @final
     def resolve_event(self, event: TaskEvent) -> Optional[TaskUpdate]:
-        if self.status in READY_STATES:
+        if self.state in READY_STATES:
             return None
         updated = event.dict(exclude_unset=True, by_alias=False)
         updated.pop("created_at", None)
@@ -294,9 +294,9 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if isinstance(event, ErrorEvent):
             update["error"] = TaskError.parse_obj(updated["error"])
         updated = TaskUpdate(**updated)
-        # Update the status to make it consistent in case of race condition
-        if isinstance(event, (ProgressEvent, ErrorEvent)) and event.status is not None:
-            update["status"] = TaskStatus.resolve_event_status(self, updated)
+        # Update the state to make it consistent in case of race condition
+        if isinstance(event, (ProgressEvent, ErrorEvent)) and event.state is not None:
+            update["state"] = TaskState.resolve_event_state(self, updated)
         updated = safe_copy(updated, update=update)
         return updated
 
@@ -398,39 +398,39 @@ class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, ABC):
 class ErrorEvent(TaskEvent):
     error: TaskError
     retries: Optional[int] = None
-    status: Literal[TaskStatus.QUEUED, TaskStatus.ERROR]
+    state: Literal[TaskState.QUEUED, TaskState.ERROR]
 
     @classmethod
     def from_error(
         cls, error: TaskError, task_id: str, retries: Optional[int] = None
     ) -> ErrorEvent:
-        status = TaskStatus.QUEUED if retries is not None else TaskStatus.ERROR
-        event = cls(task_id=task_id, error=error, retries=retries, status=status)
+        state = TaskState.QUEUED if retries is not None else TaskState.ERROR
+        event = cls(task_id=task_id, error=error, retries=retries, state=state)
         return event
 
 
 @Message.register("progress-event")
 class ProgressEvent(TaskEvent, FromTask):
     progress: float
-    status: Optional[Literal[TaskStatus.RUNNING, TaskStatus.DONE]]
+    state: Optional[Literal[TaskState.RUNNING, TaskState.DONE]]
     completed_at: Optional[datetime] = None
 
-    @validator("status")
-    def _validate_status(cls, v: Any, values):  # pylint: disable=no-self-argument
-        if v is TaskStatus.DONE and values["progress"] != 100:
+    @validator("state")
+    def _validate_state(cls, v: Any, values):  # pylint: disable=no-self-argument
+        if v is TaskState.DONE and values["progress"] != 100:
             raise ValueError("Done task should have a 100 progress !")
         return v
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> ProgressEvent:
-        status = task.status
-        if status is TaskStatus.RUNNING and task.progress > 0:
-            # Publish status updates only at task start and completion
-            status = None
+        state = task.state
+        if state is TaskState.RUNNING and task.progress > 0:
+            # Publish state updates only at task start and completion
+            state = None
         event = cls(
             task_id=task.id,
             progress=task.progress,
-            status=status,
+            state=state,
             completed_at=task.completed_at,
             **kwargs,
         )
@@ -461,7 +461,7 @@ class CancelledTaskEvent(NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
 
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel):
     task_id: str
-    status: Optional[TaskStatus] = None
+    state: Optional[TaskState] = None
     progress: Optional[float] = None
     retries: Optional[int] = None
     error: Optional[TaskError] = None

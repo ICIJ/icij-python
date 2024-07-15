@@ -27,7 +27,7 @@ from icij_worker import (
     Task,
     TaskError,
     TaskResult,
-    TaskStatus,
+    TaskState,
 )
 from icij_worker.app import RegisteredTask
 from icij_worker.event_publisher.event_publisher import EventPublisher
@@ -183,7 +183,7 @@ class Worker(
         async with self._current_lock:
             self._current = task
         progress = 0.0
-        update = {"progress": progress, "status": TaskStatus.RUNNING}
+        update = {"progress": progress, "state": TaskState.RUNNING}
         task = safe_copy(task, update=update)
         event = ProgressEvent.from_task(task)
         await self.publish_event(event)
@@ -255,7 +255,7 @@ class Worker(
         update = {
             "completed_at": completed_at,
             "progress": 100.0,
-            "status": TaskStatus.DONE,
+            "state": TaskState.DONE,
         }
         task = safe_copy(task, update=update)
         self.info('Task(id="%s") acknowledging...', task.id)
@@ -284,15 +284,15 @@ class Worker(
         )
         cancelled_at = datetime.now()
         if requeue:
-            update = {"status": TaskStatus.QUEUED, "progress": 0.0}
+            update = {"state": TaskState.QUEUED, "progress": 0.0}
             if cancel:
                 update["cancelled_at"] = cancelled_at
             else:
                 update["retries"] = task.retries or 0 + 1
         elif cancel:
-            update = {"status": TaskStatus.CANCELLED, "cancelled_at": cancelled_at}
+            update = {"state": TaskState.CANCELLED, "cancelled_at": cancelled_at}
         else:
-            update = {"status": TaskStatus.ERROR}
+            update = {"state": TaskState.ERROR}
         nacked = safe_copy(task, update=update)
         await self._negatively_acknowledge(nacked, cancelled=cancel)
         self.info(
@@ -492,7 +492,7 @@ def _retrieve_registered_task(
 
 async def task_wrapper(worker: Worker, task: Task):
     # Skips if already reserved
-    if task.status is TaskStatus.CANCELLED:
+    if task.state is TaskState.CANCELLED:
         worker.info('Task(id="%s") already cancelled skipping it !', task.id)
         raise TaskAlreadyCancelled(task_id=task.id)
     # Parse task to retrieve recoverable errors and max retries
