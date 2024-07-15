@@ -364,16 +364,16 @@ class TaskError(Message, LowerCamelCaseModel, FromTask):
     def from_neo4j(
         cls, record: "neo4j.Record", *, task_id: str, key: str = "error"
     ) -> TaskError:
-        task = dict(record.value(key))
-        task.update({"taskId": task_id})
-        if "occurredAt" in task:
-            task["occurredAt"] = task["occurredAt"].to_native()
-        if "stacktrace" in task:
+        error = dict(record.value(key))
+        error.update({"taskId": task_id})
+        if "occurredAt" in error:
+            error["occurredAt"] = error["occurredAt"].to_native()
+        if "stacktrace" in error:
             stacktrace = [
-                StacktraceItem(**json.loads(item)) for item in task["stacktrace"]
+                StacktraceItem(**json.loads(item)) for item in error["stacktrace"]
             ]
-            task["stacktrace"] = stacktrace
-        return cls.parse_obj(task)
+            error["stacktrace"] = stacktrace
+        return TaskError(**error)
 
     def trace(self) -> str:
         # TODO: fix this using Pydantic v2 computed_fields + cached property
@@ -489,7 +489,7 @@ class TaskResult(Message, LowerCamelCaseModel, FromTask):
             result = json.loads(result["result"])
         task_id = record[task_key]["id"]
         as_dict = {"result": result, "task_id": task_id}
-        return cls(**as_dict)
+        return TaskResult(**as_dict)
 
     @classmethod
     def from_task(cls, task: Task, result: object, **kwargs) -> TaskResult:
