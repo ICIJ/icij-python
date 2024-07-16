@@ -497,7 +497,7 @@ async def task_wrapper(worker: Worker, task: Task):
         raise TaskAlreadyCancelled(task_id=task.id)
     # Parse task to retrieve recoverable errors and max retries
     task_fn, recoverable_errors = worker.parse_task(task)
-    task_inputs = add_missing_args(task_fn, task.inputs, config=worker.config)
+    task_inputs = add_missing_args(task_fn, task.arguments, config=worker.config)
     # Retry task until success, fatal error or max retry exceeded
     await _retry_task(worker, task, task_fn, task_inputs, recoverable_errors)
 
@@ -506,7 +506,7 @@ async def _retry_task(
     worker: Worker,
     task: Task,
     task_fn: Callable,
-    task_inputs: Dict,
+    task_args: Dict,
     recoverable_errors: Tuple[Type[Exception], ...],
 ):
     retries = task.retries or 0
@@ -515,7 +515,7 @@ async def _retry_task(
         event = ProgressEvent.from_task(task=task)
         await worker.publish_event(event)
     try:
-        task_res = task_fn(**task_inputs)
+        task_res = task_fn(**task_args)
         if isawaitable(task_res):
             task_res = await task_res
     except recoverable_errors as e:
@@ -530,21 +530,23 @@ async def _retry_task(
     return
 
 
-def add_missing_args(fn: Callable, inputs: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+def add_missing_args(
+    fn: Callable, arguments: Dict[str, Any], **kwargs
+) -> Dict[str, Any]:
     # We make the choice not to raise in case of missing argument here, the error will
     # be correctly raise when the function is called
     from_kwargs = dict()
     sig = inspect.signature(fn)
     for param_name in sig.parameters:
-        if param_name in inputs:
+        if param_name in arguments:
             continue
         kwargs_value = kwargs.get(param_name)
         if kwargs_value is not None:
             from_kwargs[param_name] = kwargs_value
     if from_kwargs:
-        inputs = deepcopy(inputs)
-        inputs.update(from_kwargs)
-    return inputs
+        arguments = deepcopy(arguments)
+        arguments.update(from_kwargs)
+    return arguments
 
 
 def _format_error(error: Exception) -> str:

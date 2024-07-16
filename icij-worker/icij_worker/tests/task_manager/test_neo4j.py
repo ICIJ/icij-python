@@ -22,6 +22,7 @@ from icij_worker.task_manager.neo4j_ import (
     migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
     migrate_task_errors_v0_tx,
+    migrate_task_inputs_to_arguments_v0_tx,
 )
 
 
@@ -104,7 +105,7 @@ async def _populate_results(
     type: 'hello_world',
     createdAt: $now,
     completedAt: $after,
-    inputs: '{"greeted": "2"}'
+    arguments: '{"greeted": "2"}'
 })
 CREATE (result:_TaskResult { result: '"Hello 2"' })
 CREATE (task)-[:_HAS_RESULT]->(result)
@@ -135,7 +136,7 @@ async def test_task_manager_get_task(
     expected_task = Task(
         id="task-1",
         type="hello_world",
-        inputs={"greeted": "1"},
+        arguments={"greeted": "1"},
         state=TaskState.RUNNING,
         progress=66.6,
         created_at=datetime.now(),
@@ -494,3 +495,48 @@ async def test_migrate_add_index_to_task_namespace_v0_tx(
         async for rec in indexes_res:
             existing_indexes.add(rec["name"])
         assert "index_task_namespace" in existing_indexes
+
+
+async def test_migrate_task_inputs_to_arguments_v0_tx(
+    populate_tasks_legacy: List[Task],
+    neo4j_async_app_driver: neo4j.AsyncDriver,
+):
+    # pylint: disable=unused-argument
+    # Given
+    driver = neo4j_async_app_driver
+    task_manager = Neo4JTaskManager(driver, max_queue_size=10)
+    # When
+    async with driver.session() as session:
+        await session.execute_write(migrate_task_inputs_to_arguments_v0_tx)
+
+    # Then / When
+    expected = [
+        Task(
+            id="task-0",
+            type="hello_world",
+            arguments={"greeted": "0"},
+            state=TaskState.QUEUED,
+            created_at=datetime.now(),
+        ),
+        Task(
+            id="task-1",
+            type="hello_world",
+            arguments={"greeted": "1"},
+            state=TaskState.RUNNING,
+            progress=66.6,
+            created_at=datetime.now(),
+            retries=1,
+        ),
+    ]
+    expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
+    for t in expected:
+        t.pop("createdAt")
+    expected = sorted(expected, key=lambda x: x["id"])
+    retrieved_tasks = await task_manager.get_tasks(namespace="mock_ns")
+    retrieved_tasks = [
+        t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
+    ]
+    for t in retrieved_tasks:
+        t.pop("createdAt")
+    retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
+    assert retrieved_tasks == expected

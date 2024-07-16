@@ -116,8 +116,11 @@ def amqp_loggers():
         logger_.addHandler(handler)
 
 
+_NOW = datetime.now()
+
+
 @pytest_asyncio.fixture(scope="function")
-async def populate_tasks(
+async def populate_tasks_legacy(
     neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[Task]:
     namespacing = Namespacing()
@@ -133,10 +136,7 @@ async def populate_tasks(
     inputs: '{"greeted": "0"}'
  }) 
 RETURN task"""
-    recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=datetime.now(), namespaceKey=ns_key
-    )
-    t_0 = Task.from_neo4j(recs_0[0])
+    await neo4j_async_app_driver.execute_query(query_0, now=_NOW, namespaceKey=ns_key)
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
     namespace: $namespaceKey,
@@ -147,8 +147,42 @@ RETURN task"""
     inputs: '{"greeted": "1"}'
  }) 
 RETURN task"""
+    await neo4j_async_app_driver.execute_query(query_1, now=_NOW, namespaceKey=ns_key)
+
+
+@pytest_asyncio.fixture(scope="function")
+async def populate_tasks(
+    neo4j_async_app_driver: neo4j.AsyncDriver, request
+) -> List[Task]:
+    namespacing = Namespacing()
+    namespace = getattr(request, "param", None)
+    ns_key = None
+    if namespace is not None:
+        ns_key = namespacing.namespace_to_db_key(namespace)
+    query_0 = """CREATE (task:_Task:QUEUED {
+    namespace: $namespaceKey,
+    id: 'task-0', 
+    type: 'hello_world',
+    createdAt: $now,
+    arguments: '{"greeted": "0"}'
+ }) 
+RETURN task"""
+    recs_0, _, _ = await neo4j_async_app_driver.execute_query(
+        query_0, now=_NOW, namespaceKey=ns_key
+    )
+    t_0 = Task.from_neo4j(recs_0[0])
+    query_1 = """CREATE (task:_Task:RUNNING {
+    id: 'task-1', 
+    namespace: $namespaceKey,
+    type: 'hello_world',
+    progress: 66.6,
+    createdAt: $now,
+    retries: 1,
+    arguments: '{"greeted": "1"}'
+ }) 
+RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
-        query_1, now=datetime.now(), namespaceKey=ns_key
+        query_1, now=_NOW, namespaceKey=ns_key
     )
     t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
@@ -361,7 +395,7 @@ def hello_world_task() -> Task:
     task = Task(
         id="some-id",
         type="hello_world",
-        inputs={"greeted": "world"},
+        arguments={"greeted": "world"},
         state=TaskState.CREATED,
         created_at=datetime.now(),
     )

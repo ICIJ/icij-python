@@ -45,7 +45,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         type="hello_world",
         created_at=created_at,
         state=TaskState.CREATED,
-        inputs={"greeted": "world"},
+        arguments={"greeted": "world"},
     )
 
     # When
@@ -64,7 +64,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         progress=100,
         created_at=created_at,
         state=TaskState.DONE,
-        inputs={"greeted": "world"},
+        arguments={"greeted": "world"},
     )
     completed_at = saved_task.completed_at
     assert isinstance(saved_task.completed_at, datetime)
@@ -100,7 +100,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         type="hello_world_sync",
         created_at=created_at,
         state=TaskState.CREATED,
-        inputs={"greeted": "world"},
+        arguments={"greeted": "world"},
     )
 
     # When
@@ -119,7 +119,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         progress=100,
         created_at=created_at,
         state=TaskState.DONE,
-        inputs={"greeted": "world"},
+        arguments={"greeted": "world"},
     )
     completed_at = saved_task.completed_at
     assert isinstance(saved_task.completed_at, datetime)
@@ -395,7 +395,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         type="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
-        inputs={"duration": duration},
+        arguments={"duration": duration},
     )
 
     # When
@@ -443,7 +443,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
         type="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
-        inputs={"duration": duration},
+        arguments={"duration": duration},
     )
 
     # When
@@ -481,7 +481,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
 
 
 @pytest.mark.parametrize(
-    "provided_inputs,kwargs,maybe_output",
+    "provided_args,kwargs,maybe_output",
     [
         ({}, {}, None),
         ({"a": "a"}, {}, None),
@@ -490,7 +490,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
     ],
 )
 def test_add_missing_args(
-    provided_inputs: Dict[str, Any],
+    provided_args: Dict[str, Any],
     kwargs: Dict[str, Any],
     maybe_output: Optional[str],
 ):
@@ -499,7 +499,7 @@ def test_add_missing_args(
         return f"{a}-{b}-{c}"
 
     # When
-    all_args = add_missing_args(fn, inputs=provided_inputs, **kwargs)
+    all_args = add_missing_args(fn, arguments=provided_args, **kwargs)
     # Then
     if maybe_output is not None:
         output = fn(**all_args)

@@ -154,14 +154,14 @@ async def populate_tasks(rabbit_mq: str, request):
             type="hello_world",
             created_at=datetime.now(),
             state=TaskState.CREATED,
-            inputs={"greeted": "world"},
+            arguments={"greeted": "world"},
         ),
         Task(
             id="task-1",
             type="hello_world",
             created_at=datetime.now(),
             state=TaskState.CREATED,
-            inputs={"greeted": "goodbye"},
+            arguments={"greeted": "goodbye"},
         ),
     ]
     async with connection:
