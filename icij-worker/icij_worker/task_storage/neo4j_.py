@@ -39,6 +39,7 @@ from icij_common.neo4j.migrate import retrieve_dbs
 from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import Task, TaskError, TaskResult, TaskState
 from icij_worker.exceptions import MissingTaskResult, UnknownTask
+from icij_worker.objects import TaskUpdate
 from icij_worker.task_storage import TaskStorage
 
 
@@ -169,18 +170,19 @@ async def _save_task_tx(
     res = await tx.run(query, taskId=task_id)
     existing = None
     task_props = deepcopy(task_props)
-    task_props.pop("@type", None)
+
     try:
         existing = await res.single(strict=True)
     except ResultNotSingleError:
         task_props[TASK_ARGUMENTS] = json.dumps(task_props.get(TASK_ARGUMENTS, dict()))
         task_props[TASK_NAMESPACE] = namespace
     else:
-        not_updatable = {
-            f.alias
-            for f in Task.non_updatable_fields  # pylint: disable=not-an-iterable
-        }
-        task_props = {p: v for p, v in task_props.items() if p not in not_updatable}
+        task_obj = {"id": task_id}
+        task_obj.update(task_props)
+        task_props = TaskUpdate.from_task(Task.parse_obj(task_obj)).dict(
+            by_alias=True, exclude_unset=True
+        )
+    task_props.pop("@type", None)
     if existing is not None and existing["task"]["namespace"] != namespace:
         msg = (
             f"DB task namespace ({existing['task']['namespace']}) differs from"

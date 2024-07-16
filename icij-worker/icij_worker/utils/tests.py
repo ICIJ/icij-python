@@ -47,7 +47,7 @@ from icij_worker import (
 )
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
-from icij_worker.objects import CancelledTaskEvent
+from icij_worker.objects import CancelledTaskEvent, TaskUpdate
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
@@ -157,11 +157,9 @@ if _has_pytest:
                     )
                     raise ValueError(msg)
                 db_name = self._get_task_db_name(task.id)
-                update = {
-                    f: v
-                    for f, v in task.dict(exclude_none=True, by_alias=True).items()
-                    if f not in Task.non_updatable_fields
-                }
+                update = TaskUpdate.from_task(task).dict(
+                    exclude_none=True, by_alias=True
+                )
             update["namespace"] = namespace
             task_key = self._task_key(task_id=task.id, db=db_name)
             db = self._read()
