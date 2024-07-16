@@ -10,7 +10,7 @@ from aio_pika import ExchangeType, Message as AMQPMessage, connect_robust
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import async_true_after, fail_if_exception
+from icij_common.test_utils import async_true_after
 from icij_worker import (
     AsyncApp,
     Message,
@@ -76,7 +76,7 @@ class TestableAMQPWorker(AMQPWorker):
         dl_routing = Routing(
             exchange=Exchange(name="exchangeDLQTasks", type=ExchangeType.DIRECT),
             routing_key="routingKeyDLQTasks",
-            queue_name="queueDLQTasks",
+            queue_name="TASK_DLQ",
         )
         routing = safe_copy(routing, update={"dead_letter_routing": dl_routing})
         return routing
@@ -84,11 +84,6 @@ class TestableAMQPWorker(AMQPWorker):
     @property
     def task_routing_(self) -> Routing:
         return self._task_routing
-
-    @classmethod
-    @property
-    def cancel_event_routing(cls) -> Routing:
-        return cls._cancel_event_routing()
 
     @classmethod
     @property
@@ -170,7 +165,11 @@ async def populate_tasks(rabbit_mq: str, request):
             task_routing.exchange.name, durable=True
         )
         dl_ex = task_routing.dead_letter_routing.exchange.name
-        arguments = {"x-dead-letter-exchange": dl_ex}
+        dl_routing_key = task_routing.dead_letter_routing.routing_key
+        arguments = {
+            "x-dead-letter-exchange": dl_ex,
+            "x-dead-letter-routing-key": dl_routing_key,
+        }
         task_queue = await channel.declare_queue(
             task_routing.queue_name, durable=True, arguments=arguments
         )
@@ -183,7 +182,7 @@ async def populate_tasks(rabbit_mq: str, request):
 
 async def _publish_cancel_event(rabbit_mq: str, task_id: str):
     connection = await connect_robust(rabbit_mq)
-    cancel_event_routing = TestableAMQPWorker.cancel_event_routing
+    cancel_event_routing = TestableAMQPWorker.worker_evt_routing()
     event = CancelledTaskEvent(
         task_id=task_id, cancelled_at=datetime.now(), requeue=True
     )
@@ -240,10 +239,7 @@ async def test_worker_consume_task(
         # Then
         consume_task = asyncio.create_task(amqp_worker.consume())
         consume_timeout = 2.0
-        with fail_if_exception(
-            f"failed to consume task in less than {consume_timeout}s"
-        ):
-            await asyncio.wait([consume_task], timeout=consume_timeout)
+        await asyncio.wait([consume_task], timeout=consume_timeout)
         expected_task = safe_copy(
             populate_tasks[0], update={"progress": 0.0, "state": "RUNNING"}
         )
@@ -327,12 +323,15 @@ async def test_worker_negatively_acknowledge_and_requeue(
         task_ids = set()
         for _ in range(n_tasks):
             consume_task = asyncio.create_task(amqp_worker.consume())
-            consume_timeout = 2.0
-            with fail_if_exception(
-                f"failed to consume task in less than {consume_timeout}s"
-            ):
-                await asyncio.wait([consume_task], timeout=consume_timeout)
-            task_ids.add(consume_task.result().id)
+            consume_timeout = 20.0
+            done, _ = await asyncio.wait([consume_task], timeout=consume_timeout)
+            if not done:
+                pytest.fail(f"failed to consume task in less than {consume_timeout}s")
+            task = consume_task.result()
+            task_ids.add(task.id)
+            # Ack to make sure the broker distribute a new message to the available
+            # worker
+            await amqp_worker.acknowledge(task)
         assert task.id in task_ids
 
 

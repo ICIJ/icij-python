@@ -1,7 +1,6 @@
 import json
-from contextlib import asynccontextmanager
 from copy import deepcopy
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Dict, Optional
 
 import neo4j
 from neo4j.exceptions import ResultNotSingleError
@@ -12,61 +11,13 @@ from icij_common.neo4j.constants import (
     TASK_ID,
     TASK_NODE,
 )
-from icij_common.neo4j.db import db_specific_session
-from icij_common.neo4j.migrate import retrieve_dbs
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import Message, Task, TaskEvent, TaskState
+from icij_worker.task_storage.neo4j_ import Neo4jStorage
 
 
-class Neo4jDBMixin:
-    def __init__(self, driver: neo4j.AsyncDriver):
-        self._driver = driver
-        self._task_dbs: Dict[str, str] = dict()
-
-    @asynccontextmanager
-    async def _db_session(self, db: str) -> AsyncGenerator[neo4j.AsyncSession, None]:
-        async with db_specific_session(self._driver, db) as sess:
-            yield sess
-
-    @asynccontextmanager
-    async def _task_session(
-        self, task_id: str
-    ) -> AsyncGenerator[neo4j.AsyncSession, None]:
-        db = await self._get_task_db(task_id)
-        async with self._db_session(db) as sess:
-            yield sess
-
-    async def _get_task_db(self, task_id: str) -> str:
-        if task_id not in self._task_dbs:
-            await self._refresh_task_dbs()
-        try:
-            return self._task_dbs[task_id]
-        except KeyError as e:
-            raise UnknownTask(task_id) from e
-
-    async def _refresh_task_dbs(self):
-        dbs = await retrieve_dbs(self._driver)
-        for db in dbs:
-            async with self._db_session(db.name) as sess:
-                # Here we make the assumption that task IDs are unique across
-                # projects and not per project
-                task_dbs = {
-                    t_id: db.name
-                    for t_id in await sess.execute_read(_get_tasks_meta_tx)
-                }
-                self._task_dbs.update(task_dbs)
-
-
-async def _get_tasks_meta_tx(tx: neo4j.AsyncTransaction) -> List[str]:
-    query = f"""MATCH (task:{TASK_NODE})
-RETURN task.{TASK_ID} as taskId"""
-    res = await tx.run(query)
-    ids = [rec["taskId"] async for rec in res]
-    return ids
-
-
-class Neo4jEventPublisher(Neo4jDBMixin, EventPublisher):
+class Neo4jEventPublisher(Neo4jStorage, EventPublisher):
 
     async def _publish_event(self, event: TaskEvent):
         async with self._task_session(event.task_id) as sess:
@@ -116,11 +67,6 @@ ON CREATE SET task += $createProps"""
         else resolved
     )
     if resolved:
-        resolved.pop("taskId")
-        # State can't be updated by event, only by ack, nack, enqueue and so on
-        resolved.pop("state", None)
-        resolved.pop("error", None)
-        resolved.pop("occurredAt", None)
         update_task = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
 SET task += $updateProps
 RETURN count(*) as numTasks"""

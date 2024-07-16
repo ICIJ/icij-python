@@ -7,9 +7,11 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
-from typing import Callable, ClassVar, Literal, Union, cast
+from functools import lru_cache
+from typing import Callable, ClassVar, Literal, Set, Union, cast
 
 from pydantic import Field, validator
+from pydantic.fields import ModelField
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
@@ -202,6 +204,13 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return v
 
     @classmethod
+    @property
+    @lru_cache(maxsize=1)
+    def non_updatable_fields(cls) -> Set[ModelField]:
+        keys = ["id", "type", "created_at", "arguments"]
+        return {cls.__fields__[k] for k in keys}
+
+    @classmethod
     def create(cls, *, task_id: str, task_ype: str, task_args: Dict[str, Any]) -> Task:
         created_at = datetime.now()
         state = TaskState.CREATED
@@ -281,16 +290,16 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if self.state in READY_STATES:
             return None
         updated = event.dict(exclude_unset=True, by_alias=False)
+        updated.pop("task_id", None)
         updated.pop("created_at", None)
+        updated.pop("error", None)
+        updated.pop("occurred_at", None)
         updated.pop("task_type", None)
         updated.pop("completed_at", None)
         updated.pop(event.registry_key.default, None)
         if not updated:
             return None
         update = dict()
-        # Copy the event a first time to unset non-updatable field
-        if isinstance(event, ErrorEvent):
-            update["error"] = TaskError.parse_obj(updated["error"])
         updated = TaskUpdate(**updated)
         # Update the state to make it consistent in case of race condition
         if isinstance(event, (ProgressEvent, ErrorEvent)) and event.state is not None:
@@ -458,14 +467,10 @@ class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetim
 
 
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel):
-    task_id: str
     state: Optional[TaskState] = None
     progress: Optional[float] = None
     retries: Optional[int] = None
-    error: Optional[TaskError] = None
-    created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    occurred_at: Optional[datetime] = None
 
 
 @Message.register("task-result")

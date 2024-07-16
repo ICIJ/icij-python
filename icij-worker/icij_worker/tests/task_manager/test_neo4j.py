@@ -1,15 +1,15 @@
+# pylint: disable=redefined-outer-scope
+import re
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import neo4j
 import pytest
 import pytest_asyncio
-from neo4j.exceptions import ClientError
+from neo4j.time import DateTime
 
-from icij_common.neo4j.constants import TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import (
-    Namespacing,
     Neo4JTaskManager,
     Task,
     TaskError,
@@ -18,44 +18,6 @@ from icij_worker import (
 )
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
 from icij_worker.objects import CancelledTaskEvent, StacktraceItem
-from icij_worker.task_manager.neo4j_ import (
-    migrate_add_index_to_task_namespace_v0_tx,
-    migrate_cancelled_event_created_at_v0_tx,
-    migrate_task_errors_v0_tx,
-    migrate_task_inputs_to_arguments_v0_tx,
-)
-
-
-@pytest_asyncio.fixture(scope="function")
-async def _populate_errors_legacy(
-    populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
-) -> neo4j.AsyncDriver:
-    task_with_error = populate_tasks[1]
-    query_0 = """MATCH (task:_Task { id: $taskId })
-CREATE  (error:_TaskError {
-    id: 'error-0',
-    title: 'error',
-    detail: 'with details',
-    occurredAt: $now 
-})-[:_OCCURRED_DURING]->(task)
-RETURN error"""
-    await neo4j_async_app_driver.execute_query(
-        query_0, taskId=task_with_error.id, now=datetime.now()
-    )
-    query_1 = """MATCH (task:_Task { id: $taskId })
-CREATE  (error:_TaskError {
-    id: 'error-1',
-    title: 'error',
-    detail: 'same error again',
-    occurredAt: $now 
-})-[:_OCCURRED_DURING]->(task)
-RETURN error"""
-    await neo4j_async_app_driver.execute_query(
-        query_1,
-        taskId=task_with_error.id,
-        now=datetime.now(),
-    )
-    return neo4j_async_app_driver
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -121,15 +83,197 @@ RETURN task, result"""
     return list(zip(tasks, [None, None, r_2]))
 
 
+_NOW = datetime.now()
+
+
+@pytest.mark.parametrize(
+    "populate_tasks,namespace,task,,expected_task",
+    [
+        # Insertion
+        (
+            None,
+            None,
+            Task(
+                id="task-3",
+                type="hello_world",
+                arguments={"greeted": "3"},
+                state=TaskState.CREATED,
+                created_at=_NOW,
+                retries=1,
+            ),
+            {
+                "id": "task-3",
+                "arguments": '{"greeted": "3"}',
+                "retries": 1,
+                "state": "CREATED",
+                "type": "hello_world",
+                "createdAt": datetime.now(),
+            },
+        ),
+        # Insertion with ns
+        (
+            "some-namespace",
+            "some-namespace",
+            Task(
+                id="task-3",
+                type="hello_world",
+                arguments={"greeted": "3"},
+                state=TaskState.CREATED,
+                created_at=_NOW,
+                retries=1,
+            ),
+            {
+                "id": "task-3",
+                "arguments": '{"greeted": "3"}',
+                "retries": 1,
+                "state": "CREATED",
+                "type": "hello_world",
+                "createdAt": datetime.now(),
+                "namespace": "some-namespace",
+            },
+        ),
+        # Update
+        (
+            None,
+            None,
+            Task(
+                id="task-1",
+                type="hello_world",
+                arguments={"greeted": "1"},
+                state=TaskState.RUNNING,
+                progress=80,
+                created_at=_NOW,
+                retries=0,
+            ),
+            {
+                "id": "task-1",
+                "arguments": '{"greeted": "1"}',
+                "progress": 80.0,
+                "retries": 0,
+                "state": "RUNNING",
+                "createdAt": datetime.now(),
+                "type": "hello_world",
+            },
+        ),
+        # Update with ns
+        (
+            "some-namespace",
+            "some-namespace",
+            Task(
+                id="task-1",
+                type="hello_world",
+                arguments={"greeted": "1"},
+                state=TaskState.RUNNING,
+                progress=80,
+                created_at=_NOW,
+                retries=0,
+            ),
+            {
+                "id": "task-1",
+                "arguments": '{"greeted": "1"}',
+                "progress": 80.0,
+                "retries": 0,
+                "state": "RUNNING",
+                "type": "hello_world",
+                "namespace": "some-namespace",
+                "createdAt": datetime.now(),
+            },
+        ),
+        # Should not update non updatable fields
+        (
+            None,
+            None,
+            Task(
+                id="task-1",
+                type="updated_task",
+                arguments={"updated": "input"},
+                state=TaskState.RUNNING,
+                created_at=_NOW,
+            ),
+            {
+                "id": "task-1",
+                "arguments": '{"greeted": "1"}',
+                "progress": 66.6,
+                "retries": 1,
+                "state": "RUNNING",
+                "type": "hello_world",
+                "createdAt": datetime.now(),
+            },
+        ),
+    ],
+    indirect=["populate_tasks"],
+)
+async def test_save_task(
+    populate_tasks,
+    neo4j_task_manager: Neo4JTaskManager,
+    task: Task,
+    namespace: Optional[str],
+    expected_task: Dict,
+):
+    ## pylint: disable=unused-argument
+    # Given
+    driver = neo4j_task_manager.driver
+    # When
+    await neo4j_task_manager.save_task(task, namespace)
+    # Then
+    query = "MATCH (task:_Task { id: $taskId }) RETURN task"
+    recs, _, _ = await driver.execute_query(query, taskId=task.id)
+    assert len(recs) == 1
+    db_task = dict(recs[0]["task"])
+    created_at = db_task.pop("createdAt", None)
+    assert isinstance(created_at, DateTime)
+    expected_task.pop("createdAt")
+    assert db_task == expected_task
+
+
+async def test_save_task_with_different_ns_should_fail(
+    populate_tasks, neo4j_task_manager: Neo4JTaskManager
+):
+    # pylint: disable=unused-argument
+    # Given
+    other_ns = "other-namespace"
+    task = Task(
+        id="task-1",
+        type="hello_world",
+        arguments={"greeted": "1"},
+        state=TaskState.RUNNING,
+        progress=80,
+        created_at=_NOW,
+        retries=0,
+    )
+    # When/Then
+    msg = re.escape(
+        "DB task namespace (None) differs from save task namespace: other-namespace"
+    )
+    with pytest.raises(ValueError, match=msg):
+        await neo4j_task_manager.save_task(task, other_ns)
+
+
+@pytest.mark.parametrize(
+    "populate_tasks,expected_namespace",
+    [(None, None), ("some_namespace", "some_namespace")],
+    indirect=["populate_tasks"],
+)
+async def test_get_task_namespace(
+    populate_tasks,
+    neo4j_task_manager: Neo4JTaskManager,
+    expected_namespace: str,
+):
+    # pylint: disable=unused-argument
+    # When
+    namespace = await neo4j_task_manager.get_task_namespace("task-0")
+    # Then
+    assert namespace == expected_namespace
+
+
 async def test_task_manager_get_task(
-    neo4j_async_app_driver: neo4j.AsyncDriver, populate_tasks: List[Task]
+    populate_tasks: List[Task], neo4j_task_manager: Neo4JTaskManager
 ):
     # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
     second_task = populate_tasks[1]
 
     # When
-    task = await task_manager.get_task(task_id=second_task.id)
+    task = await neo4j_task_manager.get_task(task_id=second_task.id)
     task = task.dict(by_alias=True)
 
     # Then
@@ -150,47 +294,46 @@ async def test_task_manager_get_task(
 
 
 async def test_task_manager_get_completed_task(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
     _populate_results: List[Tuple[Task, List[TaskResult]]],
+    neo4j_task_manager: Neo4JTaskManager,
 ):
     # pylint: disable=invalid-name
     # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
     last_task = _populate_results[-1][0]
 
     # When
-    task = await task_manager.get_task(task_id=last_task.id)
+    task = await neo4j_task_manager.get_task(task_id=last_task.id)
 
     # Then
     assert isinstance(task.completed_at, datetime)
 
 
 @pytest.mark.parametrize(
-    "states,task_type,expected_ix",
+    "populate_tasks,namespace,states,task_type,expected_ix",
     [
-        (None, None, [0, 1]),
-        ([], None, [0, 1]),
-        (None, "hello_word", []),
-        (None, "i_dont_exists", []),
-        (TaskState.QUEUED, None, [0]),
-        ([TaskState.QUEUED], None, [0]),
-        (TaskState.RUNNING, None, [1]),
-        (TaskState.CANCELLED, None, []),
+        (None, None, None, None, [0, 1]),
+        (None, None, [], None, [0, 1]),
+        (None, None, None, "hello_word", []),
+        (None, None, None, "i_dont_exists", []),
+        ("some-namespace", "some-namespace", TaskState.QUEUED, None, [0]),
+        (None, None, TaskState.QUEUED, None, [0]),
+        (None, None, [TaskState.QUEUED], None, [0]),
+        (None, None, TaskState.RUNNING, None, [1]),
+        (None, None, TaskState.CANCELLED, None, []),
     ],
+    indirect=["populate_tasks"],
 )
 async def test_task_manager_get_tasks(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
+    neo4j_task_manager: Neo4JTaskManager,
     populate_tasks: List[Task],
+    namespace: Optional[str],
     states: Optional[List[TaskState]],
     task_type: Optional[str],
     expected_ix: List[int],
 ):
-    # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-
     # When
-    tasks = await task_manager.get_tasks(
-        state=states, task_type=task_type, namespace="mock_enqueued_ns"
+    tasks = await neo4j_task_manager.get_tasks(
+        state=states, task_type=task_type, namespace=namespace
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 
@@ -233,17 +376,14 @@ async def test_task_manager_get_tasks(
     ],
 )
 async def test_get_task_errors(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
+    neo4j_task_manager: Neo4JTaskManager,
     _populate_errors: List[Tuple[Task, List[TaskError]]],
     task_id: str,
     expected_errors: List[TaskError],
 ):
     # pylint: disable=invalid-name
-    # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-
     # When
-    retrieved_errors = await task_manager.get_task_errors(task_id=task_id)
+    retrieved_errors = await neo4j_task_manager.get_task_errors(task_id=task_id)
 
     # Then
     retrieved_errors = [e.dict(by_alias=True) for e in retrieved_errors]
@@ -271,36 +411,32 @@ async def test_get_task_errors(
     ],
 )
 async def test_task_manager_get_task_result(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
+    neo4j_task_manager: Neo4JTaskManager,
     _populate_results: List[Tuple[str, Optional[TaskResult]]],
     task_id: str,
     expected_result: Optional[TaskResult],
 ):
     # pylint: disable=invalid-name
-    # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-
     # When/ Then
     if expected_result is None:
         expected_msg = (
             f'Result of task "{task_id}" couldn\'t be found, did it complete ?'
         )
         with pytest.raises(MissingTaskResult, match=expected_msg):
-            await task_manager.get_task_result(task_id=task_id)
+            await neo4j_task_manager.get_task_result(task_id=task_id)
     else:
-        result = await task_manager.get_task_result(task_id=task_id)
+        result = await neo4j_task_manager.get_task_result(task_id=task_id)
         assert result == expected_result
 
 
 async def test_task_manager_enqueue(
-    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+    neo4j_task_manager: Neo4JTaskManager, hello_world_task: Task
 ):
     # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
     task = hello_world_task
 
     # When
-    queued = await task_manager.enqueue(task, namespace=None)
+    queued = await neo4j_task_manager.enqueue(task, namespace=None)
 
     # Then
     update = {"state": TaskState.QUEUED}
@@ -309,80 +445,47 @@ async def test_task_manager_enqueue(
 
 
 async def test_task_manager_enqueue_with_namespace(
-    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+    neo4j_task_manager: Neo4JTaskManager, hello_world_task: Task
 ):
     # Given
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
     task = hello_world_task
+    driver = neo4j_task_manager.driver
     namespace = "some.namespace"
 
     # When
-    await task_manager.enqueue(task, namespace=namespace)
+    await neo4j_task_manager.enqueue(task, namespace=namespace)
     query = "MATCH (task:_Task) RETURN task"
-    recs, _, _ = await neo4j_async_app_driver.execute_query(query)
+    recs, _, _ = await driver.execute_query(query)
     assert len(recs) == 1
     task = recs[0]
-    expected_ns_key = task_manager._namespacing.namespace_to_db_key(  # pylint: disable=protected-access
-        namespace
-    )
-    assert task["task"]["namespace"] == expected_ns_key
-
-
-async def test_task_manager_enqueue_with_namespace_in_the_appropriate_db(
-    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
-):
-    # Given
-    class MockedNamespacing(Namespacing):
-        @staticmethod
-        def neo4j_db(namespace: str) -> str:
-            db_name = namespace.split(".")[0]
-            return db_name
-
-    namespacing = MockedNamespacing()
-    task_manager = Neo4JTaskManager(
-        neo4j_async_app_driver, max_queue_size=10, namespacing=namespacing
-    )
-    task = hello_world_task
-    namespace = "some_db_name.some_task_name"
-
-    # When
-    with pytest.raises(ClientError) as ex:
-        await task_manager.enqueue(task, namespace=namespace)
-    assert ex.value.code == "Neo.ClientError.Database.DatabaseNotFound"
-    expected = (
-        "Unable to get a routing table for database 'some_db_name' because"
-        " this database does not exist"
-    )
-    assert ex.value.message == expected
+    assert task["task"]["namespace"] == namespace
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
-    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+    neo4j_task_manager: Neo4JTaskManager, hello_world_task: Task
 ):
     # Given
     task = hello_world_task
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
-    await task_manager.enqueue(task, namespace=None)
+    await neo4j_task_manager.enqueue(task, namespace=None)
 
     # When/Then
     with pytest.raises(TaskAlreadyExists):
-        await task_manager.enqueue(task, namespace=None)
+        await neo4j_task_manager.enqueue(task, namespace=None)
 
 
 @pytest.mark.parametrize("requeue", [True, False])
 async def test_task_manager_cancel(
-    neo4j_async_app_driver: neo4j.AsyncDriver,
+    neo4j_task_manager: Neo4JTaskManager,
     requeue: bool,
     hello_world_task: Task,
 ):
     # Given
-    driver = neo4j_async_app_driver
+    driver = neo4j_task_manager.driver
     task = hello_world_task
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=10)
 
     # When
-    task = await task_manager.enqueue(task, namespace=None)
-    await task_manager.cancel(task_id=task.id, requeue=requeue)
+    task = await neo4j_task_manager.enqueue(task, namespace=None)
+    await neo4j_task_manager.cancel(task_id=task.id, requeue=requeue)
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
 RETURN task, event"""
@@ -398,145 +501,11 @@ RETURN task, event"""
 async def test_task_manager_enqueue_should_raise_when_queue_full(
     neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
 ):
-    task_manager = Neo4JTaskManager(neo4j_async_app_driver, max_queue_size=-1)
+    task_manager = Neo4JTaskManager(
+        "test-app", neo4j_async_app_driver, max_queue_size=-1
+    )
     task = hello_world_task
 
     # When
     with pytest.raises(TaskQueueIsFull):
         await task_manager.enqueue(task, namespace=None)
-
-
-async def test_migrate_task_errors_v0_tx(
-    _populate_errors_legacy: neo4j.AsyncDriver,  # pylint: disable=invalid-name
-):
-    # Given
-    task_id = "task-1"
-    driver = _populate_errors_legacy
-    task_manager = Neo4JTaskManager(driver, max_queue_size=10)
-    # When
-    async with _populate_errors_legacy.session() as session:
-        await session.execute_write(migrate_task_errors_v0_tx)
-
-    # Then / When
-    retrieved_errors = await task_manager.get_task_errors(task_id=task_id)
-    expected_errors = [
-        TaskError(
-            id="error-1",
-            task_id="task-1",
-            name="error",
-            message="same error again",
-            cause=None,
-            stacktrace=[],
-            occurred_at=datetime.now(),
-        ),
-        TaskError(
-            id="error-0",
-            task_id="task-1",
-            name="error",
-            message="with details",
-            cause=None,
-            stacktrace=[],
-            occurred_at=datetime.now(),
-        ),
-    ]
-    expected_errors = [e.dict() for e in expected_errors]
-    for e in expected_errors:
-        e.pop("occurred_at")
-    retrieved_errors = [e.dict() for e in retrieved_errors]
-    for e in retrieved_errors:
-        e.pop("occurred_at")
-    assert retrieved_errors == expected_errors
-
-
-async def test_migrate_cancelled_event_created_at_v0_tx(
-    neo4j_test_driver: neo4j.AsyncDriver,
-):
-    # Given
-    created_at = datetime.now()
-    driver = neo4j_test_driver
-    query = f""" CREATE (task:_Task {{ taskID: $taskId }})-[
-    :_CANCELLED_BY]->(:_CancelEvent {{ 
-        {TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}: $createdAt, 
-        effective: false,
-        requeue: false
-    }})
-"""
-    await driver.execute_query(query, createdAt=created_at, taskId="some-id")
-
-    # When
-    async with driver.session() as sess:
-        await sess.execute_write(migrate_cancelled_event_created_at_v0_tx)
-        event_query = "MATCH (evt:_CancelEvent) RETURN evt"
-        res = await sess.run(event_query)
-        rec = await res.single(strict=True)
-
-    # Then
-    rec = rec["evt"]
-    assert "createdAt" not in rec
-    assert rec["cancelledAt"].to_native() == created_at
-
-
-async def test_migrate_add_index_to_task_namespace_v0_tx(
-    neo4j_test_driver: neo4j.AsyncDriver,
-):
-    async with neo4j_test_driver.session() as sess:
-        indexes_res = await sess.run("SHOW INDEXES")
-        existing_indexes = set()
-        async for rec in indexes_res:
-            existing_indexes.add(rec["name"])
-        assert "index_task_namespace" not in existing_indexes
-
-        # When
-        await sess.execute_write(migrate_add_index_to_task_namespace_v0_tx)
-
-        # Then
-        indexes_res = await sess.run("SHOW INDEXES")
-        existing_indexes = set()
-        async for rec in indexes_res:
-            existing_indexes.add(rec["name"])
-        assert "index_task_namespace" in existing_indexes
-
-
-async def test_migrate_task_inputs_to_arguments_v0_tx(
-    populate_tasks_legacy: List[Task],
-    neo4j_async_app_driver: neo4j.AsyncDriver,
-):
-    # pylint: disable=unused-argument
-    # Given
-    driver = neo4j_async_app_driver
-    task_manager = Neo4JTaskManager(driver, max_queue_size=10)
-    # When
-    async with driver.session() as session:
-        await session.execute_write(migrate_task_inputs_to_arguments_v0_tx)
-
-    # Then / When
-    expected = [
-        Task(
-            id="task-0",
-            type="hello_world",
-            arguments={"greeted": "0"},
-            state=TaskState.QUEUED,
-            created_at=datetime.now(),
-        ),
-        Task(
-            id="task-1",
-            type="hello_world",
-            arguments={"greeted": "1"},
-            state=TaskState.RUNNING,
-            progress=66.6,
-            created_at=datetime.now(),
-            retries=1,
-        ),
-    ]
-    expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
-    for t in expected:
-        t.pop("createdAt")
-    expected = sorted(expected, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(namespace="mock_ns")
-    retrieved_tasks = [
-        t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
-    ]
-    for t in retrieved_tasks:
-        t.pop("createdAt")
-    retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
-    assert retrieved_tasks == expected

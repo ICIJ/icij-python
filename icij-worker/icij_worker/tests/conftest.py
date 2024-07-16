@@ -6,6 +6,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
+from functools import cached_property
+from pathlib import Path
 from typing import AsyncGenerator, Dict, List, Optional
 
 import aio_pika
@@ -14,6 +16,7 @@ import neo4j
 import pika
 import pytest
 import pytest_asyncio
+from aio_pika.abc import AbstractRobustChannel
 from aiohttp import ClientResponseError, ClientTimeout
 
 import icij_worker
@@ -34,10 +37,12 @@ from icij_common.neo4j.migrate import (
 from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
-from icij_worker import AsyncApp, Namespacing, Task
+from icij_worker import AsyncApp, Namespacing, Neo4JTaskManager, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.objects import CancelledTaskEvent, TaskState
-from icij_worker.task_manager.neo4j_ import (
+from icij_worker.task_manager.amqp import AMQPTaskManager
+from icij_worker.task_storage.fs import FSKeyValueStorage
+from icij_worker.task_storage.neo4j_ import (
     add_support_for_async_task_tx,
     migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
@@ -120,47 +125,12 @@ _NOW = datetime.now()
 
 
 @pytest_asyncio.fixture(scope="function")
-async def populate_tasks_legacy(
-    neo4j_async_app_driver: neo4j.AsyncDriver, request
-) -> List[Task]:
-    namespacing = Namespacing()
-    namespace = getattr(request, "param", None)
-    ns_key = None
-    if namespace is not None:
-        ns_key = namespacing.namespace_to_db_key(namespace)
-    query_0 = """CREATE (task:_Task:QUEUED {
-    namespace: $namespaceKey,
-    id: 'task-0', 
-    type: 'hello_world',
-    createdAt: $now,
-    inputs: '{"greeted": "0"}'
- }) 
-RETURN task"""
-    await neo4j_async_app_driver.execute_query(query_0, now=_NOW, namespaceKey=ns_key)
-    query_1 = """CREATE (task:_Task:RUNNING {
-    id: 'task-1', 
-    namespace: $namespaceKey,
-    type: 'hello_world',
-    progress: 66.6,
-    createdAt: $now,
-    retries: 1,
-    inputs: '{"greeted": "1"}'
- }) 
-RETURN task"""
-    await neo4j_async_app_driver.execute_query(query_1, now=_NOW, namespaceKey=ns_key)
-
-
-@pytest_asyncio.fixture(scope="function")
 async def populate_tasks(
     neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[Task]:
-    namespacing = Namespacing()
     namespace = getattr(request, "param", None)
-    ns_key = None
-    if namespace is not None:
-        ns_key = namespacing.namespace_to_db_key(namespace)
     query_0 = """CREATE (task:_Task:QUEUED {
-    namespace: $namespaceKey,
+    namespace: $namespace,
     id: 'task-0', 
     type: 'hello_world',
     createdAt: $now,
@@ -168,12 +138,12 @@ async def populate_tasks(
  }) 
 RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=_NOW, namespaceKey=ns_key
+        query_0, now=_NOW, namespace=namespace
     )
     t_0 = Task.from_neo4j(recs_0[0])
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
-    namespace: $namespaceKey,
+    namespace: $namespace,
     type: 'hello_world',
     progress: 66.6,
     createdAt: $now,
@@ -182,7 +152,7 @@ RETURN task"""
  }) 
 RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
-        query_1, now=_NOW, namespaceKey=ns_key
+        query_1, now=_NOW, namespace=namespace
     )
     t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
@@ -192,17 +162,13 @@ RETURN task"""
 async def populate_cancel_events(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[CancelledTaskEvent]:
-    namespacing = Namespacing()
     namespace = getattr(request, "param", None)
-    ns_key = None
-    if namespace is not None:
-        ns_key = namespacing.namespace_to_db_key(namespace)
     query_0 = """MATCH (task:_Task { id: $taskId })
-SET task.namespace = $namespaceKey
+SET task.namespace = $namespace
 CREATE (task)-[:_CANCELLED_BY]->(event:_CancelEvent { requeue: false, effective: false, cancelledAt: $now }) 
 RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=datetime.now(), taskId=populate_tasks[0].id, namespaceKey=ns_key
+        query_0, now=datetime.now(), taskId=populate_tasks[0].id, namespace=namespace
     )
     return [CancelledTaskEvent.from_neo4j(recs_0[0])]
 
@@ -400,3 +366,46 @@ def hello_world_task() -> Task:
         created_at=datetime.now(),
     )
     return task
+
+
+class TestableFSKeyValueStorage(FSKeyValueStorage):
+    @property
+    def db_path(self) -> str:
+        return str(self._db_path)
+
+
+@pytest.fixture()
+def fs_storage_path(tmpdir: Path) -> Path:
+    return Path(tmpdir) / "task-store.db"
+
+
+@pytest.fixture()
+async def fs_storage(fs_storage_path: Path) -> TestableFSKeyValueStorage:
+    store = TestableFSKeyValueStorage(fs_storage_path, namespacing=Namespacing())
+    async with store:
+        yield store
+
+
+class TestableAMQPTaskManager(AMQPTaskManager):
+    @cached_property
+    def channel(self) -> AbstractRobustChannel:
+        return self._channel
+
+    async def consume_errors(self):
+        await self._consume_errors()
+
+
+@pytest.fixture()
+async def test_amqp_task_manager(
+    fs_storage: TestableFSKeyValueStorage, rabbit_mq: str
+) -> TestableAMQPTaskManager:
+    task_manager = TestableAMQPTaskManager(
+        fs_storage, app_name="test-app", broker_url=rabbit_mq
+    )
+    async with task_manager:
+        yield task_manager
+
+
+@pytest.fixture
+def neo4j_task_manager(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4JTaskManager:
+    return Neo4JTaskManager("test-app", neo4j_async_app_driver, max_queue_size=10)

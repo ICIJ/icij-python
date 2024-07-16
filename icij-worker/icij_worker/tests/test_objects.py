@@ -39,9 +39,9 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", state=TaskState.RUNNING, progress=0.0),
-            TaskUpdate(task_id="task-id", state=TaskState.RUNNING, progress=0.0),
+            TaskUpdate(state=TaskState.RUNNING, progress=0.0),
         ),
-        # Status is updated when not in a final state
+        # State is updated when not in a final state
         (
             Task(
                 id="task-id",
@@ -50,7 +50,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", state=TaskState.RUNNING, progress=0.0),
-            TaskUpdate(task_id="task-id", state=TaskState.RUNNING, progress=0.0),
+            TaskUpdate(state=TaskState.RUNNING, progress=0.0),
         ),
         (
             Task(
@@ -60,7 +60,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", progress=50.0),
-            TaskUpdate(task_id="task-id", progress=50.0),
+            TaskUpdate(progress=50.0),
         ),
         (
             Task(
@@ -70,7 +70,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", state=TaskState.DONE, progress=100),
-            TaskUpdate(task_id="task-id", state=TaskState.DONE, progress=100),
+            TaskUpdate(state=TaskState.DONE, progress=100),
         ),
         # Update error + retries
         (
@@ -97,23 +97,7 @@ def test_precedence_sanity_check():
                 ),
                 state=TaskState.QUEUED,
             ),
-            TaskUpdate(
-                task_id="task-id",
-                retries=4,
-                error=TaskError(
-                    id="error-id",
-                    task_id="task-id",
-                    name="some-error",
-                    message="some message",
-                    stacktrace=[
-                        StacktraceItem(
-                            name="SomeError", file="some details", lineno=666
-                        )
-                    ],
-                    occurred_at=_ERROR_OCCURRED_AT,
-                ),
-                state=TaskState.QUEUED,
-            ),
+            TaskUpdate(retries=4, state=TaskState.QUEUED),
         ),
         (
             Task(
@@ -139,23 +123,7 @@ def test_precedence_sanity_check():
                 ),
                 state=TaskState.ERROR,
             ),
-            TaskUpdate(
-                task_id="task-id",
-                retries=None,
-                error=TaskError(
-                    id="error-id",
-                    task_id="task-id",
-                    name="some-error",
-                    message="some message",
-                    stacktrace=[
-                        StacktraceItem(
-                            name="SomeError", file="some details", lineno=666
-                        )
-                    ],
-                    occurred_at=_ERROR_OCCURRED_AT,
-                ),
-                state=TaskState.ERROR,
-            ),
+            TaskUpdate(retries=None, state=TaskState.ERROR),
         ),
         # Completed at is not updated
         (
@@ -264,7 +232,7 @@ def test_resolve_state(
 ):
     # Given
     task = Task(id="some_id", state=stored, type="some-type", created_at=datetime.now())
-    update = TaskUpdate(task_id=task.id, state=event_state)
+    update = TaskUpdate(state=event_state)
     # When
     resolved = TaskState.resolve_event_state(task, update)
     # Then
@@ -294,7 +262,7 @@ def test_resolve_running_queued_state(
         created_at=datetime.now(),
         retries=task_retries,
     )
-    updated = TaskUpdate(task_id=task.id, state=TaskState.QUEUED, retries=event_retries)
+    updated = TaskUpdate(state=TaskState.QUEUED, retries=event_retries)
     # When
     resolved = TaskState.resolve_event_state(task, updated)
     # Then

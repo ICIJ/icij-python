@@ -18,6 +18,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -30,7 +31,6 @@ from icij_common.pydantic_utils import (
     ICIJModel,
     IgnoreExtraModel,
     jsonable_encoder,
-    safe_copy,
 )
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
@@ -46,7 +46,7 @@ from icij_worker import (
     WorkerType,
 )
 from icij_worker.event_publisher import EventPublisher
-from icij_worker.exceptions import TaskAlreadyExists, TaskQueueIsFull, UnknownTask
+from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
 from icij_worker.objects import CancelledTaskEvent
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
@@ -66,6 +66,7 @@ except ImportError:
 
 if _has_pytest:
 
+    # TODO: make this one a MockStorage
     class DBMixin(ABC):
         _task_collection = "tasks"
         _error_collection = "errors"
@@ -76,7 +77,7 @@ if _has_pytest:
 
         def __init__(self, db_path: Path) -> None:
             self._db_path = db_path
-            self._task_dbs: Dict[str, str] = dict()
+            self._task_meta: Dict[str, Tuple[str, str]] = dict()
 
         @property
         def db_path(self) -> Path:
@@ -93,14 +94,15 @@ if _has_pytest:
             return str((task_id, db))
 
         def _get_task_db_name(self, task_id) -> str:
-            if task_id not in self._task_dbs:
+            if task_id not in self._task_meta:
                 db = self._read()
-                self._task_dbs = dict(
-                    eval(k)  # pylint: disable=eval-used
-                    for k in db[self._task_collection].keys()
-                )
+                task_meta = dict()
+                for k, v in db[self._task_collection].items():
+                    (task_id, db) = eval(k)  # pylint: disable=eval-used
+                    task_meta[task_id] = (db, v["namespace"])
+                self._task_meta = task_meta
             try:
-                return self._task_dbs[task_id]
+                return self._task_meta[task_id][0]
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
@@ -113,6 +115,61 @@ if _has_pytest:
                 cls._cancel_event_collection: {},
             }
             db_path.write_text(json.dumps(db))
+
+        async def get_task_namespace(self, task_id: str) -> Optional[str]:
+            try:
+                return self._task_meta[task_id][1]
+            except KeyError as e:
+                raise UnknownTask(task_id) from e
+
+        async def save_result(self, result: TaskResult):
+            db = self._get_task_db_name(result.task_id)
+            task_key = self._task_key(task_id=result.task_id, db=db)
+            db = self._read()
+            db[self._result_collection][task_key] = result
+            self._write(db)
+
+        async def save_error(self, error: TaskError):
+            db = self._get_task_db_name(task_id=error.task_id)
+            task_key = self._task_key(task_id=error.task_id, db=db)
+            db = self._read()
+            errors = db[self._error_collection].get(task_key)
+            if errors is None:
+                errors = []
+            errors.append(error)
+            db[self._error_collection][task_key] = errors
+            self._write(db)
+
+        async def save_task(self, task: Task, namespace: Optional[str]):
+            try:
+                ns = await self.get_task_namespace(task_id=task.id)
+            except UnknownTask:
+                if namespace is not None:
+                    db_name = self._namespacing.test_db(namespace)
+                else:
+                    db_name = TEST_DB
+                update = task.dict(exclude_unset=True, by_alias=True)
+            else:
+                if ns != namespace:
+                    msg = (
+                        f"DB task namespace ({ns}) differs from"
+                        f" save task namespace: {namespace}"
+                    )
+                    raise ValueError(msg)
+                db_name = self._get_task_db_name(task.id)
+                update = {
+                    f: v
+                    for f, v in task.dict(exclude_none=True, by_alias=True).items()
+                    if f not in Task.non_updatable_fields
+                }
+            update["namespace"] = namespace
+            task_key = self._task_key(task_id=task.id, db=db_name)
+            db = self._read()
+            updated = db[self._task_collection].get(task_key, dict())
+            updated.update(update)
+            db[self._task_collection][task_key] = updated
+            self._write(db)
+            self._task_meta[task.id] = (db_name, namespace)
 
     @pytest.fixture(scope="session")
     def mock_db_session() -> Path:
@@ -188,21 +245,22 @@ if _has_pytest:
     def test_async_app() -> AsyncApp:
         return AsyncApp.load(f"{__name__}.APP")
 
-    class MockManager(TaskManager, DBMixin):
+    class MockManager(DBMixin, TaskManager):
+
         def __init__(
             self,
             db_path: Path,
             max_queue_size: int,
+            app_name: str = "test-app",
             namespacing: Optional[Namespacing] = None,
         ):
-            super().__init__(namespacing)
-            super(TaskManager, self).__init__(db_path)
+            super().__init__(db_path)
+            super(DBMixin, self).__init__(app_name, namespacing)
             self._max_queue_size = max_queue_size
 
-        async def _enqueue(
-            self, task: Task, namespace: Optional[str], **kwargs
-        ) -> Task:
+        async def _enqueue(self, task: Task, **kwargs) -> Task:
             # pylint: disable=arguments-differ
+            namespace = await self.get_task_namespace(task.id)
             if namespace is not None:
                 db = self._namespacing.test_db(namespace)
             else:
@@ -215,18 +273,15 @@ if _has_pytest:
             )
             if n_queued > self._max_queue_size:
                 raise TaskQueueIsFull(self._max_queue_size)
-            if key in tasks:
-                raise TaskAlreadyExists(task.id)
-            update = {"state": TaskState.QUEUED}
-            task = safe_copy(task, update=update)
-            task_dict = task.dict()
-            if namespace is not None:
-                task_dict["namespace"] = self._namespacing.namespace_to_db_key(
-                    namespace
-                )
-            tasks[key] = task_dict
+            updated = tasks.get(key)
+            if updated is None:
+                raise UnknownTask(task.id)
+            update = {"state": TaskState.QUEUED, "progress": 0.0}
+            updated.update(update)
+            db[self._task_collection][key] = updated
             self._write(db)
-            return task
+            updated.pop("namespace")
+            return Task.parse_obj(updated)
 
         async def _cancel(self, *, task_id: str, requeue: bool):
             db = self._get_task_db_name(task_id)
@@ -238,13 +293,15 @@ if _has_pytest:
             db[self._cancel_event_collection][key] = event.dict()
             self._write(db)
 
-        async def get_task(self, *, task_id: str) -> Task:
+        async def get_task(self, task_id: str) -> Task:
             db = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db)
             db = self._read()
             try:
                 tasks = db[self._task_collection]
-                return Task.parse_obj(tasks[key])
+                task = deepcopy(tasks[key])
+                task.pop("namespace")
+                return Task.parse_obj(task)
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
@@ -303,16 +360,19 @@ if _has_pytest:
             # Here we choose to reflect the change in the DB since its closer to what
             # will happen IRL and test integration further
             db_name = self._get_task_db_name(event.task_id)
+            ns = await self.get_task_namespace(event.task_id)
             key = self._task_key(task_id=event.task_id, db=db_name)
             db = self._read()
             try:
                 task = self._get_db_task(db, task_id=event.task_id, db_name=db_name)
+                task.pop("namespace")
                 task = Task.parse_obj(task)
             except UnknownTask:
                 task = Task.parse_obj(Task.mandatory_fields(event, keep_id=True))
             update = task.resolve_event(event)
             if update is not None:
                 task = task.dict(exclude_unset=True, by_alias=True)
+                task["namespace"] = ns
                 update = {
                     k: v
                     for k, v in event.dict(by_alias=True, exclude_unset=True).items()
@@ -406,22 +466,10 @@ if _has_pytest:
             return MockWorkerConfig(db_path=self._db_path)
 
         async def _save_result(self, result: TaskResult):
-            db = self._get_task_db_name(result.task_id)
-            task_key = self._task_key(task_id=result.task_id, db=db)
-            db = self._read()
-            db[self._result_collection][task_key] = result
-            self._write(db)
+            return await super(Worker, self).save_result(result)
 
         async def _save_error(self, error: TaskError):
-            db = self._get_task_db_name(task_id=error.task_id)
-            task_key = self._task_key(task_id=error.task_id, db=db)
-            db = self._read()
-            errors = db[self._error_collection].get(task_key)
-            if errors is None:
-                errors = []
-            errors.append(error)
-            db[self._error_collection][task_key] = errors
-            self._write(db)
+            await super(Worker, self).save_error(error)
 
         def _get_db_errors(self, task_id: str, db_name: str) -> List[TaskError]:
             key = self._task_key(task_id=task_id, db=db_name)
@@ -447,16 +495,18 @@ if _has_pytest:
             db = self._read()
             tasks = db[self._task_collection]
             try:
-                saved_task = tasks[key]
+                saved_task = deepcopy(tasks[key])
             except KeyError as e:
                 raise UnknownTask(task.id) from e
-            saved_task = Task.parse_obj(saved_task)
+            ns = saved_task.pop("namespace")
             update = {
-                "completed_at": completed_at,
+                "completedAt": completed_at,
                 "state": TaskState.DONE,
                 "progress": 100.0,
+                "namespace": ns,
             }
-            tasks[key] = safe_copy(saved_task, update=update)
+            saved_task.update(update)
+            tasks[key] = saved_task
             self._write(db)
 
         async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
@@ -517,10 +567,10 @@ if _has_pytest:
                         for k, t in selected.items()
                         if t.get("namespace") == ns_key
                     ]
-                    for k, t in selected:
-                        t.pop("namespace")
                 else:
                     selected = selected.items()
+                for k, t in selected:
+                    t.pop("namespace", None)
                 selected = [(k, consumed_cls.parse_obj(t)) for k, t in selected]
                 if select is not None:
                     selected = [(k, t) for k, t in selected if select(t)]

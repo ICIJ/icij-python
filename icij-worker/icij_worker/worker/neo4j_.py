@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import json
 from datetime import datetime
 from typing import (
     Awaitable,
     Callable,
     ClassVar,
-    Dict,
     Optional,
     TypeVar,
 )
@@ -23,9 +21,6 @@ from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_EFFECTIVE,
     TASK_CANCEL_EVENT_NODE,
-    TASK_ERROR_NODE,
-    TASK_ERROR_OCCURRED_TYPE,
-    TASK_HAS_RESULT_TYPE,
     TASK_ID,
     TASK_LOCK_NODE,
     TASK_LOCK_TASK_ID,
@@ -33,12 +28,10 @@ from icij_common.neo4j.constants import (
     TASK_NAMESPACE,
     TASK_NODE,
     TASK_PROGRESS,
-    TASK_RESULT_NODE,
-    TASK_RESULT_RESULT,
     TASK_RETRIES,
 )
 from icij_common.neo4j.migrate import retrieve_dbs
-from icij_common.pydantic_utils import ICIJModel, jsonable_encoder
+from icij_common.pydantic_utils import ICIJModel
 from icij_worker import (
     AsyncApp,
     Task,
@@ -136,20 +129,15 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
         return worker
 
     async def _consume(self) -> Task:
-        ns_key = None
-        if self._namespace is not None:
-            ns_key = self._namespacing.namespace_to_db_key(self._namespace)
-        return await self._consume_(
-            functools.partial(_consume_task_tx, namespace_key=ns_key),
+        task = await self._consume_(
+            functools.partial(_consume_task_tx, namespace=self._namespace),
             refresh_interval_s=self._new_tasks_refresh_interval_s,
         )
+        return Task.from_neo4j({"task": task})
 
     async def _consume_cancelled(self) -> CancelledTaskEvent:
-        ns_key = None
-        if self._namespace is not None:
-            ns_key = self._namespacing.namespace_to_db_key(self._namespace)
         return await self._consume_(
-            functools.partial(_consume_cancelled_task_tx, namespace_key=ns_key),
+            functools.partial(_consume_cancelled_task_tx, namespace=self._namespace),
             refresh_interval_s=self._cancelled_tasks_refresh_interval_s,
         )
 
@@ -165,12 +153,18 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
             for db in dbs:
                 async with self._db_session(db.name) as sess:
                     received = await sess.execute_write(consume_tx, worker_id=self.id)
-                    if isinstance(received, Task):
-                        self._task_dbs[received.id] = db.name
+                    if "namespace" in received:
+                        self._task_meta[received.id] = (db.name, received["namespace"])
                     if received is not None:
                         return received
             await asyncio.sleep(refresh_interval_s)
             refresh_dbs_i += 1
+
+    async def _save_result(self, result: TaskResult):
+        await super(Worker, self).save_result(result)
+
+    async def _save_error(self, error: TaskError):
+        await super(Worker, self).save_error(error)
 
     async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
         if nacked.state is TaskState.QUEUED:
@@ -185,24 +179,6 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
             nack_fn = _nack_task_tx
         async with self._task_session(nacked.id) as sess:
             await sess.execute_write(nack_fn, task_id=nacked.id, worker_id=self.id)
-
-    async def _save_result(self, result: TaskResult):
-        async with self._task_session(result.task_id) as sess:
-            res_str = json.dumps(jsonable_encoder(result.result))
-            await sess.execute_write(
-                _save_result_tx, task_id=result.task_id, result=res_str
-            )
-
-    async def _save_error(self, error: TaskError):
-        async with self._task_session(error.task_id) as sess:
-            error_props = error.dict(by_alias=True)
-            error_props.pop("@type")
-            error_props["stacktrace"] = [
-                json.dumps(item) for item in error_props["stacktrace"]
-            ]
-            await sess.execute_write(
-                _save_error_tx, task_id=error.task_id, error_props=error_props
-            )
 
     async def _acknowledge(self, task: Task, completed_at: datetime):
         async with self._task_session(task.id) as sess:
@@ -221,11 +197,11 @@ async def _consume_task_tx(
     tx: neo4j.AsyncTransaction,
     *,
     worker_id: str,
-    namespace_key: Optional[str],
-) -> Optional[Task]:
+    namespace: Optional[str],
+) -> Optional[neo4j.Record]:
     where_ns = ""
-    if namespace_key is not None:
-        where_ns = f"WHERE t.{TASK_NAMESPACE} = $namespaceKey"
+    if namespace is not None:
+        where_ns = f"WHERE t.{TASK_NAMESPACE} = $namespace"
     query = f"""MATCH (t:{TASK_NODE}:`{TaskState.QUEUED.value}`)
 {where_ns}
 WITH t
@@ -238,24 +214,22 @@ CREATE (lock:{TASK_LOCK_NODE} {{
 }})
 RETURN task"""
     labels = [TASK_NODE, TaskState.RUNNING.value]
-    res = await tx.run(
-        query, workerId=worker_id, labels=labels, namespaceKey=namespace_key
-    )
+    res = await tx.run(query, workerId=worker_id, labels=labels, namespace=namespace)
     try:
         task = await res.single(strict=True)
     except ResultNotSingleError:
         return None
     except ConstraintError as e:
         raise TaskAlreadyReserved() from e
-    return Task.from_neo4j(task)
+    return task["task"]
 
 
 async def _consume_cancelled_task_tx(
-    tx: neo4j.AsyncTransaction, namespace_key: Optional[str], **_
+    tx: neo4j.AsyncTransaction, namespace: Optional[str], **_
 ) -> Optional[CancelledTaskEvent]:
     where_ns = ""
-    if namespace_key is not None:
-        where_ns = f"AND task.{TASK_NAMESPACE} = $namespaceKey"
+    if namespace is not None:
+        where_ns = f"AND task.{TASK_NAMESPACE} = $namespace"
     get_event_query = f"""MATCH (task:{TASK_NODE})-[
     :{TASK_CANCELLED_BY_EVENT_REL}
 ]->(event:{TASK_CANCEL_EVENT_NODE})
@@ -264,7 +238,7 @@ RETURN task, event
 ORDER BY event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED} ASC
 LIMIT 1
 """
-    res = await tx.run(get_event_query, namespaceKey=namespace_key)
+    res = await tx.run(get_event_query, namespace=namespace)
     try:
         event = await res.single(strict=True)
     except ResultNotSingleError:
@@ -379,31 +353,3 @@ RETURN task
         await res.single(strict=True)
     except ResultNotSingleError as e:
         raise UnknownTask(task_id, worker_id) from e
-
-
-async def _save_result_tx(tx: neo4j.AsyncTransaction, *, task_id: str, result: str):
-    query = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
-MERGE (task)-[:{TASK_HAS_RESULT_TYPE}]->(result:{TASK_RESULT_NODE})
-ON CREATE SET result.{TASK_RESULT_RESULT} = $result
-RETURN task, result"""
-    res = await tx.run(query, taskId=task_id, result=result)
-    records = [rec async for rec in res]
-    summary = await res.consume()
-    if not records:
-        raise UnknownTask(task_id)
-    if not summary.counters.relationships_created:
-        msg = f"Attempted to save result for task {task_id} but found existing result"
-        raise ValueError(msg)
-
-
-async def _save_error_tx(
-    tx: neo4j.AsyncTransaction, task_id: str, *, error_props: Dict
-):
-    query = f"""MATCH (t:{TASK_NODE} {{{TASK_ID}: $taskId }})
-CREATE (error:{TASK_ERROR_NODE} $errorProps)-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
-RETURN task, error"""
-    res = await tx.run(query, taskId=task_id, errorProps=error_props)
-    try:
-        await res.single(strict=True)
-    except ResultNotSingleError as e:
-        raise UnknownTask(task_id) from e
