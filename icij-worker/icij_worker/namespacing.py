@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from functools import lru_cache
 from typing import Callable, Optional
 
@@ -34,11 +33,17 @@ class Namespacing:
         return task_key.startswith(app_namespace)
 
     @staticmethod
+    @lru_cache
     def amqp_task_routing(task_namespace: Optional[str]) -> Routing:
         """Used to route task with the right AMQP routing key based on the namespace"""
-        exchange_name = "exchangeMainTasks"
-        routing_key = "routingKeyMainTasks"
-        queue_name = "queueMainTasks"
+        # Overriding this default might require overriding AMQPTaskManager/AMQPWorker
+        # so that they communicate correctly
+        from icij_worker.utils.amqp import AMQPMixin
+
+        default_task_routing = AMQPMixin.default_task_routing()
+        exchange_name = default_task_routing.exchange.name
+        routing_key = default_task_routing.routing_key
+        queue_name = default_task_routing.queue_name
         if task_namespace is not None:
             routing_key += f".{task_namespace}"
             queue_name += f".{task_namespace}"
@@ -46,6 +51,8 @@ class Namespacing:
             exchange=Exchange(name=exchange_name, type=ExchangeType.DIRECT),
             routing_key=routing_key,
             queue_name=queue_name,
+            # TODO: route DLQ by namespace ???
+            dead_letter_routing=default_task_routing.dead_letter_routing,
         )
 
     @staticmethod
@@ -70,21 +77,3 @@ class Namespacing:
     def test_db(namespace: str) -> str:
         # pylint: disable=unused-argument
         return TEST_DB
-
-    @lru_cache()
-    def namespace_to_db_key(self, namespace: str) -> str:
-        """Use to map a namespace to a key which can be used to retrieve task from
-         that namespace in a DB
-
-        This can be used to implement hierarchical namespacing for DB-based backends:
-        ```python
-        ns = "app.domain.subdomain"
-
-        def namespace_to_db_key(self, namespace: str) -> str:
-            # Match by app domain
-            split = namespace.split(".")
-            app_domain = ".".join(split[:2])
-            return hashlib.sha1(app_domain.encode("utf-8")).hexdigest()
-        ```
-        """
-        return hashlib.sha1(namespace.encode("utf-8")).hexdigest()

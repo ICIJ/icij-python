@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import AsyncExitStack
-from functools import cached_property, lru_cache
+from functools import cached_property
 from typing import List, Optional
 
 from aio_pika import (
-    DeliveryMode,
     Exchange as AioPikaExchange,
-    ExchangeType,
-    Message as AioPikaMessage,
     RobustChannel,
     RobustConnection as _RobustConnection,
     connect_robust,
@@ -17,9 +14,10 @@ from aio_pika import (
 from aio_pika.abc import AbstractRobustConnection
 
 from icij_common.logging_utils import LogWithNameMixin
-from icij_worker import Message, TaskError, TaskEvent, TaskResult
+from icij_worker import TaskError, TaskEvent, TaskResult
 from . import EventPublisher
-from ..namespacing import Exchange, Routing
+from ..namespacing import Routing
+from ..utils.amqp import AMQPMixin
 
 
 # TODO: move these to a upper level
@@ -35,7 +33,7 @@ class RobustConnection(_RobustConnection):
         await self.close()
 
 
-class AMQPPublisher(EventPublisher, LogWithNameMixin):
+class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
     def __init__(
         self,
         logger: Optional[logging.Logger] = None,
@@ -46,6 +44,11 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         app_id: Optional[str] = None,
         connection: Optional[AbstractRobustConnection] = None,
     ):
+        super().__init__(
+            broker_url,
+            connection_timeout_s=connection_timeout_s,
+            reconnection_wait_s=reconnection_wait_s,
+        )
         if logger is None:
             logger = logging.getLogger(__name__)
         LogWithNameMixin.__init__(self, logger)
@@ -53,9 +56,9 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         self._broker_url = broker_url
         self._connection_ = connection
         self._channel_: Optional[RobustChannel] = None
-        self._evt_exchange: Optional[AioPikaExchange] = None
-        self._res_exchange: Optional[AioPikaExchange] = None
-        self._err_exchange: Optional[AioPikaExchange] = None
+        self._evt_ex: Optional[AioPikaExchange] = None
+        self._res_ex: Optional[AioPikaExchange] = None
+        self._err_ex: Optional[AioPikaExchange] = None
         self._connection_timeout_s = connection_timeout_s
         self._reconnection_wait_s = reconnection_wait_s
         self._exit_stack = AsyncExitStack()
@@ -73,33 +76,6 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
-    @classmethod
-    @lru_cache(maxsize=1)
-    def evt_routing(cls) -> Routing:
-        return Routing(
-            exchange=Exchange(name="exchangeMainEvents", type=ExchangeType.FANOUT),
-            routing_key="routingKeyMainEvents",
-            queue_name="queueMainEvents",
-        )
-
-    @classmethod
-    @lru_cache(maxsize=1)
-    def res_routing(cls) -> Routing:
-        return Routing(
-            exchange=Exchange(name="exchangeTaskResults", type=ExchangeType.DIRECT),
-            routing_key="routingKeyMainTaskResults",
-            queue_name="queueMainTaskResults",
-        )
-
-    @classmethod
-    @lru_cache(maxsize=1)
-    def err_routing(cls) -> Routing:
-        return Routing(
-            exchange=Exchange(name="exchangeMainErrors", type=ExchangeType.DIRECT),
-            routing_key="routingKeyMainErrors",
-            queue_name="queueMainErrors",
-        )
-
     @cached_property
     def _routings(self) -> List[Routing]:
         return [self.evt_routing(), self.res_routing(), self.err_routing()]
@@ -107,7 +83,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
     async def _publish_event(self, event: TaskEvent):
         await self._publish_message(
             event,
-            exchange=self._evt_exchange,
+            exchange=self._evt_ex,
             routing_key=self.evt_routing().routing_key,
             mandatory=False,
         )
@@ -122,7 +98,7 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
         #  other projects through the DB
         await self._publish_message(
             result,
-            exchange=self._res_exchange,
+            exchange=self._res_ex,
             routing_key=self.res_routing().routing_key,
             mandatory=True,  # This is important
         )
@@ -136,50 +112,10 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
 
         await self._publish_message(
             error,
-            exchange=self._err_exchange,
+            exchange=self._err_ex,
             routing_key=self.err_routing().routing_key,
             mandatory=True,  # This is important
         )
-
-    async def _publish_message(
-        self,
-        message: Message,
-        *,
-        exchange: AioPikaExchange,
-        delivery_mode: DeliveryMode = DeliveryMode.PERSISTENT,
-        routing_key: Optional[str],
-        mandatory: bool,
-    ):
-        message = message.json(by_alias=True, exclude_unset=True).encode()
-        message = AioPikaMessage(
-            message, delivery_mode=delivery_mode, app_id=self._app_id
-        )
-
-        await exchange.publish(
-            message,
-            routing_key,
-            mandatory=mandatory,
-        )
-
-    @property
-    def _connection(self) -> AbstractRobustConnection:
-        if self._connection_ is None:
-            msg = (
-                f"Publisher has no connection, please call"
-                f" {AMQPPublisher.__aenter__.__name__}"
-            )
-            raise ValueError(msg)
-        return self._connection_
-
-    @property
-    def _channel(self) -> RobustChannel:
-        if self._channel_ is None:
-            msg = (
-                f"Publisher has no channel, please call"
-                f" {AMQPPublisher.__aenter__.__name__}"
-            )
-            raise ValueError(msg)
-        return self._channel_
 
     async def _connection_workflow(self):
         self.debug("creating connection...")
@@ -192,7 +128,9 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
             )
             await self._exit_stack.enter_async_context(self._connection)
         self.debug("creating channel...")
-        self._channel_ = await self._connection.channel()
+        self._channel_ = await self._connection.channel(
+            publisher_confirms=True, on_return_raises=False
+        )
         await self._exit_stack.enter_async_context(self._channel)
         await self._channel.set_qos(prefetch_count=1, global_=True)
         await self._declare_exchanges()
@@ -202,21 +140,21 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
     async def _declare_exchanges(self):
         if self._declare_and_bind:
             self.debug("(re)declaring %s...", self.evt_routing().exchange)
-            self._evt_exchange = await self._channel.declare_exchange(
+            self._evt_ex = await self._channel.declare_exchange(
                 name=self.evt_routing().exchange.name,
                 type=self.evt_routing().exchange.type,
                 timeout=self._connection_timeout_s,
                 durable=True,
             )
             self.debug("(re)declaring %s...", self.res_routing().exchange)
-            self._res_exchange = await self._channel.declare_exchange(
+            self._res_ex = await self._channel.declare_exchange(
                 name=self.res_routing().exchange.name,
                 type=self.res_routing().exchange.type,
                 timeout=self._connection_timeout_s,
                 durable=True,
             )
             self.debug("(re)declaring %s...", self.err_routing().exchange)
-            self._err_exchange = await self._channel.declare_exchange(
+            self._err_ex = await self._channel.declare_exchange(
                 name=self.err_routing().exchange.name,
                 type=self.err_routing().exchange.type,
                 timeout=self._connection_timeout_s,
@@ -224,22 +162,24 @@ class AMQPPublisher(EventPublisher, LogWithNameMixin):
             )
         else:
             self.debug("publisher will use existing exchanges...")
-            self._evt_exchange = await self._channel.get_exchange(
+            self._evt_ex = await self._channel.get_exchange(
                 self.evt_routing().exchange.name
             )
-            self._res_exchange = await self._channel.get_exchange(
+            self._res_ex = await self._channel.get_exchange(
                 self.res_routing().exchange.name
             )
-            self._res_exchange = await self._channel.get_exchange(
+            self._res_ex = await self._channel.get_exchange(
                 self.res_routing().exchange.name
             )
 
     async def _declare_and_bind_queues(self):
         if self._declare_and_bind:
             for routing in self._routings:
-                self.debug("(re)declaring queues %s...", routing.queue_name)
+                self.debug("(re)declaring queue %s...", routing.queue_name)
                 queue = await self._channel.declare_queue(
                     routing.queue_name, durable=True
                 )
-                self.debug("binding queues, %s...", routing.queue_name)
+                self.debug(
+                    "binding queue %s on %s...", routing.queue_name, routing.routing_key
+                )
                 await queue.bind(routing.exchange.name, routing_key=routing.routing_key)

@@ -17,5 +17,10 @@ try:
 except ImportError:
     pass
 
+try:
+    from icij_worker.task_storage.fs import FSKeyValueStorage
+except ImportError:
+    pass
+
 from .backend import WorkerBackend
 from .event_publisher import EventPublisher

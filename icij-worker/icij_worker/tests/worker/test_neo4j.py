@@ -138,11 +138,13 @@ async def test_worker_consume_cancel_event(
 
 
 async def test_worker_negatively_acknowledge(
-    populate_tasks: List[Task], worker: Neo4jWorker
+    populate_tasks: List[Task],
+    worker: Neo4jWorker,
+    neo4j_task_manager: Neo4JTaskManager,
 ):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    task_manager = neo4j_task_manager
     # When
     task = await worker.consume()
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
@@ -159,11 +161,13 @@ async def test_worker_negatively_acknowledge(
 
 
 async def test_worker_negatively_acknowledge_and_requeue(
-    populate_tasks: List[Task], worker: Neo4jWorker
+    populate_tasks: List[Task],
+    worker: Neo4jWorker,
+    neo4j_task_manager: Neo4JTaskManager,
 ):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    task_manager = neo4j_task_manager
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -198,11 +202,11 @@ async def test_worker_negatively_acknowledge_and_requeue(
 
 @pytest.mark.parametrize("requeue", [True, False])
 async def test_worker_negatively_acknowledge_and_cancel(
-    worker: Neo4jWorker, requeue: bool
+    worker: Neo4jWorker, requeue: bool, neo4j_task_manager: Neo4JTaskManager
 ):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    task_manager = neo4j_task_manager
     created_at = datetime.now()
     task = Task(
         id="some-id",
@@ -242,9 +246,13 @@ async def test_worker_negatively_acknowledge_and_cancel(
     assert n_locks == 0
 
 
-async def test_worker_save_result(populate_tasks: List[Task], worker: Neo4jWorker):
+async def test_worker_save_result(
+    populate_tasks: List[Task],
+    worker: Neo4jWorker,
+    neo4j_task_manager: Neo4JTaskManager,
+):
     # Given
-    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    task_manager = neo4j_task_manager
     task = populate_tasks[0]
     assert task.state == TaskState.QUEUED
     result = "hello everyone"
@@ -278,11 +286,13 @@ async def test_worker_should_raise_when_saving_existing_result(
 
 
 async def test_worker_acknowledgment_cm(
-    populate_tasks: List[Task], worker: Neo4jWorker
+    populate_tasks: List[Task],
+    worker: Neo4jWorker,
+    neo4j_task_manager: Neo4JTaskManager,
 ):
     # Given
     created = populate_tasks[0]
-    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    task_manager = neo4j_task_manager
 
     # When
     async with worker.acknowledgment_cm():
@@ -305,10 +315,14 @@ async def test_worker_acknowledgment_cm(
     assert recs[0]["nLocks"] == 0
 
 
-async def test_worker_save_error(populate_tasks: List[Task], worker: Neo4jWorker):
+async def test_worker_save_error(
+    populate_tasks: List[Task],
+    worker: Neo4jWorker,
+    neo4j_task_manager: Neo4JTaskManager,
+):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager(worker.driver, max_queue_size=10)
+    task_manager = neo4j_task_manager
     first_task = populate_tasks[0]
     error = TaskError(
         id="error-id",
