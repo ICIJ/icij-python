@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Type
 
 from icij_worker import Namespacing, Task, TaskError, TaskResult
 from icij_worker.exceptions import UnknownTask
+from icij_worker.objects import TaskUpdate
 from icij_worker.task_storage import TaskStorage
 
 
@@ -12,8 +13,6 @@ class KeyValueStorage(TaskStorage, ABC):
     _results_db_name = "results"
     _errors_db_name = "errors"
     _namespacing: Namespacing
-
-    _non_updatable = {f.alias for f in Task.non_updatable_fields}
 
     def __init__(self, namespacing: Optional[Namespacing] = None):
         if namespacing is None:
@@ -36,11 +35,7 @@ class KeyValueStorage(TaskStorage, ABC):
                     f" save task namespace: {namespace}"
                 )
                 raise ValueError(msg)
-            update = {
-                f: v
-                for f, v in task.dict(exclude_none=True, by_alias=True).items()
-                if f not in self._non_updatable
-            }
+            update = TaskUpdate.from_task(task).dict(exclude_none=True, by_alias=True)
             await self._update(self._tasks_db_name, update, key=key)
 
     async def save_result(self, result: TaskResult):

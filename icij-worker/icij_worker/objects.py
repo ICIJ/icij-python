@@ -7,11 +7,9 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
-from functools import lru_cache
-from typing import Callable, ClassVar, Literal, Set, Union, cast
+from typing import Callable, ClassVar, Literal, Union, cast
 
 from pydantic import Field, validator
-from pydantic.fields import ModelField
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
@@ -202,13 +200,6 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if v is None:
             v = dict()
         return v
-
-    @classmethod
-    @property
-    @lru_cache(maxsize=1)
-    def non_updatable_fields(cls) -> Set[ModelField]:
-        keys = ["id", "type", "created_at", "arguments"]
-        return {cls.__fields__[k] for k in keys}
 
     @classmethod
     def create(cls, *, task_id: str, task_ype: str, task_args: Dict[str, Any]) -> Task:
@@ -466,11 +457,19 @@ class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetim
         return cls(task_id=task_id, requeue=requeue, cancelled_at=cancelled_at)
 
 
-class TaskUpdate(NoEnumModel, LowerCamelCaseModel):
+class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
     state: Optional[TaskState] = None
     progress: Optional[float] = None
     retries: Optional[int] = None
     completed_at: Optional[datetime] = None
+
+    _from_task = ["state", "progress", "retries", "completed_at"]
+
+    @classmethod
+    def from_task(cls, task: Task, **kwargs) -> TaskUpdate:
+        from_task = {attr: getattr(task, attr) for attr in cls._from_task}
+        from_task = {k: v for k, v in from_task.items() if v is not None}
+        return cls(**from_task)
 
 
 @Message.register("task-result")
