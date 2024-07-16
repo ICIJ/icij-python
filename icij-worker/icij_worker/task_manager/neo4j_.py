@@ -7,6 +7,7 @@ import neo4j
 from neo4j.exceptions import ConstraintError
 
 from icij_common.neo4j.constants import (
+    TASK_ARGUMENTS,
     TASK_CANCELLED_BY_EVENT_REL,
     TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
@@ -25,7 +26,7 @@ from icij_common.neo4j.constants import (
     TASK_ERROR_TITLE_DEPRECATED,
     TASK_HAS_RESULT_TYPE,
     TASK_ID,
-    TASK_INPUTS,
+    TASK_INPUTS_DEPRECATED,
     TASK_LOCK_NODE,
     TASK_LOCK_TASK_ID,
     TASK_LOCK_WORKER_ID,
@@ -100,7 +101,7 @@ class Neo4JTaskManager(TaskManager, Neo4jDBMixin):
             ns_key = self._namespacing.namespace_to_db_key(namespace)
         self._task_dbs[task.id] = db
         async with self._db_session(db) as sess:
-            inputs = json.dumps(task.inputs)
+            inputs = json.dumps(task.arguments)
             return await sess.execute_write(
                 _enqueue_task_tx,
                 task_id=task.id,
@@ -108,7 +109,7 @@ class Neo4JTaskManager(TaskManager, Neo4jDBMixin):
                 namespace_key=ns_key,
                 created_at=task.created_at,
                 max_queue_size=self._max_queue_size,
-                inputs=inputs,
+                arguments=inputs,
             )
 
     async def _cancel(self, *, task_id: str, requeue: bool):
@@ -232,7 +233,7 @@ async def _enqueue_task_tx(
     task_type: str,
     namespace_key: str,
     created_at: datetime,
-    inputs: str,
+    arguments: str,
     max_queue_size: int,
 ) -> Task:
     count_query = f"""MATCH (task:{TASK_NODE}:`{TaskState.QUEUED.value}`)
@@ -248,7 +249,7 @@ RETURN count(task.id) AS nQueued
 SET task:{TaskState.QUEUED.value},
     task.{TASK_TYPE} = $taskType,
     task.{TASK_NAMESPACE} = $namespaceKey,
-    task.{TASK_INPUTS} = $inputs,
+    task.{TASK_ARGUMENTS} = $args,
     task.{TASK_CREATED_AT} = $createdAt
 RETURN task
 """
@@ -259,7 +260,7 @@ RETURN task
             taskType=task_type,
             namespaceKey=namespace_key,
             createdAt=created_at,
-            inputs=inputs,
+            args=arguments,
         )
         task = await res.single(strict=True)
     except ConstraintError as e:
@@ -311,9 +312,19 @@ ON (task.{TASK_NAMESPACE})
     await tx.run(create_index)
 
 
+async def migrate_task_inputs_to_arguments_v0_tx(tx: neo4j.AsyncSession):
+    query = f"""MATCH (task:{TASK_NODE})
+SET task.{TASK_ARGUMENTS} = task.{TASK_INPUTS_DEPRECATED}
+REMOVE task.{TASK_INPUTS_DEPRECATED}
+RETURN task
+"""
+    await tx.run(query)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = {
     "migrate_task_errors_v0": migrate_task_errors_v0_tx,
     "migrate_cancelled_event_created_at_v0": migrate_cancelled_event_created_at_v0_tx,
     "migrate_add_index_to_task_namespace_v0_tx": migrate_add_index_to_task_namespace_v0_tx,
+    "migrate_task_inputs_to_arguments_v0_tx": migrate_task_inputs_to_arguments_v0_tx,
 }
