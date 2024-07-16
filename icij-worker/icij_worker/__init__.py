@@ -7,6 +7,7 @@ from .namespacing import Namespacing
 try:
     from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
     from icij_worker.event_publisher.amqp import AMQPPublisher
+    from icij_worker.task_manager.amqp import AMQPTaskManager
 except ImportError:
     pass
 
