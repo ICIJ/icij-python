@@ -12,6 +12,7 @@ from icij_worker.namespacing import Namespacing
 from icij_worker.typing_ import Dependency
 from icij_worker.utils import run_deps
 from icij_worker.utils.imports import import_variable
+from icij_worker.worker.config import AsyncAppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,14 @@ class AsyncApp:
     def __init__(
         self,
         name: str,
+        config: AsyncAppConfig = None,
         dependencies: Optional[List[Dependency]] = None,
         namespacing: Optional[Namespacing] = None,
     ):
         self._name = name
+        if config is None:
+            config = AsyncAppConfig()  # This will load from the env
+        self._config = config
         self._registry = dict()
         if dependencies is None:
             dependencies = []
@@ -38,6 +43,10 @@ class AsyncApp:
         if namespacing is None:
             namespacing = Namespacing()
         self._namespacing = namespacing
+
+    @property
+    def config(self) -> AsyncAppConfig:
+        return self._config
 
     @property
     def registry(self) -> Dict[str, RegisteredTask]:

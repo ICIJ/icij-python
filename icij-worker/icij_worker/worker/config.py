@@ -7,13 +7,22 @@ from typing import ClassVar, Optional, Union
 from pydantic import Field, Protocol
 from pydantic.parse import load_file
 
+from icij_common.pydantic_utils import ICIJSettings
 from icij_worker.utils.registrable import RegistrableConfig
+
+
+class AsyncAppConfig(ICIJSettings):
+    late_ack: bool = False
+
+    class Config:
+        env_prefix = "ICIJ_APP_"
 
 
 class WorkerConfig(RegistrableConfig, ABC):
     registry_key: ClassVar[str] = Field(const=True, default="type")
 
-    app_config_path: Optional[Path] = None
+    # TODO: is app_dependencies_path better ?
+    app_bootstrap_config_path: Optional[Path] = None
     inactive_after_s: Optional[float] = None
     log_level: str = "INFO"
     task_queue_poll_interval_s: float = 1.0
@@ -21,7 +30,6 @@ class WorkerConfig(RegistrableConfig, ABC):
 
     class Config:
         env_prefix = "ICIJ_WORKER_"
-        case_sensitive = False
 
     @classmethod
     def parse_file(
