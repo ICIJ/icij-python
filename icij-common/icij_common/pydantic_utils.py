@@ -7,7 +7,7 @@ from pathlib import PurePath
 from types import GeneratorType
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, BaseSettings, Extra
 from pydantic.fields import FieldInfo
 from pydantic.json import ENCODERS_BY_TYPE
 
@@ -51,10 +51,13 @@ def safe_copy(obj: BaseModel, **kwargs):
 class ICIJModel(BaseModel):
     class Config:
         allow_mutation = False
-        extra = "forbid"
+        extra = Extra.forbid
         allow_population_by_field_name = True
         keep_untouched = (cached_property,)
         use_enum_values = True
+
+
+class ICIJSettings(BaseSettings): ...  # pylint: disable=multiple-statements
 
 
 def get_field_default_value(attr: FieldInfo):
