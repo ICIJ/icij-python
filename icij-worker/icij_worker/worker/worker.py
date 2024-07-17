@@ -487,6 +487,7 @@ class Worker(
         pid = os.getpid()
         threadid = threading.get_ident()
         hostname = socket.gethostname()
+        # TODO: this might not be unique when using asyncio
         return f"{self._app.name}-worker-{hostname}-{pid}-{threadid}"
 
 
