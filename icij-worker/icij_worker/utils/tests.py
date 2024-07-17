@@ -411,7 +411,7 @@ if _has_pytest:
         def __init__(
             self,
             app: AsyncApp,
-            worker_id: str,
+            worker_id: Optional[str] = None,
             *,
             namespace: Optional[str],
             db_path: Path,

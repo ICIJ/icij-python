@@ -73,7 +73,7 @@ class AMQPWorker(Worker, AMQPMixin):
     def __init__(
         self,
         app: AsyncApp,
-        worker_id: str,
+        worker_id: Optional[str] = None,
         *,
         namespace: Optional[str],
         broker_url: str,

@@ -27,7 +27,6 @@ if sys.platform == "win32":
 def _mp_work_forever(
     app: str,
     config: WorkerConfig,
-    worker_id: str,
     *,
     worker_namespace: Optional[str],
     worker_extras: Optional[Dict] = None,
@@ -46,12 +45,11 @@ def _mp_work_forever(
         worker = Worker.from_config(
             config,
             app=app,
-            worker_id=worker_id,
             namespace=worker_namespace,
             **worker_extras,
         )
         deps_cm = app.lifetime_dependencies(
-            worker_id=worker_id, worker_config=config, **app_deps_extras
+            worker_id=worker.id, worker_config=config, **app_deps_extras
         )
         # From now on, the deps_cm should have setup loggers, we can let it log errors,
         # we get out of here
@@ -172,8 +170,8 @@ def run_workers_with_multiprocessing_cm(
         futures.add(future)
     logger.info("started %s workers for app %s", n_workers, app)
     with _handle_executor_termination(executor, futures, True):
-        for _ in as_completed(futures):
-            pass
+        for f in as_completed(futures):
+            f.result()
 
 
 def run_workers_with_multiprocessing(
@@ -204,5 +202,5 @@ def run_workers_with_multiprocessing(
         future.add_done_callback(futures.discard)
     logger.info("started %s workers for app %s", n_workers, app)
     with _handle_executor_termination(executor, futures, True):
-        for _ in as_completed(futures):
-            pass
+        for f in as_completed(futures):
+            f.result()

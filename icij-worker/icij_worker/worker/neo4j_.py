@@ -98,7 +98,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
     def __init__(
         self,
         app: AsyncApp,
-        worker_id: str,
+        worker_id: Optional[str] = None,
         *,
         namespace: Optional[str],
         driver: neo4j.AsyncDriver,
