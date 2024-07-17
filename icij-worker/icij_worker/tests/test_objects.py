@@ -34,7 +34,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.CREATED,
                 created_at=_CREATED_AT,
             ),
@@ -45,7 +45,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.CREATED,
                 created_at=_CREATED_AT,
             ),
@@ -55,7 +55,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.QUEUED,
                 created_at=_CREATED_AT,
             ),
@@ -65,7 +65,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
@@ -76,7 +76,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.CREATED,
                 created_at=_CREATED_AT,
             ),
@@ -102,7 +102,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.CREATED,
                 created_at=_CREATED_AT,
             ),
@@ -129,7 +129,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.DONE,
                 created_at=_CREATED_AT,
                 completed_at=_CREATED_AT,
@@ -146,7 +146,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.DONE,
                 created_at=_CREATED_AT,
             ),
@@ -172,7 +172,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.ERROR,
                 created_at=_CREATED_AT,
             ),
@@ -182,7 +182,7 @@ def test_precedence_sanity_check():
         (
             Task(
                 id="task-id",
-                type="hello_world",
+                name="hello_world",
                 state=TaskState.CANCELLED,
                 created_at=_CREATED_AT,
             ),
@@ -231,7 +231,7 @@ def test_resolve_state(
     stored: TaskState, event_state: TaskState, expected_resolved: TaskState
 ):
     # Given
-    task = Task(id="some_id", state=stored, type="some-type", created_at=datetime.now())
+    task = Task(id="some_id", state=stored, name="some-type", created_at=datetime.now())
     update = TaskUpdate(state=event_state)
     # When
     resolved = TaskState.resolve_event_state(task, update)
@@ -258,7 +258,7 @@ def test_resolve_running_queued_state(
     task = Task(
         id="some_id",
         state=TaskState.RUNNING,
-        type="some-type",
+        name="some-type",
         created_at=datetime.now(),
         retries=task_retries,
     )

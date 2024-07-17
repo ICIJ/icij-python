@@ -185,7 +185,7 @@ class Message(Registrable): ...  # pylint: disable=multiple-statements
 @Message.register("TaskCreation")
 class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
-    type: str
+    name: str
     arguments: Optional[Dict[str, object]] = None
     state: TaskState
     progress: Optional[float] = None
@@ -202,12 +202,12 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return v
 
     @classmethod
-    def create(cls, *, task_id: str, task_ype: str, task_args: Dict[str, Any]) -> Task:
+    def create(cls, *, task_id: str, task_name: str, task_args: Dict[str, Any]) -> Task:
         created_at = datetime.now()
         state = TaskState.CREATED
         return cls(
             id=task_id,
-            type=task_ype,
+            name=task_name,
             args=task_args,
             created_at=created_at,
             state=state,
@@ -285,7 +285,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         updated.pop("created_at", None)
         updated.pop("error", None)
         updated.pop("occurred_at", None)
-        updated.pop("task_type", None)
+        updated.pop("task_name", None)
         updated.pop("completed_at", None)
         updated.pop(event.registry_key.default, None)
         if not updated:
@@ -388,7 +388,7 @@ class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, ABC):
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> TaskEvent:
-        event = cls(task_id=task.id, task_type=task.type, **kwargs)
+        event = cls(task_id=task.id, task_name=task.name, **kwargs)
         return event
 
 

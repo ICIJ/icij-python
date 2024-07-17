@@ -325,7 +325,7 @@ if _has_pytest:
         async def get_tasks(
             self,
             *,
-            task_type: Optional[str] = None,
+            task_name: Optional[str] = None,
             state: Optional[Union[List[TaskState], TaskState]] = None,
             db: Optional[str] = None,
             **kwargs,

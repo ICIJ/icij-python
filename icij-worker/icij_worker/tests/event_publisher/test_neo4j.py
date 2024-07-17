@@ -92,7 +92,7 @@ async def test_worker_publish_done_task_event_should_not_update_task(
     task_manager = neo4j_task_manager
     query = """CREATE (task:_Task:DONE {
         id: 'task-0', 
-        type: 'hello_world',
+        name: 'hello_world',
         createdAt: $now,
         completedAt: $now,
         arguments: '{"greeted": "0"}'
@@ -123,11 +123,11 @@ async def test_worker_publish_event_for_unknown_task(
     # Given
     task_manager = neo4j_task_manager
     task_id = "some-id"
-    task_type = "hello_world"
+    task_name = "hello_world"
     created_at = datetime.now()
     task = Task(
         id=task_id,
-        type=task_type,
+        name=task_name,
         created_at=created_at,
         state=TaskState.QUEUED,
     )
@@ -149,7 +149,7 @@ async def test_worker_publish_event_should_use_state_resolution(
     task_id = "task-0"
     query = """CREATE (task:_Task:DONE {
 id: $taskId, 
-type: 'hello_world',
+name: 'hello_world',
 createdAt: $now,
 completedAt: $now,
 arguments: '{"greeted": "0"}'

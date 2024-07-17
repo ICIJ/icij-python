@@ -25,7 +25,7 @@ class TaskStorage(ABC):
         self,
         namespace: Optional[str],
         *,
-        task_type: Optional[str] = None,
+        task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]: ...

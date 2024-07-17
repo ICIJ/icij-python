@@ -64,7 +64,7 @@ async def _populate_results(
 ) -> List[Tuple[Task, List[TaskResult]]]:
     query_1 = """CREATE (task:_Task:DONE {
     id: 'task-2', 
-    type: 'hello_world',
+    name: 'hello_world',
     createdAt: $now,
     completedAt: $after,
     arguments: '{"greeted": "2"}'
@@ -95,7 +95,7 @@ _NOW = datetime.now()
             None,
             Task(
                 id="task-3",
-                type="hello_world",
+                name="hello_world",
                 arguments={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
@@ -106,7 +106,7 @@ _NOW = datetime.now()
                 "arguments": '{"greeted": "3"}',
                 "retries": 1,
                 "state": "CREATED",
-                "type": "hello_world",
+                "name": "hello_world",
                 "createdAt": datetime.now(),
             },
         ),
@@ -116,7 +116,7 @@ _NOW = datetime.now()
             "some-namespace",
             Task(
                 id="task-3",
-                type="hello_world",
+                name="hello_world",
                 arguments={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
@@ -127,7 +127,7 @@ _NOW = datetime.now()
                 "arguments": '{"greeted": "3"}',
                 "retries": 1,
                 "state": "CREATED",
-                "type": "hello_world",
+                "name": "hello_world",
                 "createdAt": datetime.now(),
                 "namespace": "some-namespace",
             },
@@ -138,7 +138,7 @@ _NOW = datetime.now()
             None,
             Task(
                 id="task-1",
-                type="hello_world",
+                name="hello_world",
                 arguments={"greeted": "1"},
                 state=TaskState.RUNNING,
                 progress=80,
@@ -152,7 +152,7 @@ _NOW = datetime.now()
                 "retries": 0,
                 "state": "RUNNING",
                 "createdAt": datetime.now(),
-                "type": "hello_world",
+                "name": "hello_world",
             },
         ),
         # Update with ns
@@ -161,7 +161,7 @@ _NOW = datetime.now()
             "some-namespace",
             Task(
                 id="task-1",
-                type="hello_world",
+                name="hello_world",
                 arguments={"greeted": "1"},
                 state=TaskState.RUNNING,
                 progress=80,
@@ -174,7 +174,7 @@ _NOW = datetime.now()
                 "progress": 80.0,
                 "retries": 0,
                 "state": "RUNNING",
-                "type": "hello_world",
+                "name": "hello_world",
                 "namespace": "some-namespace",
                 "createdAt": datetime.now(),
             },
@@ -185,7 +185,7 @@ _NOW = datetime.now()
             None,
             Task(
                 id="task-1",
-                type="updated_task",
+                name="updated_task",
                 arguments={"updated": "input"},
                 state=TaskState.RUNNING,
                 created_at=_NOW,
@@ -196,7 +196,7 @@ _NOW = datetime.now()
                 "progress": 66.6,
                 "retries": 1,
                 "state": "RUNNING",
-                "type": "hello_world",
+                "name": "hello_world",
                 "createdAt": datetime.now(),
             },
         ),
@@ -234,7 +234,7 @@ async def test_save_task_with_different_ns_should_fail(
     other_ns = "other-namespace"
     task = Task(
         id="task-1",
-        type="hello_world",
+        name="hello_world",
         arguments={"greeted": "1"},
         state=TaskState.RUNNING,
         progress=80,
@@ -279,7 +279,7 @@ async def test_task_manager_get_task(
     # Then
     expected_task = Task(
         id="task-1",
-        type="hello_world",
+        name="hello_world",
         arguments={"greeted": "1"},
         state=TaskState.RUNNING,
         progress=66.6,
@@ -309,7 +309,7 @@ async def test_task_manager_get_completed_task(
 
 
 @pytest.mark.parametrize(
-    "populate_tasks,namespace,states,task_type,expected_ix",
+    "populate_tasks,namespace,states,task_name,expected_ix",
     [
         (None, None, None, None, [0, 1]),
         (None, None, [], None, [0, 1]),
@@ -328,12 +328,12 @@ async def test_task_manager_get_tasks(
     populate_tasks: List[Task],
     namespace: Optional[str],
     states: Optional[List[TaskState]],
-    task_type: Optional[str],
+    task_name,
     expected_ix: List[int],
 ):
     # When
     tasks = await neo4j_task_manager.get_tasks(
-        state=states, task_type=task_type, namespace=namespace
+        state=states, task_name=task_name, namespace=namespace
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 

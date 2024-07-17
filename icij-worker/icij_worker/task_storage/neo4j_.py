@@ -28,11 +28,12 @@ from icij_common.neo4j.constants import (
     TASK_LOCK_NODE,
     TASK_LOCK_TASK_ID,
     TASK_LOCK_WORKER_ID,
+    TASK_NAME,
     TASK_NAMESPACE,
     TASK_NODE,
     TASK_RESULT_NODE,
     TASK_RESULT_RESULT,
-    TASK_TYPE,
+    TASK_TYPE_DEPRECATED,
 )
 from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
@@ -67,14 +68,14 @@ class Neo4jStorage(TaskStorage):
         self,
         namespace: Optional[str],
         *,
-        task_type: Optional[str] = None,
+        task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
         db = self._namespacing.neo4j_db(namespace)
         async with self._db_session(db) as sess:
             recs = await _get_tasks(
-                sess, state=state, task_type=task_type, namespace=namespace
+                sess, state=state, task_name=task_name, namespace=namespace
             )
         tasks = [Task.from_neo4j(r) for r in recs]
         return tasks
@@ -231,9 +232,9 @@ REQUIRE (task.{TASK_ID}) IS UNIQUE"""
 FOR (task:{TASK_NODE})
 ON (task.{TASK_CREATED_AT})"""
     await tx.run(created_at_query)
-    type_query = f"""CREATE INDEX index_task_type IF NOT EXISTS
+    type_query = f"""CREATE INDEX index_task_name IF NOT EXISTS
 FOR (task:{TASK_NODE})
-ON (task.{TASK_TYPE})"""
+ON (task.{TASK_NAME})"""
     await tx.run(type_query)
     error_timestamp_query = f"""CREATE INDEX index_task_error_timestamp IF NOT EXISTS
 FOR (task:{TASK_ERROR_NODE})
@@ -257,7 +258,7 @@ ON (lock.{TASK_LOCK_WORKER_ID})"""
 async def _get_tasks(
     sess: neo4j.AsyncSession,
     state: Optional[Union[List[TaskState], TaskState]],
-    task_type: Optional[str],
+    task_name: Optional[str],
     namespace: Optional[str],
 ) -> List[neo4j.Record]:
     if isinstance(state, TaskState):
@@ -265,7 +266,7 @@ async def _get_tasks(
     if state is not None:
         state = [s.value for s in state]
     return await sess.execute_read(
-        _get_tasks_tx, state=state, task_type=task_type, namespace=namespace
+        _get_tasks_tx, state=state, task_name=task_name, namespace=namespace
     )
 
 
@@ -282,12 +283,12 @@ async def _get_tasks_tx(
     tx: neo4j.AsyncTransaction,
     state: Optional[List[str]],
     *,
-    task_type: Optional[str],
+    task_name: Optional[str],
     namespace: Optional[str],
 ) -> List[neo4j.Record]:
     where = ""
-    if task_type:
-        where = f"WHERE task.{TASK_TYPE} = $type"
+    if task_name:
+        where = f"WHERE task.{TASK_NAME} = $type"
     if namespace is not None:
         if not where:
             where = "WHERE "
@@ -311,7 +312,7 @@ async def _get_tasks_tx(
         query = f"""MATCH (task:{TASK_NODE})
 RETURN task
 ORDER BY task.{TASK_CREATED_AT} DESC"""
-    res = await tx.run(query, type=task_type, namespace=namespace)
+    res = await tx.run(query, type=task_name, namespace=namespace)
     recs = [rec async for rec in res]
     return recs
 
@@ -343,7 +344,7 @@ RETURN task, result
     return results[0]
 
 
-async def migrate_task_errors_v0_tx(tx: neo4j.AsyncSession):
+async def migrate_task_errors_v0_tx(tx: neo4j.AsyncTransaction):
     query = f"""MATCH (error:{TASK_ERROR_NODE})
 // We leave the stacktrace and cause empty
 SET error.{TASK_ERROR_NAME} = error.{TASK_ERROR_TITLE_DEPRECATED},
@@ -355,7 +356,7 @@ RETURN error
     await tx.run(query)
 
 
-async def migrate_cancelled_event_created_at_v0_tx(tx: neo4j.AsyncSession):
+async def migrate_cancelled_event_created_at_v0_tx(tx: neo4j.AsyncTransaction):
     query = f"""MATCH (event:{TASK_CANCEL_EVENT_NODE})
 SET event.{TASK_CANCEL_EVENT_CANCELLED_AT} 
     = event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
@@ -365,7 +366,7 @@ RETURN event
     await tx.run(query)
 
 
-async def migrate_add_index_to_task_namespace_v0_tx(tx: neo4j.AsyncSession):
+async def migrate_add_index_to_task_namespace_v0_tx(tx: neo4j.AsyncTransaction):
     create_index = f"""
 CREATE INDEX index_task_namespace IF NOT EXISTS
 FOR (task:{TASK_NAMESPACE})
@@ -375,7 +376,7 @@ ON (task.{TASK_NAMESPACE})
 
 
 # pylint: disable=line-too-long
-async def migrate_task_inputs_to_arguments_v0_tx(tx: neo4j.AsyncSession):
+async def migrate_task_inputs_to_arguments_v0_tx(tx: neo4j.AsyncTransaction):
     query = f"""MATCH (task:{TASK_NODE})
 SET task.{TASK_ARGUMENTS} = task.{TASK_INPUTS_DEPRECATED}
 REMOVE task.{TASK_INPUTS_DEPRECATED}
@@ -384,10 +385,31 @@ RETURN task
     await tx.run(query)
 
 
+async def _rename_task_type_into_name_tx(tx: neo4j.AsyncTransaction):
+    query = f"""MATCH (task:{TASK_NODE})
+SET task.{TASK_NAME} = task.{TASK_TYPE_DEPRECATED}
+REMOVE task.{TASK_TYPE_DEPRECATED}
+RETURN task
+"""
+    await tx.run(query)
+
+
+async def migrate_task_type_to_name_v0(sess: neo4j.AsyncSession):
+    drop_index = "DROP INDEX index_task_tyoe IF EXISTS"
+    await sess.run(drop_index)
+    create_index = f"""CREATE INDEX index_task_name IF NOT EXISTS
+FOR (task:{TASK_NODE})
+ON (task.{TASK_NAME})
+"""
+    await sess.run(create_index)
+    await sess.execute_write(_rename_task_type_into_name_tx)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = {
     "migrate_task_errors_v0": migrate_task_errors_v0_tx,
     "migrate_cancelled_event_created_at_v0": migrate_cancelled_event_created_at_v0_tx,
     "migrate_add_index_to_task_namespace_v0_tx": migrate_add_index_to_task_namespace_v0_tx,
     "migrate_task_inputs_to_arguments_v0_tx": migrate_task_inputs_to_arguments_v0_tx,
+    "migrate_task_type_to_name_v0": migrate_task_type_to_name_v0,
 }
