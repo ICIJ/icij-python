@@ -190,6 +190,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             }
         await self._create_routing(
             task_routing,
+            declare_exchanges=True,
             declare_queues=True,
             durable_queues=True,
             queue_args=task_queue_args,
@@ -197,7 +198,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         for routing in self._other_routings:
             logger.debug("(re)declaring routing %s...", routing)
             await self._create_routing(
-                routing, declare_queues=True, durable_queues=True
+                routing,
+                declare_exchanges=True,
+                declare_queues=True,
+                durable_queues=True,
             )
         self._task_x = await self._channel.get_exchange(
             self.default_task_routing().exchange.name, ensure=True
