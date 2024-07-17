@@ -21,8 +21,7 @@ from icij_worker import (
     Worker,
     WorkerConfig,
 )
-from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.namespacing import Exchange, Namespacing, Routing
+from icij_worker.namespacing import Namespacing
 from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
@@ -70,36 +69,6 @@ class TestableAMQPWorker(AMQPWorker):
     def publisher(self):
         return self._publisher
 
-    @staticmethod
-    def task_routing(namespacing: Namespacing, namespace: Optional[str]) -> Routing:
-        routing = AMQPWorker.task_routing(namespacing, namespace)
-        dl_routing = Routing(
-            exchange=Exchange(name="exchangeDLQTasks", type=ExchangeType.DIRECT),
-            routing_key="routingKeyDLQTasks",
-            queue_name="TASK_DLQ",
-        )
-        routing = safe_copy(routing, update={"dead_letter_routing": dl_routing})
-        return routing
-
-    @property
-    def task_routing_(self) -> Routing:
-        return self._task_routing
-
-    @classmethod
-    @property
-    def result_routing(cls) -> Routing:
-        return AMQPPublisher.res_routing()
-
-    @classmethod
-    @property
-    def event_routing(cls) -> Routing:
-        return AMQPPublisher.evt_routing()
-
-    @classmethod
-    @property
-    def error_routing(cls) -> Routing:
-        return AMQPPublisher.err_routing()
-
     @property
     def cancelled(self) -> Dict[str, CancelledTaskEvent]:
         return self._cancelled
@@ -142,7 +111,7 @@ async def populate_tasks(rabbit_mq: str, request):
     connection = await connect_robust(rabbit_mq)
     namespacing = Namespacing()
     namespace = getattr(request, "param", None)
-    task_routing = TestableAMQPWorker.task_routing(namespacing, namespace=namespace)
+    task_routing = namespacing.amqp_task_routing(namespace)
     tasks = [
         Task(
             id="task-0",
@@ -204,7 +173,7 @@ async def test_worker_work_forever(
     broker_url = rabbit_mq
     connection = await connect_robust(url=broker_url)
     channel = await connection.channel()
-    res_routing = TestableAMQPWorker.result_routing
+    res_routing = TestableAMQPWorker.res_and_err_routing()
 
     # When
     async with amqp_worker:
@@ -299,7 +268,7 @@ async def test_worker_negatively_acknowledge(
         task = await amqp_worker.consume()
         await amqp_worker.negatively_acknowledge(task, requeue=False)
 
-        dlq_name = amqp_worker.task_routing_.dead_letter_routing.queue_name
+        dlq_name = amqp_worker.task_routing(None).dead_letter_routing.queue_name
 
         async def _dlqueued() -> bool:
             size = await get_queue_size(dlq_name)
@@ -349,7 +318,7 @@ async def test_worker_negatively_acknowledge_and_cancel(
         # Then
         task = await amqp_worker.consume()
         await amqp_worker.negatively_acknowledge(task, requeue=requeue, cancel=True)
-        task_routing = amqp_worker.task_routing_
+        task_routing = amqp_worker.task_routing(None)
 
         async def _requeued(queue_name: str, n: int) -> bool:
             size = await get_queue_size(queue_name)
@@ -385,7 +354,7 @@ async def test_publish_event(
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
-        event_routing = amqp_worker.event_routing
+        event_routing = amqp_worker.evt_routing()
         queue = await channel.get_queue(event_routing.queue_name)
         async with queue.iterator(timeout=2.0) as messages:
             async for message in messages:
@@ -423,7 +392,7 @@ async def test_publish_error(
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
-        error_routing = amqp_worker.error_routing
+        error_routing = amqp_worker.res_and_err_routing()
         error_queue = await channel.get_queue(error_routing.queue_name)
         async with error_queue.iterator(timeout=2.0) as messages:
             async for message in messages:
@@ -459,7 +428,7 @@ async def test_publish_result(
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
-        result_routing = amqp_worker.result_routing
+        result_routing = amqp_worker.res_and_err_routing()
         result_queue = await channel.get_queue(result_routing.queue_name)
         async with result_queue.iterator(timeout=2.0) as messages:
             async for message in messages:
