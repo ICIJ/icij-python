@@ -19,8 +19,9 @@ from typing import (
     cast,
 )
 
-from pydantic import BaseSettings, Field
+from pydantic import Field
 
+from icij_common.pydantic_utils import ICIJSettings
 from icij_worker.utils import FromConfig
 from icij_worker.utils.from_config import T
 from icij_worker.utils.imports import VariableNotFound, import_variable
@@ -140,7 +141,7 @@ If your registered class comes from custom code, you'll need to import the\
         raise ValueError("registration inconsistancy")
 
 
-class RegistrableConfig(BaseSettings, RegistrableMixin):
+class RegistrableConfig(ICIJSettings, RegistrableMixin):
     registry_key: ClassVar[str] = Field(const=True, default="name")
 
     @classmethod
