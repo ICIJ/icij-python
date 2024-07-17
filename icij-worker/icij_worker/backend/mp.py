@@ -1,7 +1,6 @@
 import functools
 import logging
 import multiprocessing
-import os
 import signal
 from concurrent.futures import (
     CancelledError,
@@ -93,7 +92,7 @@ def _get_mp_async_runner(
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
     namespace: Optional[str],
-) -> Tuple[ProcessPoolExecutor, List[Tuple[str, Callable]]]:
+) -> Tuple[ProcessPoolExecutor, List[Callable]]:
     # This function is here to avoid code duplication, it will be removed
 
     # Here we set maxtasksperchild to 1. Each worker has a single never ending task
@@ -102,9 +101,6 @@ def _get_mp_async_runner(
     # (cpython bug: https://github.com/python/cpython/pull/8009)
     mp_ctx = multiprocessing.get_context("spawn")
     executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
-    main_process_id = os.getpid()
-    # TODO: make this a bit more informative be for instance adding the child process ID
-    worker_ids = [f"worker-{main_process_id}-{i}" for i in range(n_workers)]
     kwds = {
         "app": app,
         "config": config,
@@ -113,11 +109,8 @@ def _get_mp_async_runner(
         "app_deps_extras": app_deps_extras,
     }
     futures = []
-    for w_id in worker_ids:
-        kwds.update({"worker_id": w_id})
-        futures.append(
-            (w_id, functools.partial(executor.submit, _mp_work_forever, **kwds))
-        )
+    for _ in range(n_workers):
+        futures.append(functools.partial(executor.submit, _mp_work_forever, **kwds))
     return executor, futures
 
 
@@ -174,10 +167,10 @@ def run_workers_with_multiprocessing_cm(
         namespace=namespace,
     )
     futures = set()
-    for w_id, process_runner in worker_runners:
-        logger.info("starting worker %s", w_id)
+    for process_runner in worker_runners:
         future = process_runner()
         futures.add(future)
+    logger.info("started %s workers for app %s", n_workers, app)
     with _handle_executor_termination(executor, futures, True):
         for _ in as_completed(futures):
             pass
@@ -205,11 +198,11 @@ def run_workers_with_multiprocessing(
     )
     setup_main_process_signal_handlers()
     futures = set()
-    for w_id, process_runner in worker_runners:
-        logger.info("starting worker %s", w_id)
+    for process_runner in worker_runners:
         future = process_runner()
         futures.add(future)
         future.add_done_callback(futures.discard)
+    logger.info("started %s workers for app %s", n_workers, app)
     with _handle_executor_termination(executor, futures, True):
         for _ in as_completed(futures):
             pass

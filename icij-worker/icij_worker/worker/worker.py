@@ -4,6 +4,9 @@ import asyncio
 import functools
 import inspect
 import logging
+import os
+import socket
+import threading
 import traceback
 from abc import abstractmethod
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -57,7 +60,7 @@ class Worker(
     def __init__(
         self,
         app: AsyncApp,
-        worker_id: str,
+        worker_id: Optional[str] = None,
         *,
         namespace: Optional[str],
         handle_signals: bool = True,
@@ -67,6 +70,8 @@ class Worker(
         # required, in this case the signal handling mixing will just do nothing
         HandleSignalsMixin.__init__(self, logger, handle_signals=handle_signals)
         self._app = app
+        if worker_id is None:
+            worker_id = self._create_worker_id()
         self._id = worker_id
         self._namespace = namespace
         self._teardown_dependencies = teardown_dependencies
@@ -477,6 +482,12 @@ class Worker(
             self.info("graceful shut down complete")
         else:
             self.info("shutting down the hard way, task might not be re-queued...")
+
+    def _create_worker_id(self) -> str:
+        pid = os.getpid()
+        threadid = threading.get_ident()
+        hostname = socket.gethostname()
+        return f"{self._app.name}-worker-{hostname}-{pid}-{threadid}"
 
 
 def _retrieve_registered_task(
