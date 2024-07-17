@@ -80,7 +80,7 @@ class AMQPMixin:
     def _connection(self) -> AbstractRobustConnection:
         if self._connection_ is None:
             msg = (
-                f"Publisher has no connection, please call"
+                f"{self} has no connection, please call"
                 f" {self.__class__.__aenter__.__name__}"
             )
             raise ValueError(msg)
@@ -90,7 +90,7 @@ class AMQPMixin:
     def _channel(self) -> AbstractRobustChannel:
         if self._channel_ is None:
             msg = (
-                f"Publisher has no channel, please call"
+                f"{self} has no channel, please call"
                 f" {self.__class__.__aenter__.__name__}"
             )
             raise ValueError(msg)
@@ -162,10 +162,12 @@ class AMQPMixin:
             cast(AbstractAsyncContextManager, self._channel)
         )
         dlq_ex = None
-        if declare_exchanges:
-            await self._create_routing(
-                routing, declare_queues=declare_queues, durable_queues=durable_queues
-            )
+        await self._create_routing(
+            routing,
+            declare_exchanges=declare_exchanges,
+            declare_queues=declare_queues,
+            durable_queues=durable_queues,
+        )
         ex = await self._channel.get_exchange(routing.exchange.name, ensure=True)
         queue = await self._channel.get_queue(routing.queue_name, ensure=True)
         kwargs = dict()
@@ -176,18 +178,23 @@ class AMQPMixin:
     async def _create_routing(
         self,
         routing: Routing,
+        declare_exchanges: bool = True,
         declare_queues: bool = True,
         durable_queues: bool = True,
         queue_args: Optional[Dict] = None,
     ):
-        x = await self._channel.declare_exchange(
-            routing.exchange.name, type=routing.exchange.type, durable=True
-        )
+        if declare_exchanges:
+            x = await self._channel.declare_exchange(
+                routing.exchange.name, type=routing.exchange.type, durable=True
+            )
+        else:
+            x = await self._channel.get_exchange(routing.exchange.name, ensure=True)
         if queue_args is not None:
             queue_args = deepcopy(queue_args)
         if routing.dead_letter_routing:
             await self._create_routing(
                 routing.dead_letter_routing,
+                declare_exchanges=declare_exchanges,
                 declare_queues=declare_queues,
                 durable_queues=durable_queues,
             )

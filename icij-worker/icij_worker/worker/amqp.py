@@ -9,7 +9,6 @@ from aio_pika import RobustQueue
 from aio_pika.abc import (
     AbstractIncomingMessage,
     AbstractQueueIterator,
-    AbstractRobustChannel,
     AbstractRobustConnection,
 )
 from pydantic import Field
@@ -104,7 +103,6 @@ class AMQPWorker(Worker, AMQPMixin):
         )
 
         self._publisher: Optional[AMQPPublisher] = None
-        self._channel_: Optional[AbstractRobustChannel] = None
         self._connection_: Optional[AbstractRobustConnection] = None
         self._task_queue_: Optional[RobustQueue] = None
         self._task_queue_iterator: Optional[AbstractQueueIterator] = None

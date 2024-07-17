@@ -6,11 +6,16 @@ from datetime import datetime
 from typing import ClassVar, Dict, List, Optional
 
 import pytest
-from aio_pika import ExchangeType, Message as AMQPMessage, connect_robust
+from aio_pika import (
+    ExchangeType,
+    Message as AMQPMessage,
+    RobustConnection,
+    connect_robust,
+)
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import async_true_after
+from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import (
     AsyncApp,
     Message,
@@ -30,6 +35,7 @@ from icij_worker.tests.conftest import (
     TestableAMQPPublisher,
     get_queue_size,
 )
+from icij_worker.utils.amqp import AMQPMixin
 from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
 
 
@@ -83,11 +89,8 @@ class TestableAMQPWorker(AMQPWorker):
         )
 
 
-@pytest.fixture
-def amqp_worker(
-    test_async_app: AsyncApp, rabbit_mq: str, request
-) -> TestableAMQPWorker:
-    # pylint: disable=unused-argument
+@pytest.fixture(scope="session")
+def amqp_worker_config() -> TestableAMQPWorkerConfig:
     config = TestableAMQPWorkerConfig(
         rabbitmq_host=RABBITMQ_TEST_HOST,
         rabbitmq_port=RABBITMQ_TEST_PORT,
@@ -95,9 +98,21 @@ def amqp_worker(
         rabbitmq_user="guest",
         rabbitmq_password="guest",
     )
+    return config
+
+
+@pytest.fixture
+def amqp_worker(
+    test_async_app: AsyncApp,
+    rabbit_mq: str,
+    amqp_worker_config: TestableAMQPWorkerConfig,
+    request,
+) -> TestableAMQPWorker:
+    # pylint: disable=unused-argument
+
     namespace = getattr(request, "param", None)
     worker = Worker.from_config(
-        config,
+        amqp_worker_config,
         app=test_async_app,
         worker_id="test-worker",
         teardown_dependencies=True,
@@ -458,3 +473,52 @@ async def test_worker_should_share_publisher_channel(amqp_worker: AMQPWorker):
     async with amqp_worker:
         assert amqp_worker._connection is amqp_worker._publisher._connection
         assert amqp_worker._channel is amqp_worker._publisher._channel
+
+
+class _RouteCreator(AMQPMixin):
+    def __init__(self, broker_url: str):
+        super().__init__(broker_url)
+
+    async def __aenter__(self):
+        self._connection_ = await connect_robust(
+            self._broker_url,
+            timeout=self._connection_timeout_s,
+            reconnect_interval=self._reconnection_wait_s,
+            connection_class=RobustConnection,
+        )
+        await self._exit_stack.enter_async_context(self._connection)
+        self._channel_ = await self._connection.channel(
+            publisher_confirms=True, on_return_raises=False
+        )
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
+
+
+async def test_worker_connection_workflow(
+    rabbit_mq: str,  # pylint: disable=unused-argument
+    amqp_worker_config: AMQPWorker,
+    test_async_app: AsyncApp,
+):
+    # pylint: disable=protected-access
+    # Given
+    route_creator = _RouteCreator(rabbit_mq)
+    worker_id = "test-worker"
+    worker = AMQPWorker._from_config(
+        amqp_worker_config, app=test_async_app, worker_id=worker_id, namespace=None
+    )
+    async with route_creator:
+        # These are supposed to be created by the TM
+        await route_creator._create_routing(route_creator.default_task_routing())
+        await route_creator._create_routing(route_creator.evt_routing())
+        await route_creator._create_routing(route_creator.res_and_err_routing())
+        await route_creator.channel.declare_exchange(
+            route_creator.worker_evt_routing().exchange.name, durable=True
+        )
+        # When
+        msg = "Failed to start worker"
+        with fail_if_exception(msg):
+            async with worker:
+                # Ensure that the worker created it own queue
+                expected_queue = "RUNNER_EVENT-test-worker"
+                await route_creator.channel.get_queue(expected_queue, ensure=True)
