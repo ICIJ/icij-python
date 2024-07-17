@@ -113,12 +113,12 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self,
         namespace: Optional[str],
         *,
-        task_type: Optional[str] = None,
+        task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
         return await self._storage.get_tasks(
-            namespace, task_type=task_type, state=state
+            namespace, task_name=task_name, state=state
         )
 
     async def save_task(self, task: Task, namespace: Optional[str]):

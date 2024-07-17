@@ -15,7 +15,6 @@ import aiohttp
 import neo4j
 import pika
 import pytest
-import pytest_asyncio
 from aio_pika.abc import AbstractRobustChannel
 from aiohttp import ClientResponseError, ClientTimeout
 
@@ -124,7 +123,7 @@ def amqp_loggers():
 _NOW = datetime.now()
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest.fixture(scope="function")
 async def populate_tasks(
     neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[Task]:
@@ -132,7 +131,7 @@ async def populate_tasks(
     query_0 = """CREATE (task:_Task:QUEUED {
     namespace: $namespace,
     id: 'task-0', 
-    type: 'hello_world',
+    name: 'hello_world',
     createdAt: $now,
     arguments: '{"greeted": "0"}'
  }) 
@@ -144,7 +143,7 @@ RETURN task"""
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
     namespace: $namespace,
-    type: 'hello_world',
+    name: 'hello_world',
     progress: 66.6,
     createdAt: $now,
     retries: 1,
@@ -158,7 +157,7 @@ RETURN task"""
     return [t_0, t_1]
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest.fixture(scope="function")
 async def populate_cancel_events(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[CancelledTaskEvent]:
@@ -214,13 +213,13 @@ async def neo4j_async_app_driver(
     return neo4j_test_driver
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest.fixture(scope="session")
 async def rabbit_mq_session() -> AsyncGenerator[str, None]:
     await _wipe_rabbit_mq()
     yield _DEFAULT_BROKER_URL
 
 
-@pytest_asyncio.fixture()
+@pytest.fixture()
 async def rabbit_mq() -> AsyncGenerator[str, None]:
     await _wipe_rabbit_mq()
     yield _DEFAULT_BROKER_URL
@@ -360,7 +359,7 @@ class TestableAMQPPublisher(AMQPPublisher):
 def hello_world_task() -> Task:
     task = Task(
         id="some-id",
-        type="hello_world",
+        name="hello_world",
         arguments={"greeted": "world"},
         state=TaskState.CREATED,
         created_at=datetime.now(),

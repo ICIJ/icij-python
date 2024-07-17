@@ -42,7 +42,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="hello_world",
+        name="hello_world",
         created_at=created_at,
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
@@ -60,7 +60,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
 
     expected_task = Task(
         id="some-id",
-        type="hello_world",
+        name="hello_world",
         progress=100,
         created_at=created_at,
         state=TaskState.DONE,
@@ -97,7 +97,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="hello_world_sync",
+        name="hello_world_sync",
         created_at=created_at,
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
@@ -115,7 +115,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
 
     expected_task = Task(
         id="some-id",
-        type="hello_world_sync",
+        name="hello_world_sync",
         progress=100,
         created_at=created_at,
         state=TaskState.DONE,
@@ -152,7 +152,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="recovering_task",
+        name="recovering_task",
         created_at=created_at,
         state=TaskState.CREATED,
     )
@@ -174,7 +174,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     # Then
     expected_task = Task(
         id="some-id",
-        type="recovering_task",
+        name="recovering_task",
         progress=100,
         created_at=created_at,
         state=TaskState.DONE,
@@ -242,7 +242,7 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="fatal_error_task",
+        name="fatal_error_task",
         created_at=created_at,
         state=TaskState.CREATED,
     )
@@ -256,7 +256,7 @@ async def test_task_wrapper_should_handle_non_recoverable_error(
     # Then
     expected_task = Task(
         id="some-id",
-        type="fatal_error_task",
+        name="fatal_error_task",
         progress=0.1,
         created_at=created_at,
         state=TaskState.ERROR,
@@ -306,7 +306,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="i_dont_exist",
+        name="i_dont_exist",
         created_at=created_at,
         state=TaskState.CREATED,
     )
@@ -320,7 +320,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     # Then
     expected_task = Task(
         id="some-id",
-        type="i_dont_exist",
+        name="i_dont_exist",
         progress=0.0,
         created_at=created_at,
         state=TaskState.ERROR,
@@ -369,7 +369,7 @@ async def test_work_once_should_not_run_already_cancelled_task(mock_worker: Mock
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="fatal_error_task",
+        name="fatal_error_task",
         created_at=created_at,
         state=TaskState.CREATED,
     )
@@ -392,7 +392,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
     duration = 10
     task = Task(
         id="some-id",
-        type="sleep_for",
+        name="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
         arguments={"duration": duration},
@@ -440,7 +440,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
     duration = 100
     task = Task(
         id="some-id",
-        type="sleep_for",
+        name="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
         arguments={"duration": duration},
@@ -521,7 +521,7 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="fatal_error_task",
+        name="fatal_error_task",
         created_at=created_at,
         state=TaskState.CREATED,
     )
@@ -541,7 +541,7 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="fatal_error_task",
+        name="fatal_error_task",
         created_at=created_at,
         state=TaskState.CREATED,
     )

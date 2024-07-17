@@ -77,7 +77,7 @@ class FSKeyValueStorage(KeyValueStorage):
         self,
         namespace: Optional[str],
         *,
-        task_type: Optional[str] = None,
+        task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
@@ -89,8 +89,8 @@ class FSKeyValueStorage(KeyValueStorage):
         tasks = self._dbs[self._tasks_db_name].values()
         if namespace is not None:
             tasks = (t for t in tasks if t.get("namespace") == namespace)
-        if task_type is not None:
-            tasks = (t for t in tasks if t["type"] == task_type)
+        if task_name is not None:
+            tasks = (t for t in tasks if t["name"] == task_name)
         if states:
             tasks = (t for t in tasks if t["state"] in states)
         tasks = list(tasks)

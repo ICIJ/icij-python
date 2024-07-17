@@ -405,15 +405,15 @@ class Worker(
 
     @final
     def check_retries(self, retries: int, task: Task):
-        max_retries = self._app.registry[task.type].max_retries
+        max_retries = self._app.registry[task.name].max_retries
         if max_retries is None:
             return
         self.info(
-            '%sTask(id="%s"): try %s/%s', task.type, task.id, retries, max_retries
+            '%sTask(id="%s"): try %s/%s', task.name, task.id, retries, max_retries
         )
         if retries is not None and retries > max_retries:
             raise MaxRetriesExceeded(
-                f"{task.type}(id={task.id}): max retries exceeded > {max_retries}"
+                f"{task.name}(id={task.id}): max retries exceeded > {max_retries}"
             )
 
     @final
@@ -495,10 +495,10 @@ def _retrieve_registered_task(
     task: Task,
     app: AsyncApp,
 ) -> RegisteredTask:
-    registered = app.registry.get(task.type)
+    registered = app.registry.get(task.name)
     if registered is None:
         available_tasks = list(app.registry)
-        raise UnregisteredTask(task.type, available_tasks)
+        raise UnregisteredTask(task.name, available_tasks)
     return registered
 
 

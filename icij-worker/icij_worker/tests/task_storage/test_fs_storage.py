@@ -18,7 +18,7 @@ from icij_worker.tests.conftest import TestableFSKeyValueStorage
 def task_0() -> Task:
     t = Task(
         id="task-0",
-        type="task-type-0",
+        name="task-type-0",
         created_at=datetime.now(),
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
@@ -30,7 +30,7 @@ def task_0() -> Task:
 def task_1() -> Task:
     t = Task(
         id="task-1",
-        type="task-type-1",
+        name="task-type-1",
         created_at=datetime.now(),
         state=TaskState.QUEUED,
         arguments={},
@@ -98,7 +98,7 @@ async def test_save_task_should_not_update_non_updatable_field(
     task = hello_world_task
     await fs_storage.save_task(task)
     updates = {
-        "type": "another-type",
+        "name": "another-type",
         "created_at": datetime.now(),
         "arguments": {"other": "input"},
     }
@@ -164,7 +164,7 @@ async def test_get_task(
 
 
 @pytest.mark.parametrize(
-    "namespace,task_type,state,expected_task",
+    "namespace,task_name,state,expected_task",
     [
         (None, None, None, [task_0(), task_1()]),
         ("some-namespace", None, None, [task_0()]),
@@ -176,14 +176,14 @@ async def test_get_tasks(
     fs_storage: TestableFSKeyValueStorage,
     populate_tasks: List[Task],  # pylint: disable=unused-argument
     namespace: Optional[str],
-    task_type: Optional[str],
+    task_name: Optional[str],
     state: Optional[Union[List[TaskState], TaskState]],
     expected_task: List[Task],
 ):
     # Given
     store = fs_storage
     # When
-    tasks = await store.get_tasks(namespace=namespace, task_type=task_type, state=state)
+    tasks = await store.get_tasks(namespace=namespace, task_name=task_name, state=state)
     # Then
     assert tasks == expected_task
 

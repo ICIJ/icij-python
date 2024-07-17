@@ -171,7 +171,7 @@ async def test_worker_negatively_acknowledge_and_requeue(
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="hello_world",
+        name="hello_world",
         created_at=created_at,
         state=TaskState.CREATED,
     )
@@ -210,7 +210,7 @@ async def test_worker_negatively_acknowledge_and_cancel(
     created_at = datetime.now()
     task = Task(
         id="some-id",
-        type="hello_world",
+        name="hello_world",
         created_at=created_at,
         state=TaskState.CREATED,
     )

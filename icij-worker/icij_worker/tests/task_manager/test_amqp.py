@@ -46,7 +46,7 @@ async def test_task_manager_enqueue(
         "@type": "TaskCreation",
         "id": "some-id",
         "state": "CREATED",
-        "type": "hello_world",
+        "name": "hello_world",
         "arguments": {"greeted": "world"},
     }
     assert task_json == expected_json
@@ -85,7 +85,7 @@ async def test_task_manager_enqueue_with_namespace(
         "@type": "TaskCreation",
         "id": "some-id",
         "state": "CREATED",
-        "type": "hello_world",
+        "name": "hello_world",
         "arguments": {"greeted": "world"},
     }
     assert task_json == expected_json
@@ -131,7 +131,7 @@ async def test_task_manager_should_consume_events(
     channel = task_manager.channel
     task = Task(
         id="task-0",
-        type="task-type-0",
+        name="task-type-0",
         created_at=datetime.now(),
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
