@@ -179,9 +179,9 @@ async def test_task_manager_should_consume_errors(
     message = error.json().encode()
     channel = task_manager.channel
     # When
-    exchange = await channel.get_exchange("exchangeMainErrors")
+    exchange = await channel.get_exchange("exchangeTaskResults")
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
-    await exchange.publish(message, "routingKeyMainErrors")
+    await exchange.publish(message, "routingKeyMainTaskResults")
     # Then
     consume_timeout = 2.0
     msg = f"Failed to consume error in less than {consume_timeout}"

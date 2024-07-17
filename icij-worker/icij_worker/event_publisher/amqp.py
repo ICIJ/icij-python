@@ -56,9 +56,8 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         self._broker_url = broker_url
         self._connection_ = connection
         self._channel_: Optional[RobustChannel] = None
-        self._evt_ex: Optional[AioPikaExchange] = None
-        self._res_ex: Optional[AioPikaExchange] = None
-        self._err_ex: Optional[AioPikaExchange] = None
+        self._evt_x: Optional[AioPikaExchange] = None
+        self._res_and_err_x: Optional[AioPikaExchange] = None
         self._connection_timeout_s = connection_timeout_s
         self._reconnection_wait_s = reconnection_wait_s
         self._exit_stack = AsyncExitStack()
@@ -78,12 +77,12 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
 
     @cached_property
     def _routings(self) -> List[Routing]:
-        return [self.evt_routing(), self.res_routing(), self.err_routing()]
+        return [self.evt_routing(), self.res_and_err_routing()]
 
     async def _publish_event(self, event: TaskEvent):
         await self._publish_message(
             event,
-            exchange=self._evt_ex,
+            exchange=self._evt_x,
             routing_key=self.evt_routing().routing_key,
             mandatory=False,
         )
@@ -91,29 +90,18 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
     publish_event_ = _publish_event
 
     async def publish_result(self, result: TaskResult):
-        # TODO: for now task project information is not leverage on the AMQP side which
-        #  is not very convenient as clients will won't know from which project the
-        #  result is coming. This is limitating as for instance when as result must
-        #  probably be saved in separate DBs in order to avoid project data leaking to
-        #  other projects through the DB
         await self._publish_message(
             result,
-            exchange=self._res_ex,
-            routing_key=self.res_routing().routing_key,
+            exchange=self._res_and_err_x,
+            routing_key=self.res_and_err_routing().routing_key,
             mandatory=True,  # This is important
         )
 
     async def publish_error(self, error: TaskError):
-        # TODO: for now task project information is not leverage on the AMQP side which
-        #  is not very convenient as clients will won't know from which project the
-        #  result is coming. This is limitating as for instance when as result must
-        #  probably be saved in separate DBs in order to avoid project data leaking to
-        #  other projects through the DB
-
         await self._publish_message(
             error,
-            exchange=self._err_ex,
-            routing_key=self.err_routing().routing_key,
+            exchange=self._res_and_err_x,
+            routing_key=self.res_and_err_routing().routing_key,
             mandatory=True,  # This is important
         )
 
@@ -140,36 +128,26 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
     async def _declare_exchanges(self):
         if self._declare_and_bind:
             self.debug("(re)declaring %s...", self.evt_routing().exchange)
-            self._evt_ex = await self._channel.declare_exchange(
+            self._evt_x = await self._channel.declare_exchange(
                 name=self.evt_routing().exchange.name,
                 type=self.evt_routing().exchange.type,
                 timeout=self._connection_timeout_s,
                 durable=True,
             )
-            self.debug("(re)declaring %s...", self.res_routing().exchange)
-            self._res_ex = await self._channel.declare_exchange(
-                name=self.res_routing().exchange.name,
-                type=self.res_routing().exchange.type,
-                timeout=self._connection_timeout_s,
-                durable=True,
-            )
-            self.debug("(re)declaring %s...", self.err_routing().exchange)
-            self._err_ex = await self._channel.declare_exchange(
-                name=self.err_routing().exchange.name,
-                type=self.err_routing().exchange.type,
+            self.debug("(re)declaring %s...", self.res_and_err_routing().exchange)
+            self._res_and_err_x = await self._channel.declare_exchange(
+                name=self.res_and_err_routing().exchange.name,
+                type=self.res_and_err_routing().exchange.type,
                 timeout=self._connection_timeout_s,
                 durable=True,
             )
         else:
             self.debug("publisher will use existing exchanges...")
-            self._evt_ex = await self._channel.get_exchange(
+            self._evt_x = await self._channel.get_exchange(
                 self.evt_routing().exchange.name
             )
-            self._res_ex = await self._channel.get_exchange(
-                self.res_routing().exchange.name
-            )
-            self._res_ex = await self._channel.get_exchange(
-                self.res_routing().exchange.name
+            self._res_and_err_x = await self._channel.get_exchange(
+                self.res_and_err_routing().exchange.name
             )
 
     async def _declare_and_bind_queues(self):

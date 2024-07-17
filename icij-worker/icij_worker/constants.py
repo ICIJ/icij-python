@@ -1,11 +1,3 @@
-AMQP_ERRORS_X = "exchangeMainErrors"
-AMQP_ERRORS_QUEUE = "TASK_ERROR"
-AMQP_ERRORS_ROUTING_KEY = "routingKeyMainErrors"
-
-AMQP_ERRORS_DL_X = "exchangeDLQTaskErrors"
-AMQP_ERRORS_DL_QUEUE = "TASK_ERROR_DLQ"
-AMQP_ERRORS_DL_ROUTING_KEY = "routingKeyDLQTaskErrors"
-
 AMQP_EVENTS_X = "exchangeMainEvents"
 AMQP_EVENTS_QUEUE = "EVENT"
 AMQP_EVENTS_ROUTING_KEY = "routingKeyMainEvents"

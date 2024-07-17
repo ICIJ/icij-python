@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
+from functools import lru_cache
 from typing import ClassVar, Dict, Optional, Type, cast
 
 from aio_pika import RobustQueue
@@ -28,7 +29,7 @@ from icij_worker import (
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
-from icij_worker.namespacing import Namespacing, Routing
+from icij_worker.namespacing import Routing
 from icij_worker.objects import CancelledTaskEvent
 from icij_worker.utils.amqp import AMQPMixin
 from icij_worker.utils.from_config import T
@@ -125,7 +126,7 @@ class AMQPWorker(Worker, AMQPMixin):
         #  make updates if that changes
 
     async def _bind_task_queue(self):
-        self._task_routing = self.task_routing(self._namespacing, self._namespace)
+        self._task_routing = self.task_routing(self._namespace)
         self._task_queue_iterator, _, _ = await self._get_queue_iterator(
             self._task_routing,
             declare_exchanges=self._declare_exchanges,
@@ -210,9 +211,9 @@ class AMQPWorker(Worker, AMQPMixin):
     async def _save_error(self, error: TaskError):
         await self._publisher.publish_error(error)
 
-    @staticmethod
-    def task_routing(namespacing: Namespacing, namespace: Optional[str]) -> Routing:
-        routing = namespacing.amqp_task_routing(namespace)
+    @lru_cache()
+    def task_routing(self, namespace: Optional[str]) -> Routing:
+        routing = self._namespacing.amqp_task_routing(namespace)
         return routing
 
     @property

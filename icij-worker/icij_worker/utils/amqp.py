@@ -16,12 +16,6 @@ from pamqp.commands import Basic
 
 from icij_worker import Message
 from icij_worker.constants import (
-    AMQP_ERRORS_DL_QUEUE,
-    AMQP_ERRORS_DL_ROUTING_KEY,
-    AMQP_ERRORS_DL_X,
-    AMQP_ERRORS_QUEUE,
-    AMQP_ERRORS_ROUTING_KEY,
-    AMQP_ERRORS_X,
     AMQP_EVENTS_QUEUE,
     AMQP_EVENTS_ROUTING_KEY,
     AMQP_EVENTS_X,
@@ -131,7 +125,7 @@ class AMQPMixin:
 
     @classmethod
     @lru_cache(maxsize=1)
-    def res_routing(cls) -> Routing:
+    def res_and_err_routing(cls) -> Routing:
         return Routing(
             exchange=Exchange(name=AMQP_RESULTS_X, type=ExchangeType.DIRECT),
             routing_key=AMQP_RESULTS_ROUTING_KEY,
@@ -140,20 +134,6 @@ class AMQPMixin:
                 exchange=Exchange(name=AMQP_RESULTS_DL_X, type=ExchangeType.DIRECT),
                 routing_key=AMQP_RESULTS_DL_ROUTING_KEY,
                 queue_name=AMQP_RESULTS_DL_QUEUE,
-            ),
-        )
-
-    @classmethod
-    @lru_cache(maxsize=1)
-    def err_routing(cls) -> Routing:
-        return Routing(
-            exchange=Exchange(name=AMQP_ERRORS_X, type=ExchangeType.DIRECT),
-            routing_key=AMQP_ERRORS_ROUTING_KEY,
-            queue_name=AMQP_ERRORS_QUEUE,
-            dead_letter_routing=Routing(
-                exchange=Exchange(name=AMQP_ERRORS_DL_X, type=ExchangeType.DIRECT),
-                routing_key=AMQP_ERRORS_DL_ROUTING_KEY,
-                queue_name=AMQP_ERRORS_DL_QUEUE,
             ),
         )
 
