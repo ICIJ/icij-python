@@ -119,11 +119,10 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
         self._publisher = self._create_publisher()
         await self._exit_stack.enter_async_context(self._publisher)
+        self._connection_ = self._publisher.connection
         self._channel_ = self._publisher.channel
         await self._bind_task_queue()
         await self._bind_cancel_event_queue()
-        # TODO: the publisher is fanout so no need to bind the namespace here,
-        #  make updates if that changes
 
     async def _bind_task_queue(self):
         self._task_routing = self.task_routing(self._namespace)
@@ -216,16 +215,6 @@ class AMQPWorker(Worker, AMQPMixin):
         routing = self._namespacing.amqp_task_routing(namespace)
         return routing
 
-    @property
-    def _connection(self) -> AbstractRobustConnection:
-        if self._connection_ is None:
-            msg = (
-                f"Publisher has no connection, please call"
-                f" {AMQPPublisher.__aenter__.__name__}"
-            )
-            raise ValueError(msg)
-        return self._connection_
-
     def _create_publisher(self) -> AMQPPublisher:
         return AMQPPublisher(
             self._logger,
@@ -233,7 +222,6 @@ class AMQPWorker(Worker, AMQPMixin):
             connection_timeout_s=self._reconnection_wait_s,
             reconnection_wait_s=self._reconnection_wait_s,
             app_id=self._app.name,
-            connection=self._connection,
         )
 
     @classmethod

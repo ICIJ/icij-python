@@ -100,6 +100,10 @@ class AMQPMixin:
     def channel(self) -> AbstractRobustChannel:
         return self._channel
 
+    @property
+    def connection(self) -> AbstractRobustChannel:
+        return self._connection
+
     @classmethod
     @lru_cache(maxsize=1)
     def default_task_routing(cls) -> Routing:

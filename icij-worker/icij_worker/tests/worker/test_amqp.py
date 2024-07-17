@@ -450,3 +450,11 @@ async def test_amqp_config_uri():
     url = config.broker_url
     # Then
     assert url == "amqp://127.0.0.1:5672/%2F"
+
+
+async def test_worker_should_share_publisher_channel(amqp_worker: AMQPWorker):
+    # pylint: disable=protected-access
+    # When
+    async with amqp_worker:
+        assert amqp_worker._connection is amqp_worker._publisher._connection
+        assert amqp_worker._channel is amqp_worker._publisher._channel
