@@ -182,7 +182,7 @@ class Registrable(ICIJModel, RegistrableMixin, ABC):
 class Message(Registrable): ...  # pylint: disable=multiple-statements
 
 
-@Message.register("task")
+@Message.register("TaskCreation")
 class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     type: str
@@ -315,7 +315,7 @@ class StacktraceItem(LowerCamelCaseModel):
     lineno: int
 
 
-@Message.register("task-error")
+@Message.register("TaskError")
 class TaskError(Message, LowerCamelCaseModel, FromTask):
     # This helps to know if an error has already been processed or not
     id: str
@@ -392,7 +392,7 @@ class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, ABC):
         return event
 
 
-@Message.register("error-event")
+@Message.register("ErrorEvent")
 class ErrorEvent(TaskEvent):
     error: TaskError
     retries: Optional[int] = None
@@ -407,7 +407,7 @@ class ErrorEvent(TaskEvent):
         return event
 
 
-@Message.register("progress-event")
+@Message.register("ProgressEvent")
 class ProgressEvent(TaskEvent, FromTask):
     progress: float
     state: Optional[Literal[TaskState.RUNNING, TaskState.DONE]]
@@ -435,7 +435,7 @@ class ProgressEvent(TaskEvent, FromTask):
         return event
 
 
-@Message.register("cancelled-task-event")
+@Message.register("CancelledEvent")
 class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     task_id: str
     requeue: bool
@@ -472,7 +472,7 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
         return cls(**from_task)
 
 
-@Message.register("task-result")
+@Message.register("TaskResult")
 class TaskResult(Message, LowerCamelCaseModel, FromTask):
     # TODO: we could use generics here
     task_id: str

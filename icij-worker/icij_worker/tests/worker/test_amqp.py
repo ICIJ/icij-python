@@ -361,7 +361,7 @@ async def test_publish_event(
                 received_event_json = json.loads(message.body)
                 break
         expected_json = {
-            "@type": "progress-event",
+            "@type": "ProgressEvent",
             "progress": 50.0,
             "taskId": "some-id",
         }
@@ -399,7 +399,7 @@ async def test_publish_error(
                 received_error = json.loads(message.body)
                 break
         expected_json = {
-            "@type": "task-error",
+            "@type": "TaskError",
             "id": "error-id",
             "message": "with_details",
             "name": "someErrorTitle",
@@ -435,7 +435,7 @@ async def test_publish_result(
                 received_result = json.loads(message.body)
                 break
         expected_json = {
-            "@type": "task-result",
+            "@type": "TaskResult",
             "result": "hello world !",
             "taskId": "task-0",
         }
