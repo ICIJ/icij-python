@@ -171,7 +171,10 @@ def run_workers_with_multiprocessing_cm(
     logger.info("started %s workers for app %s", n_workers, app)
     with _handle_executor_termination(executor, futures, True):
         for f in as_completed(futures):
-            f.result()
+            try:
+                f.result()
+            except CancelledError:
+                pass
 
 
 def run_workers_with_multiprocessing(
@@ -203,4 +206,7 @@ def run_workers_with_multiprocessing(
     logger.info("started %s workers for app %s", n_workers, app)
     with _handle_executor_termination(executor, futures, True):
         for f in as_completed(futures):
-            f.result()
+            try:
+                f.result()
+            except CancelledError:
+                pass
