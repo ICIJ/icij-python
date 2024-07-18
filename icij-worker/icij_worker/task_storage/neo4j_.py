@@ -407,6 +407,7 @@ ON (task.{TASK_NAME})
 
 # pylint: disable=line-too-long
 MIGRATIONS = {
+    "add_support_for_async_task_tx": add_support_for_async_task_tx,
     "migrate_task_errors_v0": migrate_task_errors_v0_tx,
     "migrate_cancelled_event_created_at_v0": migrate_cancelled_event_created_at_v0_tx,
     "migrate_add_index_to_task_namespace_v0_tx": migrate_add_index_to_task_namespace_v0_tx,
