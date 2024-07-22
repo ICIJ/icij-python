@@ -1,6 +1,7 @@
 import json
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import itertools
@@ -12,6 +13,7 @@ from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_NODE,
+    TASK_COMPLETED_AT,
     TASK_CREATED_AT,
     TASK_ERROR_DETAIL_DEPRECATED,
     TASK_ERROR_ID,
@@ -31,6 +33,7 @@ from icij_common.neo4j.constants import (
     TASK_NAME,
     TASK_NAMESPACE,
     TASK_NODE,
+    TASK_PROGRESS,
     TASK_RESULT_NODE,
     TASK_RESULT_RESULT,
     TASK_TYPE_DEPRECATED,
@@ -104,7 +107,10 @@ class Neo4jStorage(TaskStorage):
         async with self._task_session(result.task_id) as sess:
             res_str = json.dumps(jsonable_encoder(result.result))
             await sess.execute_write(
-                _save_result_tx, task_id=result.task_id, result=res_str
+                _save_result_tx,
+                task_id=result.task_id,
+                result=res_str,
+                completed_at=result.completed_at,
             )
 
     async def save_error(self, error: TaskError):
@@ -194,12 +200,20 @@ async def _save_task_tx(
     await tx.run(query, taskId=task_id, taskProps=task_props)
 
 
-async def _save_result_tx(tx: neo4j.AsyncTransaction, *, task_id: str, result: str):
-    query = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
+async def _save_result_tx(
+    tx: neo4j.AsyncTransaction, *, task_id: str, result: str, completed_at: datetime
+):
+    query = f"""MATCH (t:{TASK_NODE} {{{TASK_ID}: $taskId }})
+SET t.{TASK_PROGRESS} = 100.0, t.{TASK_COMPLETED_AT} = $completedAt
+WITH t
+CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 MERGE (task)-[:{TASK_HAS_RESULT_TYPE}]->(result:{TASK_RESULT_NODE})
 ON CREATE SET result.{TASK_RESULT_RESULT} = $result
 RETURN task, result"""
-    res = await tx.run(query, taskId=task_id, result=result)
+    labels = [TASK_NODE, TaskState.DONE.value]
+    res = await tx.run(
+        query, taskId=task_id, result=result, labels=labels, completedAt=completed_at
+    )
     records = [rec async for rec in res]
     summary = await res.consume()
     if not records:
@@ -212,10 +226,13 @@ RETURN task, result"""
 async def _save_error_tx(
     tx: neo4j.AsyncTransaction, task_id: str, *, error_props: Dict
 ):
-    query = f"""MATCH (t:{TASK_NODE} {{{TASK_ID}: $taskId }})
-CREATE (error:{TASK_ERROR_NODE} $errorProps)-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
+    query = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
+MERGE (error:{TASK_ERROR_NODE} {{ {TASK_ERROR_ID}: $errorId }} )-[
+    :{TASK_ERROR_OCCURRED_TYPE}]->(task)
+SET error += $errorProps
 RETURN task, error"""
-    res = await tx.run(query, taskId=task_id, errorProps=error_props)
+    error_id = error_props.pop(TASK_ERROR_ID)
+    res = await tx.run(query, taskId=task_id, errorProps=error_props, errorId=error_id)
     try:
         await res.single(strict=True)
     except ResultNotSingleError as e:

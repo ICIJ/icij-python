@@ -31,6 +31,7 @@ from icij_common.pydantic_utils import (
     ICIJModel,
     IgnoreExtraModel,
     jsonable_encoder,
+    safe_copy,
 )
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
@@ -45,9 +46,10 @@ from icij_worker import (
     WorkerConfig,
     WorkerType,
 )
+from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
-from icij_worker.objects import CancelledTaskEvent, TaskUpdate
+from icij_worker.objects import CancelTaskEvent, TaskUpdate
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
@@ -69,6 +71,7 @@ if _has_pytest:
     # TODO: make this one a MockStorage
     class DBMixin(ABC):
         _task_collection = "tasks"
+        _lock_collection = "locks"
         _error_collection = "errors"
         _result_collection = "results"
         _cancel_event_collection = "cancel_events"
@@ -110,9 +113,10 @@ if _has_pytest:
         def fresh_db(cls, db_path: Path):
             db = {
                 cls._task_collection: dict(),
-                cls._error_collection: {},
-                cls._result_collection: {},
-                cls._cancel_event_collection: {},
+                cls._lock_collection: dict(),
+                cls._error_collection: dict(),
+                cls._result_collection: dict(),
+                cls._cancel_event_collection: dict(),
             }
             db_path.write_text(json.dumps(db))
 
@@ -127,6 +131,18 @@ if _has_pytest:
             task_key = self._task_key(task_id=result.task_id, db=db)
             db = self._read()
             db[self._result_collection][task_key] = result
+            task = db[self._task_collection][task_key]
+            ns = task.pop("namespace")
+            task = Task.parse_obj(db[self._task_collection][task_key])
+            update = {
+                "completed_at": result.completed_at,
+                "progress": 100.0,
+                "state": TaskState.DONE.value,
+            }
+            task = safe_copy(task, update=update)
+            task = task.dict(by_alias=True, exclude_unset=True)
+            task["namespace"] = ns
+            db[self._task_collection][task_key] = task
             self._write(db)
 
         async def save_error(self, error: TaskError):
@@ -237,24 +253,36 @@ if _has_pytest:
             elapsed = (datetime.now() - start).total_seconds()
             await asyncio.sleep(s)
             if progress is not None:
-                await progress(elapsed / duration * 100)
+                p = int(elapsed / duration * 100)
+                await progress(p)
 
     @pytest.fixture(scope="session")
     def test_async_app() -> AsyncApp:
         return AsyncApp.load(f"{__name__}.APP")
+
+    @pytest.fixture(scope="session")
+    def app_config() -> AsyncAppConfig:
+        return AsyncAppConfig()
+
+    @pytest.fixture(scope="session")
+    def late_ack_app_config() -> AsyncAppConfig:
+        return AsyncAppConfig(late_ack=True)
+
+    @pytest.fixture(scope="session")
+    def test_async_app_late(late_ack_app_config: AsyncAppConfig) -> AsyncApp:
+        return AsyncApp.load(f"{__name__}.APP", config=late_ack_app_config)
 
     class MockManager(DBMixin, TaskManager):
 
         def __init__(
             self,
             db_path: Path,
-            max_queue_size: int,
+            max_task_queue_size: int,
             app_name: str = "test-app",
             namespacing: Optional[Namespacing] = None,
         ):
             super().__init__(db_path)
-            super(DBMixin, self).__init__(app_name, namespacing)
-            self._max_queue_size = max_queue_size
+            super(DBMixin, self).__init__(app_name, max_task_queue_size, namespacing)
 
         async def _enqueue(self, task: Task, **kwargs) -> Task:
             # pylint: disable=arguments-differ
@@ -269,8 +297,8 @@ if _has_pytest:
             n_queued = sum(
                 1 for t in tasks.values() if t["state"] == TaskState.QUEUED.value
             )
-            if n_queued > self._max_queue_size:
-                raise TaskQueueIsFull(self._max_queue_size)
+            if n_queued > self._max_task_queue_size:
+                raise TaskQueueIsFull(self._max_task_queue_size)
             updated = tasks.get(key)
             if updated is None:
                 raise UnknownTask(task.id)
@@ -284,7 +312,7 @@ if _has_pytest:
         async def _cancel(self, *, task_id: str, requeue: bool):
             db = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db)
-            event = CancelledTaskEvent(
+            event = CancelTaskEvent(
                 task_id=task_id, requeue=requeue, cancelled_at=datetime.now()
             )
             db = self._read()
@@ -369,23 +397,11 @@ if _has_pytest:
                 task = Task.parse_obj(Task.mandatory_fields(event, keep_id=True))
             update = task.resolve_event(event)
             if update is not None:
+                update = {
+                    k: v for k, v in update.dict(by_alias=True).items() if v is not None
+                }
                 task = task.dict(exclude_unset=True, by_alias=True)
                 task["namespace"] = ns
-                update = {
-                    k: v
-                    for k, v in event.dict(by_alias=True, exclude_unset=True).items()
-                    if v is not None
-                }
-                update.pop("@type")
-                if "taskId" in update:
-                    update["id"] = update.pop("taskId")
-                if "taskType" in update:
-                    update["type"] = update.pop("taskType")
-                if "error" in update:
-                    update.pop("error")
-                # The nack is responsible for bumping the retries
-                if "retries" in update:
-                    update.pop("retries")
                 task.update(update)
                 db[self._task_collection][key] = task
                 self._write(db)
@@ -487,83 +503,106 @@ if _has_pytest:
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
-        async def _acknowledge(self, task: Task, completed_at: datetime):
-            db = self._get_task_db_name(task.id)
-            key = self._task_key(task.id, db)
+        async def _acknowledge(self, task: Task):
+            db_name = self._get_task_db_name(task.id)
+            key = self._task_key(task.id, db_name)
             db = self._read()
-            tasks = db[self._task_collection]
             try:
-                saved_task = deepcopy(tasks[key])
+                db[self._lock_collection].pop(key)
             except KeyError as e:
                 raise UnknownTask(task.id) from e
-            ns = saved_task.pop("namespace")
-            update = {
-                "completedAt": completed_at,
-                "state": TaskState.DONE,
-                "progress": 100.0,
-                "namespace": ns,
-            }
-            saved_task.update(update)
-            tasks[key] = saved_task
             self._write(db)
 
-        async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
-            db_name = self._get_task_db_name(nacked.id)
-            key = self._task_key(nacked.id, db_name)
-            db = self._read()
-            tasks = db[self._task_collection]
-            if cancelled:
-                # Clean cancellation events
-                db[self._cancel_event_collection].pop(key)
-            update = {"state": nacked.state}
+        async def _negatively_acknowledge(self, nacked: Task):
             if nacked.state is TaskState.QUEUED:
-                update["progress"] = nacked.progress
-                if not cancelled:
-                    update["retries"] = nacked.retries
-            if nacked.cancelled_at:
-                update["cancelledAt"] = nacked.cancelled_at
-            tasks[key].update(update)
+                placeholder = True
+                await self._requeue(nacked, placeholder)
+            elif nacked.state is TaskState.ERROR:
+                db_name = self._get_task_db_name(nacked.id)
+                key = self._task_key(nacked.id, db_name)
+                db = self._read()
+                update = TaskUpdate(state=TaskState.ERROR).dict(
+                    by_alias=True, exclude_unset=True
+                )
+                task = db[self._task_collection][key]
+                task.update(update)
+                db[self._lock_collection].pop(key)
+                self._write(db)
+            elif nacked.state is TaskState.CANCELLED:
+                db_name = self._get_task_db_name(nacked.id)
+                key = self._task_key(nacked.id, db_name)
+                db = self._read()
+                db[self._lock_collection].pop(key)
+                self._write(db)
+            else:
+                msg = (
+                    f"expected {TaskState.QUEUED} or {TaskState.ERROR},"
+                    f" found {nacked.state}"
+                )
+                raise ValueError(msg)
+
+        async def _requeue(self, task: Task, acknowledge: bool):
+            db_name = self._get_task_db_name(task.id)
+            key = self._task_key(task.id, db_name)
+            db = self._read()
+            update = TaskUpdate(
+                progress=0.0, state=TaskState.QUEUED, retries=task.retries
+            ).dict(by_alias=True, exclude_unset=True)
+            db[self._task_collection][key].update(update)
+            db[self._lock_collection].pop(key, None)
             self._write(db)
 
         async def _consume(self) -> Task:
-            ns_key = None
-            if self._namespace is not None:
-                ns_key = self._namespacing.namespace_to_db_key(self._namespace)
-            return await self._consume_(
+            task = await self._consume_(
                 self._task_collection,
                 Task,
-                ns_key=ns_key,
+                namespace=self._namespace,
                 select=lambda t: t.state is TaskState.QUEUED,
                 order=lambda t: t.created_at,
             )
+            db = self._read()
+            db_name = self._get_task_db_name(task.id)
+            key = self._task_key(task.id, db_name)
+            db[self._lock_collection][key] = self._id
+            self._write(db)
+            return task
 
-        async def _consume_cancelled(self) -> CancelledTaskEvent:
-            ns_key = None
-            if self._namespace is not None:
-                ns_key = self._namespacing.namespace_to_db_key(self._namespace)
-            return await self._consume_(
+        async def _consume_cancelled(self) -> CancelTaskEvent:
+            event = await self._consume_(
                 self._cancel_event_collection,
-                CancelledTaskEvent,
-                ns_key=ns_key,
+                CancelTaskEvent,
+                namespace=self._namespace,
                 order=lambda e: e.cancelled_at,
             )
+            db = self._read()
+            db_name = self._get_task_db_name(event.task_id)
+            key = self._task_key(event.task_id, db_name)
+            db[self._cancel_event_collection].pop(key)
+            self._write(db)
+            return event
 
         async def _consume_(
             self,
             collection: str,
             consumed_cls: Type[R],
-            ns_key: Optional[str] = None,
+            namespace: Optional[str] = None,
             select: Optional[Callable[[R], bool]] = None,
             order: Optional[Callable[[R], Any]] = None,
         ) -> R:
             while "i'm waiting until I find something interesting":
                 db = self._read()
                 selected = deepcopy(db[collection])
-                if ns_key is not None:
+                if collection == self._task_collection:
+                    selected = {
+                        k: v
+                        for k, v in selected.items()
+                        if k not in db[self._lock_collection]
+                    }
+                if namespace is not None:
                     selected = [
                         (k, t)
                         for k, t in selected.items()
-                        if t.get("namespace") == ns_key
+                        if t.get("namespace") == namespace
                     ]
                 else:
                     selected = selected.items()

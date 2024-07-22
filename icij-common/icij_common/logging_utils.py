@@ -43,6 +43,10 @@ class LogWithNameMixin(ABC):
         self._logger.error(msg, *args, **kwargs)
 
     @final
+    def exception(self, msg, *args, **kwargs):
+        self._logger.exception(msg, *args, **kwargs)
+
+    @final
     def warning(self, msg, *args, **kwargs):
         self._logger.warning(msg, *args, **kwargs)
 

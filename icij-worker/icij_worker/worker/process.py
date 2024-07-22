@@ -30,7 +30,7 @@ class HandleSignalsMixin(LogWithNameMixin, ABC):
     async def _signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
         async with self._cancellation_lock:
             self._worker_cancelled = True
-            self.error("received %s", signal_name)
+            self.exception("received %s", signal_name)
             self._graceful_shutdown = graceful
             if self._work_forever_task is not None:
                 self.info("cancelling worker loop...")

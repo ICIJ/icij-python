@@ -1,15 +1,25 @@
 from abc import ABC, abstractmethod
 from typing import Optional, final
 
-from icij_worker import Task, TaskError, TaskResult, TaskState
+from icij_worker import Task, TaskState
 from icij_worker.exceptions import TaskAlreadyExists, UnknownTask
 from icij_worker.namespacing import Namespacing
 from icij_worker.task_storage import TaskStorage
 
 
+# TODO: make this one more than a simple ABC/interface and implement some logic in
+# it so that the codebase is testable more easily (just like the Worker class). For
+# instance there could be a share consume_results_and_errors, consume_event, in order
+# to factorize the ways they are saved/recorded
 class TaskManager(TaskStorage, ABC):
-    def __init__(self, app_name: str, namespacing: Optional[Namespacing] = None):
+    def __init__(
+        self,
+        app_name: str,
+        max_task_queue_size: Optional[int],
+        namespacing: Optional[Namespacing] = None,
+    ):
         self._app_name = app_name
+        self._max_task_queue_size = max_task_queue_size
         if namespacing is None:
             namespacing = Namespacing()
         self._namespacing = namespacing
@@ -33,7 +43,7 @@ class TaskManager(TaskStorage, ABC):
         return queued
 
     @final
-    async def cancel(self, *, task_id: str, requeue: bool):
+    async def cancel(self, task_id: str, *, requeue: bool):
         await self._cancel(task_id=task_id, requeue=requeue)
 
     @abstractmethod

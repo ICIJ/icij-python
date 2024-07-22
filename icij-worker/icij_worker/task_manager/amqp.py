@@ -7,8 +7,12 @@ from datetime import datetime
 from functools import cached_property
 from typing import Dict, List, Optional, TypeVar, Union, cast
 
-from aio_pika import Exchange as AioPikaExchange, connect_robust
-from aio_pika.abc import AbstractIncomingMessage, AbstractQueueIterator
+from aio_pika import connect_robust
+from aio_pika.abc import (
+    AbstractExchange,
+    AbstractIncomingMessage,
+    AbstractQueueIterator,
+)
 from aiormq import DeliveryError
 
 from icij_common.pydantic_utils import safe_copy
@@ -17,7 +21,7 @@ from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
 from icij_worker.objects import (
-    CancelledTaskEvent,
+    CancelTaskEvent,
     Message,
     TaskError,
     TaskEvent,
@@ -39,32 +43,29 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self,
         task_store: TaskStorage,
         app_name: str,
+        max_task_queue_size: Optional[int] = None,
         namespacing: Optional[Namespacing] = None,
         *,
         broker_url: str,
-        max_task_queue_length: int = int(1e6),
         connection_timeout_s: Optional[float] = None,
         reconnection_wait_s: Optional[float] = None,
         inactive_after_s: Optional[float] = None,
     ):
-        super().__init__(app_name, namespacing=namespacing)
+        super().__init__(app_name, max_task_queue_size, namespacing=namespacing)
         super(TaskManager, self).__init__(
             broker_url,
             connection_timeout_s=connection_timeout_s,
             reconnection_wait_s=reconnection_wait_s,
             inactive_after_s=inactive_after_s,
         )
-        self._max_task_queue_length = max_task_queue_length
         self._storage = task_store
 
         self._loop = asyncio.get_event_loop()
         self._loops = set()
 
-        self._task_queues = set()
-
-        self._task_x: Optional[AioPikaExchange] = None
-        self._worker_evt_x: Optional[AioPikaExchange] = None
-        self._res_and_err_x: Optional[AioPikaExchange] = None
+        self._task_x: Optional[AbstractExchange] = None
+        self._worker_evt_x: Optional[AbstractExchange] = None
+        self._res_and_err_x: Optional[AbstractExchange] = None
 
         self._evt_messages_it: Optional[AbstractQueueIterator] = None
         self._err_messages_it: Optional[AbstractQueueIterator] = None
@@ -142,7 +143,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
                 mandatory=True,  # This is important
             )
         except DeliveryError as e:
-            raise TaskQueueIsFull(self._max_task_queue_length) from e
+            raise TaskQueueIsFull(self._max_task_queue_size) from e
         # TODO: all of this wouldn't be need if the task manager would return the task
         #  ID instead of the task state
         queued = safe_copy(task, update={"state": TaskState.QUEUED})
@@ -150,7 +151,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def _cancel(self, *, task_id: str, requeue: bool):
         cancelled_at = datetime.now()
-        cancel_event = CancelledTaskEvent(
+        cancel_event = CancelTaskEvent(
             task_id=task_id, requeue=requeue, cancelled_at=cancelled_at
         )
         # TODO: for now cancellation is not namespaced, workers from other namespace
@@ -183,10 +184,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         task_routing = self.default_task_routing()
         logger.debug("(re)declaring routing %s...", task_routing)
         task_queue_args = None
-        if self._max_task_queue_length is not None:
+        if self._max_task_queue_size is not None:
             task_queue_args = {
                 "x-overflow": "reject-publish",
-                "x-max-length": self._max_task_queue_length,
+                "x-max-length": self._max_task_queue_size,
             }
         await self._create_routing(
             task_routing,
@@ -203,7 +204,13 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
                 declare_queues=True,
                 durable_queues=True,
             )
+        await self._create_routing(
+            AMQPMixin.worker_evt_routing(), declare_exchanges=True, declare_queues=False
+        )
         self._task_x = await self._channel.get_exchange(
+            self.default_task_routing().exchange.name, ensure=True
+        )
+        self._evt_messages_it = await self._channel.get_exchange(
             self.default_task_routing().exchange.name, ensure=True
         )
         self._res_and_err_x = await self._channel.get_exchange(
@@ -221,31 +228,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         res_and_err_routing = AMQPMixin.res_and_err_routing()
         return [events_routing, worker_events_routing, res_and_err_routing]
 
-    async def _ensure_task_queue(self, namespace: Optional[str]):
-        if namespace not in self._task_queues:
-            self._task_queues.add(namespace)
-            routing = self._namespacing.amqp_task_routing(namespace)
-            logger.debug(
-                "(re)declaring queue %s for namespace %s", routing.queue_name, namespace
-            )
-            task_routing = self.default_task_routing()
-            dlx_name = task_routing.dead_letter_routing.exchange.name
-            dl_routing_key = task_routing.dead_letter_routing.routing_key
-            arguments = {
-                "x-overflow": "reject-publish",
-                "x-max-length": self._max_task_queue_length,
-                "x-dead-letter-exchange": dlx_name,
-                "x-dead-letter-routing-key": dl_routing_key,
-            }
-            queue = await self._channel.declare_queue(
-                routing.queue_name, durable=True, arguments=arguments
-            )
-            logger.debug("binding queues %s...", routing.queue_name)
-            await queue.bind(routing.exchange.name, routing.routing_key)
-
     async def _consume_events(self):
         while True:
             message: AbstractIncomingMessage = await self._evt_messages_it.__anext__()
+            await message.ack()
             event = cast(TaskEvent, Message.parse_raw(message.body))
             logger.debug("saving event for task: %s", event.task_id)
             await self._storage.save_event(event)
@@ -255,6 +241,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             message: AbstractIncomingMessage = (
                 await self._res_and_err_messages_it.__anext__()
             )
+            await message.ack()
             msg = Message.parse_raw(message.body)
             if isinstance(msg, TaskResult):
                 logger.debug("saving result for task: %s", msg.task_id)

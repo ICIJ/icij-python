@@ -3,7 +3,10 @@ from copy import deepcopy
 from functools import lru_cache
 from typing import Dict, Optional, Tuple, cast
 
-from aio_pika import DeliveryMode, Message as AioPikaMessage
+from aio_pika import (
+    DeliveryMode,
+    Message as AioPikaMessage,
+)
 from aio_pika.abc import (
     AbstractExchange,
     AbstractQueueIterator,
@@ -35,12 +38,15 @@ from icij_worker.constants import (
     AMQP_WORKER_EVENTS_ROUTING_KEY,
     AMQP_WORKER_EVENTS_X,
 )
-from icij_worker.namespacing import Exchange, Routing
+from icij_worker.namespacing import Exchange, Namespacing, Routing
 
 
 class AMQPMixin:
     _app_id: str
     _channel_: AbstractRobustChannel
+    _namespacing: Namespacing
+    _task_x: AbstractExchange
+    _max_task_queue_size: Optional[int]
 
     def __init__(
         self,
@@ -56,6 +62,7 @@ class AMQPMixin:
         self._inactive_after_s = inactive_after_s
         self._connection_: Optional[AbstractRobustConnection] = None
         self._exit_stack = AsyncExitStack()
+        self._task_queues = set()
 
     async def _publish_message(
         self,
@@ -150,6 +157,25 @@ class AMQPMixin:
             queue_name=AMQP_WORKER_EVENTS_QUEUE,
         )
 
+    async def _ensure_task_queue(self, namespace: Optional[str]):
+        if namespace not in self._task_queues:
+            self._task_queues.add(namespace)
+            routing = self._namespacing.amqp_task_routing(namespace)
+            task_routing = self.default_task_routing()
+            dlx_name = task_routing.dead_letter_routing.exchange.name
+            dl_routing_key = task_routing.dead_letter_routing.routing_key
+            arguments = {
+                "x-dead-letter-exchange": dlx_name,
+                "x-dead-letter-routing-key": dl_routing_key,
+            }
+            if self._max_task_queue_size is not None:
+                arguments["x-max-length"] = self._max_task_queue_size
+                arguments["x-overflow"] = "reject-publish"
+            queue = await self._channel.declare_queue(
+                routing.queue_name, durable=True, arguments=arguments
+            )
+            await queue.bind(routing.exchange.name, routing.routing_key)
+
     async def _get_queue_iterator(
         self,
         routing: Routing,
@@ -157,6 +183,7 @@ class AMQPMixin:
         declare_exchanges: bool,
         declare_queues: bool = True,
         durable_queues: bool = True,
+        queue_args: Optional[Dict] = None,
     ) -> Tuple[AbstractQueueIterator, AbstractExchange, Optional[AbstractExchange]]:
         await self._exit_stack.enter_async_context(
             cast(AbstractAsyncContextManager, self._channel)
@@ -167,6 +194,7 @@ class AMQPMixin:
             declare_exchanges=declare_exchanges,
             declare_queues=declare_queues,
             durable_queues=durable_queues,
+            queue_args=queue_args,
         )
         ex = await self._channel.get_exchange(routing.exchange.name, ensure=True)
         queue = await self._channel.get_queue(routing.queue_name, ensure=True)

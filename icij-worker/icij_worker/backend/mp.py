@@ -60,7 +60,7 @@ def _mp_work_forever(
         )
     except BaseException as e:
         msg = "Error occurred during app loading or dependency injection: %s"
-        logger.error(msg, e, exc_info=True)
+        logger.exception(msg, e)
         raise e
     try:
         worker.work_forever()
@@ -71,7 +71,7 @@ def _mp_work_forever(
 
 
 def signal_handler(sig_num, *_):
-    logger.error(
+    logger.exception(
         "received %s, triggering process executor shutdown !",
         signal.Signals(sig_num).name,
     )

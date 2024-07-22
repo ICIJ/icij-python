@@ -7,14 +7,21 @@ from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
 from pydantic import Field
 
-from icij_common.pydantic_utils import ICIJModel
+from icij_common.pydantic_utils import ICIJModel, ICIJSettings
 from icij_worker.namespacing import Namespacing
 from icij_worker.typing_ import Dependency
 from icij_worker.utils import run_deps
 from icij_worker.utils.imports import import_variable
-from icij_worker.worker.config import AsyncAppConfig
 
 logger = logging.getLogger(__name__)
+
+
+class AsyncAppConfig(ICIJSettings):
+    late_ack: bool = False
+    max_task_queue_size: Optional[int] = None
+
+    class Config:
+        env_prefix = "ICIJ_APP_"
 
 
 class RegisteredTask(ICIJModel):
@@ -47,6 +54,12 @@ class AsyncApp:
     @property
     def config(self) -> AsyncAppConfig:
         return self._config
+
+    def with_config(self, value: AsyncAppConfig) -> AsyncApp:
+        if not isinstance(value, AsyncAppConfig):
+            raise TypeError(f"Expected {AsyncAppConfig.__name__}, got {value}")
+        self._config = value
+        return self
 
     @property
     def registry(self) -> Dict[str, RegisteredTask]:
@@ -115,8 +128,10 @@ class AsyncApp:
         return wrapped
 
     @classmethod
-    def load(cls, app_path: str) -> AsyncApp:
+    def load(cls, app_path: str, config: Optional[AsyncAppConfig] = None) -> AsyncApp:
         app = import_variable(app_path)
+        if config is not None:
+            app.with_config(config)
         return app
 
     def filter_tasks(self, namespace: str) -> AsyncApp:

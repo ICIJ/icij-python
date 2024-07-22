@@ -201,7 +201,9 @@ async def test_migrate_task_inputs_to_arguments_v0_tx(
 ):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager("test-app", neo4j_test_driver, max_queue_size=10)
+    task_manager = Neo4JTaskManager(
+        "test-app", neo4j_test_driver, max_task_queue_size=10
+    )
     driver = task_manager.driver
     # When
     async with driver.session() as session:
@@ -246,7 +248,7 @@ async def test_migrate_task_type_to_name_v0_tx(
 ):
     # Given
     driver = neo4j_test_driver
-    task_manager = Neo4JTaskManager("test-app", driver, max_queue_size=10)
+    task_manager = Neo4JTaskManager("test-app", driver, max_task_queue_size=10)
     create_legacy_index = f"""CREATE INDEX task_type_index
 FOR (task:_Task) 
 ON (task.{TASK_TYPE_DEPRECATED})"""

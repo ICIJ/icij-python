@@ -31,13 +31,17 @@ def test_app() -> AsyncApp:
     return make_app()
 
 
-@pytest.fixture(scope="function")
-def mock_worker(test_async_app: AsyncApp, mock_db: Path, request) -> MockWorker:
-    namespace = getattr(request, "param", None)
+@pytest.fixture(
+    scope="function",
+    params=[{"app": "test_async_app"}, {"app": "test_async_app_late"}],
+)
+def mock_worker(mock_db: Path, request) -> MockWorker:
+    param = getattr(request, "param", dict())
+    app = request.getfixturevalue(param.get("app"))
     worker = MockWorker(
-        test_async_app,
+        app,
         "test-worker",
-        namespace=namespace,
+        namespace=param.get("namespace"),
         db_path=mock_db,
         task_queue_poll_interval_s=0.1,
         teardown_dependencies=False,

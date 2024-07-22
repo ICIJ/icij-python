@@ -6,17 +6,13 @@ from datetime import datetime
 from typing import ClassVar, Dict, List, Optional
 
 import pytest
-from aio_pika import (
-    ExchangeType,
-    Message as AMQPMessage,
-    RobustConnection,
-    connect_robust,
-)
+from aio_pika import Message as AMQPMessage, RobustConnection, connect_robust
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import (
+    AMQPTaskManager,
     AsyncApp,
     Message,
     Task,
@@ -27,7 +23,7 @@ from icij_worker import (
     WorkerConfig,
 )
 from icij_worker.namespacing import Namespacing
-from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem
+from icij_worker.objects import CancelTaskEvent, ProgressEvent, StacktraceItem
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     RABBITMQ_TEST_HOST,
@@ -76,8 +72,12 @@ class TestableAMQPWorker(AMQPWorker):
         return self._publisher
 
     @property
-    def cancelled(self) -> Dict[str, CancelledTaskEvent]:
-        return self._cancelled
+    def cancelled(self) -> Dict[str, CancelTaskEvent]:
+        return self._cancel_asked
+
+    @property
+    def late_ack(self) -> bool:
+        return self._late_ack
 
     def _create_publisher(self):
         return TestableAMQPPublisher(
@@ -101,22 +101,20 @@ def amqp_worker_config() -> TestableAMQPWorkerConfig:
     return config
 
 
-@pytest.fixture
+@pytest.fixture(params=[{"app": "test_async_app_late"}, {"app": "test_async_app"}])
 def amqp_worker(
-    test_async_app: AsyncApp,
-    rabbit_mq: str,
-    amqp_worker_config: TestableAMQPWorkerConfig,
-    request,
+    rabbit_mq: str, amqp_worker_config: TestableAMQPWorkerConfig, request
 ) -> TestableAMQPWorker:
     # pylint: disable=unused-argument
-
-    namespace = getattr(request, "param", None)
+    params = getattr(request, "param", dict())
+    params = params or dict()
+    app = request.getfixturevalue(params.get("app", "test_async_app"))
     worker = Worker.from_config(
         amqp_worker_config,
-        app=test_async_app,
+        app=app,
         worker_id="test-worker",
         teardown_dependencies=True,
-        namespace=namespace,
+        namespace=params.get("namespace"),
     )
     return worker
 
@@ -164,22 +162,6 @@ async def populate_tasks(rabbit_mq: str, request):
     return tasks
 
 
-async def _publish_cancel_event(rabbit_mq: str, task_id: str):
-    connection = await connect_robust(rabbit_mq)
-    cancel_event_routing = TestableAMQPWorker.worker_evt_routing()
-    event = CancelledTaskEvent(
-        task_id=task_id, cancelled_at=datetime.now(), requeue=True
-    )
-    async with connection:
-        channel = await connection.channel()
-        cancel_event_ex = await channel.declare_exchange(
-            cancel_event_routing.exchange.name, durable=True, type=ExchangeType.FANOUT
-        )
-        msg = AMQPMessage(event.json().encode())
-        await cancel_event_ex.publish(msg, cancel_event_routing.routing_key)
-    return event
-
-
 async def test_worker_work_forever(
     populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
@@ -205,13 +187,21 @@ async def test_worker_work_forever(
             except asyncio.TimeoutError:
                 pytest.fail(f"Failed to receive result in less than {receive_timeout}")
         task = populate_tasks[0]
-        expected_result = TaskResult(task_id=task.id, result="Hello world !")
+        expected_result = TaskResult(
+            task_id=task.id, result="Hello world !", completed_at=result.completed_at
+        )
         assert result == expected_result
 
 
 @pytest.mark.parametrize(
     "populate_tasks,amqp_worker",
-    [("some-ignored-namespace", "some-ignored-namespace"), (None, None)],
+    [
+        (
+            "some-ignored-namespace",
+            {"namespace": "some-ignored-namespace"},
+        ),
+        (None, None),
+    ],
     indirect=["populate_tasks", "amqp_worker"],
 )
 async def test_worker_consume_task(
@@ -233,7 +223,7 @@ async def test_worker_consume_task(
 
 @pytest.mark.parametrize(
     "populate_tasks,amqp_worker",
-    [("some-namespace", None), (None, "some-namespace")],
+    [("some-namespace", None), (None, {"namespace": "some-namespace"})],
     indirect=["populate_tasks", "amqp_worker"],
 )
 async def test_should_not_consume_task_from_other_namespace(
@@ -250,50 +240,63 @@ async def test_should_not_consume_task_from_other_namespace(
             pytest.fail("namespaced task was consumed!")
 
 
+@pytest.mark.parametrize("requeue", [True, False])
 async def test_worker_consume_cancel_events(
-    amqp_worker: TestableAMQPWorker, rabbit_mq: str
+    test_amqp_task_manager: AMQPTaskManager,
+    amqp_worker: TestableAMQPWorker,
+    rabbit_mq: str,
+    requeue: bool,
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
+    task_manager = test_amqp_task_manager
+    amqp_worker._declare_exchanges = False
+    created_at = datetime.now()
+    duration = 100
+    task = Task(
+        id="some-id",
+        name="sleep_for",
+        created_at=created_at,
+        state=TaskState.CREATED,
+        arguments={"duration": duration},
+    )
+    after_s = 5.0
+
+    async def _assert_has_state(state: TaskState) -> bool:
+        saved = await task_manager.get_task(task_id=task.id)
+        return saved.state is state
+
     async with amqp_worker:
-        assert not amqp_worker.cancelled
+        await task_manager.enqueue(task, None)
+        await amqp_worker.consume()
+        failure = f"failed to consume task event in less than {after_s}s"
+        is_running = functools.partial(_assert_has_state, TaskState.RUNNING)
+        assert await async_true_after(is_running, after_s=after_s), failure
         # When
-        expected_event = await _publish_cancel_event(rabbit_mq, task_id="some-id")
+        await task_manager.cancel(task.id, requeue=requeue)
 
         # Then
-        cancel_timeout = 2.0
-        failure = f"failed to consume cancel event in less than {cancel_timeout}s"
+        failure = f"failed to consume cancel event in less than {after_s}s"
 
         async def _received_event() -> bool:
             return bool(amqp_worker.cancelled)
 
-        assert await async_true_after(_received_event, after_s=cancel_timeout), failure
+        assert await async_true_after(_received_event, after_s=after_s), failure
         assert len(amqp_worker.cancelled) == 1
         received_event = amqp_worker.cancelled.pop("some-id")
+        expected_event = CancelTaskEvent(
+            task_id="some-id", requeue=requeue, cancelled_at=datetime.now()
+        ).dict()
+        assert isinstance(received_event.cancelled_at, datetime)
+        received_event = received_event.dict()
+        received_event.pop("cancelled_at")
+        expected_event.pop("cancelled_at")
         assert received_event == expected_event
 
 
-async def test_worker_negatively_acknowledge(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
-):
-    # pylint: disable=protected-access,unused-argument
-    # When
-    async with amqp_worker:
-        # Then
-        task = await amqp_worker.consume()
-        await amqp_worker.negatively_acknowledge(task, requeue=False)
-
-        dlq_name = amqp_worker.task_routing(None).dead_letter_routing.queue_name
-
-        async def _dlqueued() -> bool:
-            size = await get_queue_size(dlq_name)
-            return bool(size)
-
-        assert await async_true_after(_dlqueued, after_s=10.0)
-
-
-async def test_worker_negatively_acknowledge_and_requeue(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
+@pytest.mark.parametrize("is_error", [True, False])
+async def test_worker_requeue(
+    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, is_error: bool
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
@@ -301,51 +304,61 @@ async def test_worker_negatively_acknowledge_and_requeue(
     # When
     async with amqp_worker:
         # Then
-        task = await amqp_worker.consume()
-        await amqp_worker.negatively_acknowledge(task, requeue=True)
+        first_consumed = await amqp_worker.consume()
+        await amqp_worker.requeue(first_consumed, is_error=is_error)
         # Check that we can poll the task again
         task_ids = set()
         for _ in range(n_tasks):
             consume_task = asyncio.create_task(amqp_worker.consume())
-            consume_timeout = 20.0
+            consume_timeout = 5.0
             done, _ = await asyncio.wait([consume_task], timeout=consume_timeout)
             if not done:
                 pytest.fail(f"failed to consume task in less than {consume_timeout}s")
             task = consume_task.result()
+            assert task.state == TaskState.RUNNING
+            assert task.progress == 0.0
+            if task.id == first_consumed.id:
+                expected_retries = 1 if is_error else None
+            else:
+                expected_retries = None
+            assert task.retries == expected_retries
             task_ids.add(task.id)
             # Ack to make sure the broker distribute a new message to the available
             # worker
             await amqp_worker.acknowledge(task)
-        assert task.id in task_ids
+            amqp_worker._current = None
+        assert first_consumed.id in task_ids
 
 
-@pytest.mark.parametrize("requeue", [True, False])
-async def test_worker_negatively_acknowledge_and_cancel(
-    populate_tasks: List[Task],
-    amqp_worker: TestableAMQPWorker,
-    rabbit_mq: str,
-    requeue: bool,
+@pytest.mark.parametrize(
+    "amqp_worker,is_error",
+    [({"app": "test_async_app_late"}, False), ({"app": "test_async_app_late"}, True)],
+    indirect=["amqp_worker"],
+)
+async def test_worker_negatively_acknowledge(
+    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, is_error: bool
 ):
     # pylint: disable=protected-access,unused-argument
-    # Given
     # When
     async with amqp_worker:
         # Then
         task = await amqp_worker.consume()
-        await amqp_worker.negatively_acknowledge(task, requeue=requeue, cancel=True)
+        if not amqp_worker.late_ack:
+            await amqp_worker.acknowledge(task)
+        await amqp_worker._negatively_acknowledge_(task, is_error=is_error)
         task_routing = amqp_worker.task_routing(None)
 
-        async def _requeued(queue_name: str, n: int) -> bool:
+        async def _assert_has_size(queue_name: str, n: int) -> bool:
             size = await get_queue_size(queue_name)
             return size == n
 
-        if requeue:
-            expected = functools.partial(
-                _requeued, queue_name=task_routing.queue_name, n=2
-            )
-        else:
+        if is_error and amqp_worker.late_ack:
             dlq_name = task_routing.dead_letter_routing.queue_name
-            expected = functools.partial(_requeued, queue_name=dlq_name, n=1)
+            expected = functools.partial(_assert_has_size, queue_name=dlq_name, n=1)
+        else:
+            expected = functools.partial(
+                _assert_has_size, queue_name=task_routing.queue_name, n=2
+            )
         timeout = 5  # Stats can take long to refresh...
         failure = f"Failed to requeue job in less than {timeout} seconds."
         assert await async_true_after(expected, after_s=timeout), failure
@@ -435,7 +448,10 @@ async def test_publish_result(
     # Given
     broker_url = rabbit_mq
     task = populate_tasks[0]
-    result = TaskResult(task_id=task.id, result="hello world !")
+    completed_at = datetime.now()
+    result = TaskResult(
+        task_id=task.id, result="hello world !", completed_at=completed_at
+    )
 
     # When
     async with amqp_worker:
@@ -452,6 +468,7 @@ async def test_publish_result(
         expected_json = {
             "@type": "TaskResult",
             "result": "hello world !",
+            "completedAt": completed_at.isoformat(),
             "taskId": "task-0",
         }
         assert received_result == expected_json
@@ -467,12 +484,11 @@ async def test_amqp_config_uri():
     assert url == "amqp://127.0.0.1:5672/%2F"
 
 
-async def test_worker_should_share_publisher_channel(amqp_worker: AMQPWorker):
+async def test_worker_should_share_publisher_connection(amqp_worker: AMQPWorker):
     # pylint: disable=protected-access
     # When
     async with amqp_worker:
         assert amqp_worker._connection is amqp_worker._publisher._connection
-        assert amqp_worker._channel is amqp_worker._publisher._channel
 
 
 class _RouteCreator(AMQPMixin):
