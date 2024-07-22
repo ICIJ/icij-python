@@ -39,8 +39,13 @@ class KeyValueStorage(TaskStorage, ABC):
             await self._update(self._tasks_db_name, update, key=key)
 
     async def save_result(self, result: TaskResult):
-        key = self._key(result.task_id, obj_cls=TaskResult)
-        await self._insert(self._results_db_name, result.dict(), key=key)
+        res_key = self._key(result.task_id, obj_cls=TaskResult)
+        await self._insert(self._results_db_name, result.dict(), key=res_key)
+        task_key = self._key(result.task_id, obj_cls=Task)
+        update = TaskUpdate.done(result.completed_at).dict(
+            exclude_none=True, by_alias=True
+        )
+        await self._update(self._tasks_db_name, update, key=task_key)
 
     async def save_error(self, error: TaskError):
         key = self._key(error.task_id, obj_cls=TaskError)
@@ -68,8 +73,8 @@ class KeyValueStorage(TaskStorage, ABC):
         key = self._key(task_id, obj_cls=TaskError)
         try:
             errors = await self._read_key(self._errors_db_name, key=key)
-        except KeyError as e:
-            raise UnknownTask(task_id) from e
+        except UnknownTask:
+            return []
         errors = [TaskError.parse_obj(err) for err in errors]
         return errors
 

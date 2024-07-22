@@ -24,8 +24,11 @@ class UnknownTask(ICIJWorkerError, ValueError):
 
 
 class TaskQueueIsFull(ICIJWorkerError, RuntimeError):
-    def __init__(self, max_queue_size: int):
-        super().__init__(f"task queue is full ({max_queue_size}/{max_queue_size})")
+    def __init__(self, max_queue_size: Optional[int]):
+        msg = "task queue is full"
+        if max_queue_size is not None:
+            msg += f" ({max_queue_size}/{max_queue_size})"
+        super().__init__(msg)
 
 
 class TaskAlreadyCancelled(ICIJWorkerError, RuntimeError):

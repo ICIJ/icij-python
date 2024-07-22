@@ -32,7 +32,7 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
     "event,task_update",
     [
         (
-            ProgressEvent(task_id="task-0", progress=0.66, state=TaskState.RUNNING),
+            ProgressEvent(task_id="task-0", progress=0.66),
             TaskUpdate(progress=0.66),
         ),
         (
@@ -53,7 +53,7 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
                 ),
                 state=TaskState.QUEUED,
             ),
-            TaskUpdate(retries=2),
+            TaskUpdate(retries=2, progress=0.0),
         ),
     ],
 )
@@ -160,7 +160,7 @@ RETURN task"""
     task = await task_manager.get_task(task_id=task_id)
     assert task.state is TaskState.DONE
 
-    event = ProgressEvent(task_id=task.id, state=TaskState.RUNNING, progress=0.0)
+    event = ProgressEvent(task_id=task.id, progress=0.0)
 
     # When
     await publisher.publish_event(event)

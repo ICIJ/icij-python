@@ -7,15 +7,7 @@ from typing import ClassVar, Optional, Union
 from pydantic import Field, Protocol
 from pydantic.parse import load_file
 
-from icij_common.pydantic_utils import ICIJSettings
 from icij_worker.utils.registrable import RegistrableConfig
-
-
-class AsyncAppConfig(ICIJSettings):
-    late_ack: bool = False
-
-    class Config:
-        env_prefix = "ICIJ_APP_"
 
 
 class WorkerConfig(RegistrableConfig, ABC):

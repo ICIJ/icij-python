@@ -79,6 +79,14 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
     def _routings(self) -> List[Routing]:
         return [self.evt_routing(), self.res_and_err_routing()]
 
+    async def enqueue(self, result: TaskResult):
+        await self._publish_message(
+            result,
+            exchange=self._res_and_err_x,
+            routing_key=self.res_and_err_routing().routing_key,
+            mandatory=True,  # This is important
+        )
+
     async def _publish_event(self, event: TaskEvent):
         await self._publish_message(
             event,
@@ -86,8 +94,6 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
             routing_key=self.evt_routing().routing_key,
             mandatory=False,
         )
-
-    publish_event_ = _publish_event
 
     async def publish_result(self, result: TaskResult):
         await self._publish_message(
@@ -117,47 +123,18 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
             await self._exit_stack.enter_async_context(self._connection)
         self.debug("creating channel...")
         self._channel_ = await self._connection.channel(
-            publisher_confirms=True, on_return_raises=False
+            publisher_confirms=True,
+            on_return_raises=False,
         )
         await self._exit_stack.enter_async_context(self._channel)
-        await self._channel.set_qos(prefetch_count=1, global_=True)
-        await self._declare_exchanges()
-        await self._declare_and_bind_queues()
+        await self._channel_.set_qos(1, global_=False)
+        if self._declare_and_bind:
+            await self._create_routing(self.evt_routing())
+            await self._create_routing(self.res_and_err_routing())
+        self._evt_x = await self._channel.get_exchange(
+            self.evt_routing().exchange.name, ensure=True
+        )
+        self._res_and_err_x = await self._channel.get_exchange(
+            self.res_and_err_routing().exchange.name, ensure=True
+        )
         self.info("channel opened !")
-
-    async def _declare_exchanges(self):
-        if self._declare_and_bind:
-            self.debug("(re)declaring %s...", self.evt_routing().exchange)
-            self._evt_x = await self._channel.declare_exchange(
-                name=self.evt_routing().exchange.name,
-                type=self.evt_routing().exchange.type,
-                timeout=self._connection_timeout_s,
-                durable=True,
-            )
-            self.debug("(re)declaring %s...", self.res_and_err_routing().exchange)
-            self._res_and_err_x = await self._channel.declare_exchange(
-                name=self.res_and_err_routing().exchange.name,
-                type=self.res_and_err_routing().exchange.type,
-                timeout=self._connection_timeout_s,
-                durable=True,
-            )
-        else:
-            self.debug("publisher will use existing exchanges...")
-            self._evt_x = await self._channel.get_exchange(
-                self.evt_routing().exchange.name
-            )
-            self._res_and_err_x = await self._channel.get_exchange(
-                self.res_and_err_routing().exchange.name
-            )
-
-    async def _declare_and_bind_queues(self):
-        if self._declare_and_bind:
-            for routing in self._routings:
-                self.debug("(re)declaring queue %s...", routing.queue_name)
-                queue = await self._channel.declare_queue(
-                    routing.queue_name, durable=True
-                )
-                self.debug(
-                    "binding queue %s on %s...", routing.queue_name, routing.routing_key
-                )
-                await queue.bind(routing.exchange.name, routing_key=routing.routing_key)

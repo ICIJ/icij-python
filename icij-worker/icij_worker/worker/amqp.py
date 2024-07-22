@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime
 from functools import lru_cache
 from typing import ClassVar, Dict, Optional, Type, cast
 
@@ -11,6 +10,7 @@ from aio_pika.abc import (
     AbstractQueueIterator,
     AbstractRobustConnection,
 )
+from aiormq import DeliveryError
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
@@ -20,7 +20,6 @@ from icij_worker import (
     TaskError,
     TaskEvent,
     TaskResult,
-    TaskState,
     Worker,
     WorkerConfig,
     WorkerType,
@@ -28,8 +27,9 @@ from icij_worker import (
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
+from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
-from icij_worker.objects import CancelledTaskEvent
+from icij_worker.objects import CancelTaskEvent, TaskState
 from icij_worker.utils.amqp import AMQPMixin
 from icij_worker.utils.from_config import T
 
@@ -70,6 +70,7 @@ class AMQPWorkerConfig(WorkerConfig):
 
 @Worker.register(WorkerType.amqp)
 class AMQPWorker(Worker, AMQPMixin):
+
     def __init__(
         self,
         app: AsyncApp,
@@ -113,20 +114,36 @@ class AMQPWorker(Worker, AMQPMixin):
 
         self._declare_exchanges = False
 
+    @property
+    def _app_id(self) -> str:
+        return self._app.name
+
     async def _aenter__(self):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
         self._publisher = self._create_publisher()
         await self._exit_stack.enter_async_context(self._publisher)
         self._connection_ = self._publisher.connection
-        self._channel_ = self._publisher.channel
+        self._channel_ = await self._connection.channel(
+            publisher_confirms=True,
+            on_return_raises=False,
+        )
+        await self._channel.set_qos(prefetch_count=1, global_=False)
+        await self._exit_stack.enter_async_context(self._channel)
         await self._bind_task_queue()
         await self._bind_cancel_event_queue()
 
     async def _bind_task_queue(self):
         self._task_routing = self.task_routing(self._namespace)
+        arguments = None
+        if self._app.config.max_task_queue_size is not None:
+            arguments = {
+                "x-overflow": "reject-publish",
+                "x-max-length": self._app.config.max_task_queue_size,
+            }
         self._task_queue_iterator, _, _ = await self._get_queue_iterator(
             self._task_routing,
             declare_exchanges=self._declare_exchanges,
+            queue_args=arguments,
         )
         self._task_queue_iterator = cast(
             AbstractAsyncContextManager, self._task_queue_iterator
@@ -154,10 +171,10 @@ class AMQPWorker(Worker, AMQPMixin):
         self._delivered[task.id] = message
         return task
 
-    async def _consume_cancelled(self) -> CancelledTaskEvent:
+    async def _consume_cancelled(self) -> CancelTaskEvent:
         message: AbstractIncomingMessage = await self._cancel_events_it.__anext__()
-        # TODO: handle project deserialization here
-        event = CancelledTaskEvent.parse_raw(message.body)
+        await message.ack()
+        event = CancelTaskEvent.parse_raw(message.body)
         return event
 
     @property
@@ -180,27 +197,33 @@ class AMQPWorker(Worker, AMQPMixin):
             raise ValueError(msg)
         return self._cancel_evt_queue_iterator
 
-    async def _acknowledge(self, task: Task, completed_at: datetime) -> Task:
+    async def _acknowledge(self, task: Task):
         message = self._delivered[task.id]
         await message.ack()
-        acked = safe_copy(
-            task,
-            update={
-                "state": TaskState.DONE,
-                "progress": 100,
-                "completed_at": completed_at,
-            },
-        )
-        return acked
 
-    async def _negatively_acknowledge(self, nacked: Task, *, cancelled: bool):
+    async def _negatively_acknowledge(self, nacked: Task):
         # pylint: disable=unused-argument
         message = self._delivered[nacked.id]
-        requeue = nacked.state is TaskState.QUEUED
+        requeue = nacked.state is not TaskState.ERROR
         await message.nack(requeue=requeue)
 
+    async def _requeue(self, task: Task, acknowledge: bool):
+        delivered = self._delivered[task.id]
+        exchange = await self.channel.get_exchange(delivered.exchange)
+        try:
+            await self._publish_message(
+                task,
+                exchange=exchange,
+                routing_key=delivered.routing_key,
+                mandatory=True,  # This is important
+            )
+        except DeliveryError as e:
+            raise TaskQueueIsFull(None) from e
+        if acknowledge:
+            await self._acknowledge(task)
+
     async def _publish_event(self, event: TaskEvent):
-        await self._publisher.publish_event_(event)
+        await self._publisher.publish_event(event)
 
     async def _save_result(self, result: TaskResult):
         await self._publisher.publish_result(result)

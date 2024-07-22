@@ -10,7 +10,7 @@ from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import Task, TaskError, TaskState
 from icij_worker.exceptions import TaskAlreadyExists, TaskQueueIsFull, UnknownTask
-from icij_worker.objects import ProgressEvent, StacktraceItem, TaskResult
+from icij_worker.objects import ErrorEvent, ProgressEvent, StacktraceItem, TaskResult
 from icij_worker.tests.conftest import (
     TestableAMQPTaskManager,
     TestableFSKeyValueStorage,
@@ -112,7 +112,7 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
 ):
     # Given
     task_manager = TestableAMQPTaskManager(
-        fs_storage, app_name="test-app", broker_url=rabbit_mq, max_task_queue_length=1
+        fs_storage, app_name="test-app", broker_url=rabbit_mq, max_task_queue_size=1
     )
     task = hello_world_task
     async with task_manager:
@@ -137,7 +137,7 @@ async def test_task_manager_should_consume_events(
         arguments={"greeted": "world"},
     )
     await task_manager.save_task(task, namespace=None)
-    event = ProgressEvent(task_id=task.id, progress=100.0, state=TaskState.DONE)
+    event = ProgressEvent(task_id=task.id, progress=100.0)
     message = event.json().encode()
 
     # When
@@ -145,19 +145,19 @@ async def test_task_manager_should_consume_events(
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
     await exchange.publish(message, "routingKeyMainEvents")
     # Then
-    consume_timeout = 20.0
+    consume_timeout = 5.0
     msg = f"Failed to consume event in less than {consume_timeout}"
 
-    async def _is_done() -> bool:
+    async def _is_running() -> bool:
         try:
             t = await task_manager.get_task(task.id)
         except UnknownTask:
             return False
-        return t.state is TaskState.DONE
+        return t.state is TaskState.RUNNING
 
-    assert await async_true_after(_is_done, after_s=consume_timeout), msg
+    assert await async_true_after(_is_running, after_s=consume_timeout), msg
     stored_task = await task_manager.get_task(task.id)
-    updates = {"progress": 100.0, "state": TaskState.DONE}
+    updates = {"progress": 100.0, "state": TaskState.RUNNING}
     expected = safe_copy(task, update=updates)
     assert stored_task == expected
 
@@ -197,10 +197,51 @@ async def test_task_manager_should_consume_errors(
     assert errors == [error]
 
 
+async def test_task_manager_should_consume_error_events(
+    test_amqp_task_manager: TestableAMQPTaskManager,
+):
+    # Given
+    task_manager = test_amqp_task_manager
+    task = Task(
+        id="some-id",
+        name="some-task-name",
+        created_at=datetime.now(),
+        state=TaskState.RUNNING,
+    )
+    await task_manager.save_task(task, namespace=None)
+    error = TaskError(
+        id="error-id",
+        task_id=task.id,
+        name="error",
+        message="with details",
+        occurred_at=datetime.now(),
+        stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],
+        cause="some cause",
+    )
+    event = ErrorEvent.from_error(error, task_id=task.id)
+    message = event.json().encode()
+    channel = task_manager.channel
+    # When
+    exchange = await channel.get_exchange("exchangeMainEvents")
+    message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
+    await exchange.publish(message, "routingKeyMainEvents")
+    # Then
+    consume_timeout = 2.0
+    msg = f"Failed to consume error event in less than {consume_timeout}"
+
+    async def _is_error() -> bool:
+        t = await task_manager.get_task(error.task_id)
+        return t.state is TaskState.ERROR
+
+    assert await async_true_after(_is_error, after_s=consume_timeout), msg
+
+
 async def test_task_manager_should_consume_result(test_amqp_task_manager):
     # Given
     task_manager = test_amqp_task_manager
-    result = TaskResult(task_id="some-task-id", result="some-result")
+    result = TaskResult(
+        task_id="some-task-id", result="some-result", completed_at=datetime.now()
+    )
     message = result.json().encode()
     channel = task_manager.channel
     # When
@@ -250,9 +291,5 @@ async def test_task_manager_cancel(
     cancelled_at = cancel_evt_json.pop("cancelledAt")
     with fail_if_exception("failed to parse cancelled_at datetime"):
         datetime.fromisoformat(cancelled_at)
-    expected_json = {
-        "@type": "CancelledEvent",
-        "requeue": requeue,
-        "taskId": "some-id",
-    }
+    expected_json = {"@type": "CancelEvent", "requeue": requeue, "taskId": "some-id"}
     assert cancel_evt_json == expected_json

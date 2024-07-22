@@ -17,7 +17,7 @@ from icij_worker import (
     TaskState,
 )
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
-from icij_worker.objects import CancelledTaskEvent, StacktraceItem
+from icij_worker.objects import CancelTaskEvent, StacktraceItem
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -58,6 +58,10 @@ RETURN error"""
     return list(zip(populate_tasks, [[], [e_0, e_1]]))
 
 
+_NOW = datetime.now()
+_AFTER = datetime.now()
+
+
 @pytest_asyncio.fixture(scope="function")
 async def _populate_results(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
@@ -72,18 +76,13 @@ async def _populate_results(
 CREATE (result:_TaskResult { result: '"Hello 2"' })
 CREATE (task)-[:_HAS_RESULT]->(result)
 RETURN task, result"""
-    now = datetime.now()
-    after = datetime.now()
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_1, now=now, after=after
+        query_1, now=_NOW, after=_AFTER
     )
     t_2 = Task.from_neo4j(recs_0[0])
     r_2 = TaskResult.from_neo4j(recs_0[0])
     tasks = populate_tasks + [t_2]
     return list(zip(tasks, [None, None, r_2]))
-
-
-_NOW = datetime.now()
 
 
 @pytest.mark.parametrize(
@@ -403,10 +402,7 @@ async def test_get_task_errors(
         ("task-1", None),
         (
             "task-2",
-            TaskResult(
-                task_id="task-2",
-                result="Hello 2",
-            ),
+            TaskResult(task_id="task-2", result="Hello 2", completed_at=_AFTER),
         ),
     ],
 )
@@ -491,7 +487,7 @@ async def test_task_manager_cancel(
 RETURN task, event"""
     recs, _, _ = await driver.execute_query(query, taskId=task.id)
     assert len(recs) == 1
-    event = CancelledTaskEvent.from_neo4j(recs[0])
+    event = CancelTaskEvent.from_neo4j(recs[0])
     # Then
     assert event.task_id == task.id
     assert event.cancelled_at is not None
@@ -502,7 +498,7 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
     neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
 ):
     task_manager = Neo4JTaskManager(
-        "test-app", neo4j_async_app_driver, max_queue_size=-1
+        "test-app", neo4j_async_app_driver, max_task_queue_size=-1
     )
     task = hello_world_task
 

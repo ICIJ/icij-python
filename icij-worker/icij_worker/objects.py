@@ -7,17 +7,20 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
+from functools import lru_cache
 from typing import Callable, ClassVar, Literal, Union, cast
 
-from pydantic import Field, validator
+from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
 from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_REQUEUE,
+    TASK_COMPLETED_AT,
     TASK_ID,
     TASK_NODE,
+    TASK_RESULT_RESULT,
 )
 from icij_common.pydantic_utils import (
     ICIJModel,
@@ -52,23 +55,30 @@ class TaskState(str, Enum):
     CANCELLED = "CANCELLED"
 
     @classmethod
-    def resolve_event_state(cls, stored: Task, event: TaskUpdate) -> TaskState:
+    def resolve_update_state(cls, stored: Task, update: TaskUpdate) -> TaskState:
         # A done task is always done
         if stored.state is TaskState.DONE:
             return stored.state
         # A task store as ready can't be updated unless there's a new ready state
         # (for instance ERROR -> DONE)
-        if stored.state in READY_STATES and event.state not in READY_STATES:
+        if stored.state in READY_STATES and update.state not in READY_STATES:
             return stored.state
-        if event.state is TaskState.QUEUED and stored.state is TaskState.RUNNING:
+        if update.state is TaskState.QUEUED and stored.state is TaskState.RUNNING:
             # We have to store the most recent state
-            if event.retries is None:
+            if update.cancelled_at is not None:
+                if (
+                    stored.cancelled_at is None
+                    or stored.cancelled_at < update.cancelled_at
+                ):
+                    return update.state
                 return stored.state
-            if stored.retries is None or event.retries > stored.retries:
-                return event.state
+            if update.retries is None:
+                return stored.state
+            if stored.retries is None or update.retries > stored.retries:
+                return update.state
             return stored.state
         # Otherwise the true state is the most advanced on in the state machine
-        return max(stored.state, event.state)
+        return max(stored.state, update.state)
 
     def __gt__(self, other: TaskState) -> bool:
         return state_precedence(self) < state_precedence(other)
@@ -118,6 +128,11 @@ class Registrable(ICIJModel, RegistrableMixin, ABC):
 
     class Config:
         json_encoders = {"Registrable": _encode_registrable}
+
+    @root_validator(pre=True)
+    def validate_type(cls, values):  # pylint: disable=no-self-argument
+        values.pop("@type", None)
+        return values
 
     @classmethod
     def parse_obj(cls, obj: Dict) -> Registrable:
@@ -237,7 +252,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if isinstance(value, float) and not 0 <= value <= 100:
             # We log here rather than raising since otherwise a single invalid log will
             # prevent anything any deserialization related
-            logger.error("progress is expected to be in [0, 100], found %s", value)
+            logger.exception("progress is expected to be in [0, 100], found %s", value)
         return value
 
     @final
@@ -282,19 +297,34 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             return None
         updated = event.dict(exclude_unset=True, by_alias=False)
         updated.pop("task_id", None)
+        updated.pop("requeue", None)
         updated.pop("created_at", None)
         updated.pop("error", None)
         updated.pop("occurred_at", None)
         updated.pop("task_name", None)
-        updated.pop("completed_at", None)
+        if self.completed_at is not None:
+            updated.pop("completed_at", None)
         updated.pop(event.registry_key.default, None)
         if not updated:
             return None
         update = dict()
         updated = TaskUpdate(**updated)
         # Update the state to make it consistent in case of race condition
-        if isinstance(event, (ProgressEvent, ErrorEvent)) and event.state is not None:
-            update["state"] = TaskState.resolve_event_state(self, updated)
+        if isinstance(event, ProgressEvent):
+            state = TaskState.resolve_update_state(
+                self, TaskUpdate(state=TaskState.RUNNING)
+            )
+            update["state"] = state
+        if isinstance(event, ErrorEvent) and event.state is not None:
+            update["state"] = TaskState.resolve_update_state(self, updated)
+        if isinstance(event, (CancelTaskEvent, CancelledEvent)):
+            cancelled_update = {
+                "state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED
+            }
+            updated = safe_copy(updated, update=cancelled_update)
+            update["state"] = TaskState.resolve_update_state(self, updated)
+        if update.get("state") is TaskState.QUEUED:
+            update["progress"] = 0.0
         updated = safe_copy(updated, update=update)
         return updated
 
@@ -410,14 +440,6 @@ class ErrorEvent(TaskEvent):
 @Message.register("ProgressEvent")
 class ProgressEvent(TaskEvent, FromTask):
     progress: float
-    state: Optional[Literal[TaskState.RUNNING, TaskState.DONE]]
-    completed_at: Optional[datetime] = None
-
-    @validator("state")
-    def _validate_state(cls, v: Any, values):  # pylint: disable=no-self-argument
-        if v is TaskState.DONE and values["progress"] != 100:
-            raise ValueError("Done task should have a 100 progress !")
-        return v
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> ProgressEvent:
@@ -425,18 +447,12 @@ class ProgressEvent(TaskEvent, FromTask):
         if state is TaskState.RUNNING and task.progress > 0:
             # Publish state updates only at task start and completion
             state = None
-        event = cls(
-            task_id=task.id,
-            progress=task.progress,
-            state=state,
-            completed_at=task.completed_at,
-            **kwargs,
-        )
+        event = cls(task_id=task.id, progress=task.progress, **kwargs)
         return event
 
 
-@Message.register("CancelledEvent")
-class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+@Message.register("CancelEvent")
+class CancelTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     task_id: str
     requeue: bool
     cancelled_at: datetime
@@ -448,7 +464,7 @@ class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetim
     @classmethod
     def from_neo4j(
         cls, record: "neo4j.Record", *, event_key: str = "event", task_key: str = "task"
-    ) -> CancelledTaskEvent:
+    ) -> CancelTaskEvent:
         task = record.get(task_key)
         event = record.get(event_key)
         task_id = task[TASK_ID]
@@ -457,13 +473,31 @@ class CancelledTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetim
         return cls(task_id=task_id, requeue=requeue, cancelled_at=cancelled_at)
 
 
+@Message.register("CancelledEvent")
+class CancelledEvent(TaskEvent, FromTask, Neo4jDatetimeMixin):
+    requeue: bool
+    cancelled_at: datetime
+
+    @validator("cancelled_at", pre=True)
+    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
+
+    @classmethod
+    def from_task(cls, task: Task, *, requeue: bool, **kwargs) -> CancelledEvent:
+        # pylint: disable=arguments-differ
+        cancelled_at = task.cancelled_at or datetime.now()
+        event = cls(task_id=task.id, cancelled_at=cancelled_at, requeue=requeue)
+        return event
+
+
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
     state: Optional[TaskState] = None
     progress: Optional[float] = None
     retries: Optional[int] = None
     completed_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
 
-    _from_task = ["state", "progress", "retries", "completed_at"]
+    _from_task = ["state", "progress", "retries", "completed_at", "cancelled_at"]
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> TaskUpdate:
@@ -471,12 +505,21 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
         from_task = {k: v for k, v in from_task.items() if v is not None}
         return cls(**from_task)
 
+    @classmethod
+    @lru_cache(maxsize=1)
+    def done(cls, completed_at: Optional[datetime] = None) -> TaskUpdate:
+        return cls(progress=100, completed_at=completed_at, state=TaskState.DONE)
+
 
 @Message.register("TaskResult")
-class TaskResult(Message, LowerCamelCaseModel, FromTask):
-    # TODO: we could use generics here
+class TaskResult(Message, LowerCamelCaseModel, FromTask, Neo4jDatetimeMixin):
     task_id: str
     result: object
+    completed_at: datetime
+
+    @validator("completed_at", pre=True)
+    def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
 
     @classmethod
     def from_neo4j(
@@ -488,15 +531,18 @@ class TaskResult(Message, LowerCamelCaseModel, FromTask):
     ) -> TaskResult:
         result = record.get(result_key)
         if result is not None:
-            result = json.loads(result["result"])
-        task_id = record[task_key]["id"]
-        as_dict = {"result": result, "task_id": task_id}
+            result = json.loads(result[TASK_RESULT_RESULT])
+        task_id = record[task_key][TASK_ID]
+        completed_at = record[task_key][TASK_COMPLETED_AT]
+        as_dict = {"result": result, "task_id": task_id, "completed_at": completed_at}
         return TaskResult(**as_dict)
 
     @classmethod
     def from_task(cls, task: Task, result: object, **kwargs) -> TaskResult:
         # pylint: disable=arguments-differ
-        return cls(task_id=task.id, result=result, **kwargs)
+        return cls(
+            task_id=task.id, result=result, completed_at=task.completed_at, **kwargs
+        )
 
 
 def _id_title(title: str) -> str:

@@ -21,7 +21,7 @@ def _log_exception_and_continue():
     try:
         yield
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error("Exception %s occurred ", exc, exc_info=True)
+        logger.exception("Exception %s occurred ", exc)
 
 
 @asynccontextmanager
@@ -44,9 +44,7 @@ async def run_deps(
         yield
     except Exception as e:  # pylint: disable=broad-exception-caught
         original_ex = e
-        logger.error(
-            "Exception occurred while opening dependency: %s", e, exc_info=True
-        )
+        logger.exception("Exception occurred while opening dependency: %s", e)
     finally:
         to_raise = []
         if original_ex is not None:
@@ -69,5 +67,5 @@ async def run_deps(
         logger.debug("Rolled back all dependencies for %s !", ctx)
         if to_raise:
             for e in to_raise:
-                logger.error("Error while handling dependencies %s!", e)
+                logger.exception("Error while handling dependencies %s!", e)
             raise RuntimeError(to_raise)

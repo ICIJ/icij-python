@@ -111,17 +111,35 @@ async def test_save_task_should_not_update_non_updatable_field(
 
 
 async def test_save_result(fs_storage: TestableFSKeyValueStorage):
-    # Give
-    result = TaskResult(task_id="some_task_id", result="some_result")
-    db = _make_db(fs_storage.db_path, table_name="results")
+    # Given
+    task = task_1()
+    await fs_storage.save_task(task)
+    result = TaskResult(
+        task_id="task-1", result="some_result", completed_at=datetime.now()
+    )
+    result_db = _make_db(fs_storage.db_path, table_name="results")
+    task_db = _make_db(fs_storage.db_path, table_name="tasks")
     # When
     await fs_storage.save_result(result)
     # Then
-    with db:
-        db_result = db.get(result.task_id)
+    with result_db:
+        db_result = result_db.get(result.task_id)
     assert db_result is not None
     db_result = TaskResult.parse_obj(db_result)
     assert db_result == result
+    with task_db:
+        db_task = task_db.get(result.task_id)
+    db_task.pop("namespace")
+    db_task = Task.parse_obj(db_task)
+    expected_task = Task(
+        id="task-1",
+        name="task-type-1",
+        state=TaskState.DONE,
+        progress=100,
+        created_at=task.created_at,
+        completed_at=result.completed_at,
+    )
+    assert db_task == expected_task
 
 
 async def test_save_error(fs_storage: TestableFSKeyValueStorage):
@@ -192,7 +210,9 @@ async def test_get_result(fs_storage: TestableFSKeyValueStorage):
     # Given
     store = fs_storage
     db = _make_db(fs_storage.db_path, table_name="results")
-    res = TaskResult(task_id="some-id", result="Hello world !")
+    res = TaskResult(
+        task_id="some-id", result="Hello world !", completed_at=datetime.now()
+    )
     with db:
         db["task-0"] = res.dict()
         db.commit()

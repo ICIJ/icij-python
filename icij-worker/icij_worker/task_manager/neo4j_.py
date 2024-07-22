@@ -23,12 +23,11 @@ class Neo4JTaskManager(TaskManager, Neo4jStorage):
         self,
         app_name: str,
         driver: neo4j.AsyncDriver,
-        max_queue_size: int,
+        max_task_queue_size: int,
         namespacing: Optional[Namespacing] = None,
     ) -> None:
-        super().__init__(app_name, namespacing)
+        super().__init__(app_name, max_task_queue_size, namespacing)
         super(TaskManager, self).__init__(driver)
-        self._max_queue_size = max_queue_size
 
     @property
     def driver(self) -> neo4j.AsyncDriver:
@@ -39,7 +38,9 @@ class Neo4JTaskManager(TaskManager, Neo4jStorage):
         db = await self._get_task_db(task_id=task.id)
         async with self._db_session(db) as sess:
             return await sess.execute_write(
-                _enqueue_task_tx, task_id=task.id, max_queue_size=self._max_queue_size
+                _enqueue_task_tx,
+                task_id=task.id,
+                max_queue_size=self._max_task_queue_size,
             )
 
     async def _cancel(self, *, task_id: str, requeue: bool):

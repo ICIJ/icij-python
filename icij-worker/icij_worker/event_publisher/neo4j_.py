@@ -6,6 +6,7 @@ import neo4j
 from neo4j.exceptions import ResultNotSingleError
 
 from icij_common.neo4j.constants import (
+    TASK_ERROR_ID,
     TASK_ERROR_NODE,
     TASK_ERROR_OCCURRED_TYPE,
     TASK_ID,
@@ -79,10 +80,12 @@ RETURN count(*) as numTasks"""
         except ResultNotSingleError as e:
             raise UnknownTask(task_id) from e
     if error is not None:
-        create_error = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
+        create_error = f"""MATCH (t:{TASK_NODE} {{{TASK_ID}: $taskId }})
+WITH t
+CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 WITH task
-MERGE (error:{TASK_ERROR_NODE} {{id: $errorId}})
-ON CREATE SET error = $errorProps
+MERGE (error:{TASK_ERROR_NODE} {{{TASK_ERROR_ID}: $errorId}})
+ON CREATE SET error += $errorProps
 MERGE (error)-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
 RETURN task, error
 """

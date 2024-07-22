@@ -1,7 +1,7 @@
 # pylint: disable=redefined-outer-name
 import asyncio
 from datetime import datetime
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 import neo4j
 import pytest
@@ -11,7 +11,6 @@ from icij_common.neo4j.db import Database, NEO4J_COMMUNITY_DB, db_specific_sessi
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import fail_if_exception
 from icij_worker import (
-    AsyncApp,
     Namespacing,
     Neo4JTaskManager,
     Neo4jWorker,
@@ -19,18 +18,29 @@ from icij_worker import (
     TaskResult,
     TaskState,
 )
-from icij_worker.objects import CancelledTaskEvent, ProgressEvent, StacktraceItem, Task
+from icij_worker.objects import (
+    CancelTaskEvent,
+    CancelledEvent,
+    ErrorEvent,
+    ProgressEvent,
+    StacktraceItem,
+    Task,
+)
 from icij_worker.tests.worker.conftest import make_app
 from icij_worker.worker import neo4j_
 
 
-@pytest.fixture(scope="function")
-def worker(
-    test_app: AsyncApp, neo4j_async_app_driver: neo4j.AsyncDriver, request
-) -> Neo4jWorker:
-    namespace = getattr(request, "param", None)
+@pytest.fixture(
+    scope="function",
+    params=[{"app": "test_async_app_late"}, {"app": "test_async_app"}],
+)
+def worker(neo4j_async_app_driver: neo4j.AsyncDriver, request) -> Neo4jWorker:
+    params = getattr(request, "param", dict()) or dict()
+    app = params.get("app", "test_async_app")
+    app = request.getfixturevalue(app)
+    namespace = params.get("namespace")
     worker = Neo4jWorker(
-        test_app,
+        app,
         "test-worker",
         namespace=namespace,
         driver=neo4j_async_app_driver,
@@ -51,7 +61,7 @@ async def _count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
 
 @pytest.mark.parametrize(
     "populate_tasks,worker",
-    [("some-namespace", "some-namespace"), (None, None)],
+    [("some-namespace", {"namespace": "some-namespace"}), (None, None)],
     indirect=["populate_tasks", "worker"],
 )
 async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWorker):
@@ -121,11 +131,11 @@ async def test_should_consume_with_namespace(
     assert ex.value.message == expected
 
 
+@pytest.mark.parametrize("worker", [None], indirect=["worker"])
 async def test_worker_consume_cancel_event(
-    populate_cancel_events: List[CancelledTaskEvent], worker: Neo4jWorker
+    populate_cancel_events: List[CancelTaskEvent], worker: Neo4jWorker
 ):
     # pylint: disable=unused-argument,protected-access
-    # Given
     # When
     task = asyncio.create_task(worker._consume_cancelled())
     # Then
@@ -137,43 +147,47 @@ async def test_worker_consume_cancel_event(
     assert event == populate_cancel_events[0]
 
 
+@pytest.mark.parametrize(
+    "worker,nacked_state",
+    [
+        ({"app": "test_async_app_late"}, TaskState.QUEUED),
+        ({"app": "test_async_app_late"}, TaskState.ERROR),
+    ],
+    indirect=["worker"],
+)
 async def test_worker_negatively_acknowledge(
     populate_tasks: List[Task],
     worker: Neo4jWorker,
     neo4j_task_manager: Neo4JTaskManager,
+    nacked_state: TaskState,
 ):
-    # pylint: disable=unused-argument
+    # pylint: disable=unused-argument,protected-access
     # Given
     task_manager = neo4j_task_manager
     # When
     task = await worker.consume()
+    task = safe_copy(task, update={"state": nacked_state})
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 1
-    await worker.negatively_acknowledge(task, requeue=False)
+    await worker._negatively_acknowledge(task)
     nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
-    update = {"state": TaskState.ERROR}
-    expected_nacked = safe_copy(task, update=update)
-    assert nacked == expected_nacked
+    assert nacked == task
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
 
-async def test_worker_negatively_acknowledge_and_requeue(
-    populate_tasks: List[Task],
-    worker: Neo4jWorker,
-    neo4j_task_manager: Neo4JTaskManager,
+@pytest.mark.parametrize("is_error", [True, False])
+async def test_worker_requeue(
+    worker: Neo4jWorker, neo4j_task_manager: Neo4JTaskManager, is_error: bool
 ):
     # pylint: disable=unused-argument
     # Given
     task_manager = neo4j_task_manager
     created_at = datetime.now()
     task = Task(
-        id="some-id",
-        name="hello_world",
-        created_at=created_at,
-        state=TaskState.CREATED,
+        id="some-id", name="hello_world", created_at=created_at, state=TaskState.CREATED
     )
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
@@ -189,63 +203,39 @@ async def test_worker_negatively_acknowledge_and_requeue(
     event = ProgressEvent.from_task(task=task)
     await worker.publish_event(event)
     with_progress = safe_copy(task, update={"progress": event.progress})
-    await worker.negatively_acknowledge(task, requeue=True)
-    nacked = await task_manager.get_task(task_id=task.id)
-
-    # Then
-    update = {"state": TaskState.QUEUED, "progress": 0.0, "retries": 1.0}
-    expected_nacked = safe_copy(with_progress, update=update)
-    assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
-    assert n_locks == 0
-
-
-@pytest.mark.parametrize("requeue", [True, False])
-async def test_worker_negatively_acknowledge_and_cancel(
-    worker: Neo4jWorker, requeue: bool, neo4j_task_manager: Neo4JTaskManager
-):
-    # pylint: disable=unused-argument
-    # Given
-    task_manager = neo4j_task_manager
-    created_at = datetime.now()
-    task = Task(
-        id="some-id",
-        name="hello_world",
-        created_at=created_at,
-        state=TaskState.CREATED,
-    )
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
-    assert n_locks == 0
-
-    # When
-    await task_manager.enqueue(task, namespace="some-placeholder-namespace")
-    task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
-    assert n_locks == 1
-    # Let's publish some event to increment the progress and check that it's reset
-    # correctly to 0
-    task = safe_copy(task, update={"progress": 50.0})
-    event = ProgressEvent.from_task(task)
-    await worker.publish_event(event)
-    with_progress = safe_copy(task, update={"progress": event.progress})
-    await worker.negatively_acknowledge(task, cancel=True, requeue=requeue)
-    nacked = await task_manager.get_task(task_id=task.id)
-
-    # Then
-    nacked = nacked.dict(exclude_unset=True)
-    if requeue:
-        update = {"state": TaskState.QUEUED, "progress": 0.0}
+    await worker.requeue(task, is_error)
+    if is_error:
+        task_error = TaskError(
+            id="error-id",
+            task_id=task.id,
+            name="someErrorTitle",
+            message="with_details",
+            stacktrace=[
+                StacktraceItem(name="someErrorTitle", file="with_details", lineno=666)
+            ],
+            occurred_at=datetime.now(),
+        )
+        retries = task.retries or 0 + 1
+        await worker.publish_error_event(task_error, task, retries=retries)
+        update = {"state": TaskState.QUEUED, "retries": retries, "progress": 0.0}
     else:
-        assert nacked["cancelled_at"] is not None
-        nacked.pop("cancelled_at")
-        update = {"state": TaskState.CANCELLED}
+        cancelled_evt = CancelledEvent.from_task(task=task, requeue=True)
+        await worker.publish_event(cancelled_evt)
+        update = {
+            "state": TaskState.QUEUED,
+            "cancelled_at": cancelled_evt.cancelled_at,
+            "progress": 0.0,
+        }
+    nacked = await task_manager.get_task(task_id=task.id)
+
+    # Then
     expected_nacked = safe_copy(with_progress, update=update)
-    expected_nacked = expected_nacked.dict(exclude_unset=True)
     assert nacked == expected_nacked
     n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
 
+@pytest.mark.parametrize("worker", [None], indirect=["worker"])
 async def test_worker_save_result(
     populate_tasks: List[Task],
     worker: Neo4jWorker,
@@ -256,6 +246,7 @@ async def test_worker_save_result(
     task = populate_tasks[0]
     assert task.state == TaskState.QUEUED
     result = "hello everyone"
+    task = safe_copy(task, update={"completed_at": datetime.now()})
     task_result = TaskResult.from_task(task=task, result=result)
 
     # When
@@ -264,10 +255,45 @@ async def test_worker_save_result(
     saved_result = await task_manager.get_task_result(task_id=task.id)
 
     # Then
-    assert saved_task == task
+    expected = safe_copy(task, update={"state": TaskState.DONE, "progress": 100.0})
+    assert saved_task == expected
     assert saved_result == task_result
 
 
+@pytest.mark.parametrize(
+    "worker,retries", [(None, None), (None, 4)], indirect=["worker"]
+)
+async def test_worker_save_error(
+    populate_tasks: List[Task],
+    worker: Neo4jWorker,
+    neo4j_task_manager: Neo4JTaskManager,
+    retries: Optional[int],
+):
+    task_manager = neo4j_task_manager
+    task = populate_tasks[1]
+    assert task.state == TaskState.RUNNING
+    exc = ValueError("there's an error here")
+    error = TaskError.from_exception(exc, task=task)
+
+    # When
+    await worker.publish_event(ErrorEvent.from_error(error, task.id, retries=retries))
+    await worker.save_error(error)
+    saved_task = await task_manager.get_task(task_id=task.id)
+    saved_errors = await task_manager.get_task_errors(task_id=task.id)
+
+    # Then
+    if retries is not None:
+        expected = safe_copy(
+            task,
+            update={"state": TaskState.QUEUED, "progress": 0.0, "retries": retries},
+        )
+    else:
+        expected = safe_copy(task, update={"state": TaskState.ERROR})
+    assert saved_task == expected
+    assert saved_errors == [error]
+
+
+@pytest.mark.parametrize("worker", [None], indirect=["worker"])
 async def test_worker_should_raise_when_saving_existing_result(
     populate_tasks: List[Task], worker: Neo4jWorker
 ):
@@ -275,6 +301,7 @@ async def test_worker_should_raise_when_saving_existing_result(
     task = populate_tasks[0]
     assert task.state == TaskState.QUEUED
     result = "hello everyone"
+    task = safe_copy(task, update={"completed_at": datetime.now()})
     task_result = TaskResult.from_task(task=task, result=result)
 
     # When
@@ -285,7 +312,7 @@ async def test_worker_should_raise_when_saving_existing_result(
         await worker.save_result(result=task_result)
 
 
-async def test_worker_acknowledgment_cm(
+async def test_worker_ack_cm(
     populate_tasks: List[Task],
     worker: Neo4jWorker,
     neo4j_task_manager: Neo4JTaskManager,
@@ -295,10 +322,11 @@ async def test_worker_acknowledgment_cm(
     task_manager = neo4j_task_manager
 
     # When
-    async with worker.acknowledgment_cm():
-        await worker.consume()
+    async with worker.ack_cm:
         task = await task_manager.get_task(task_id=created.id)
         assert task.state is TaskState.RUNNING
+        task = safe_copy(task, update={"completed_at": datetime.now()})
+        await worker.save_result(TaskResult.from_task(task, "some_res"))
 
     # Then
     task = await task_manager.get_task(task_id=created.id)
@@ -313,37 +341,3 @@ async def test_worker_acknowledgment_cm(
     count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
     recs, _, _ = await worker.driver.execute_query(count_locks_query)
     assert recs[0]["nLocks"] == 0
-
-
-async def test_worker_save_error(
-    populate_tasks: List[Task],
-    worker: Neo4jWorker,
-    neo4j_task_manager: Neo4JTaskManager,
-):
-    # pylint: disable=unused-argument
-    # Given
-    task_manager = neo4j_task_manager
-    first_task = populate_tasks[0]
-    error = TaskError(
-        id="error-id",
-        task_id=first_task.id,
-        name="someErrorTitle",
-        message="with_details",
-        stacktrace=[
-            StacktraceItem(name="someErrorTitle", file="with_details", lineno=666)
-        ],
-        occurred_at=datetime.now(),
-    )
-
-    # When
-    task = await worker.consume()
-    await worker.save_error(error=error)
-    await worker.publish_error_event(error, task)
-    saved_task = await task_manager.get_task(task_id=task.id)
-    saved_errors = await task_manager.get_task_errors(task_id=task.id)
-
-    # Then
-    # We don't expect the task state to be updated by saving the error, the negative
-    # acknowledgment will do it
-    assert saved_task == task
-    assert saved_errors == [error]

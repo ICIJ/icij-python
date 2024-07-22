@@ -37,8 +37,9 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
 from icij_worker import AsyncApp, Namespacing, Neo4JTaskManager, Task
+from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.objects import CancelledTaskEvent, TaskState
+from icij_worker.objects import CancelTaskEvent, TaskState
 from icij_worker.task_manager.amqp import AMQPTaskManager
 from icij_worker.task_storage.fs import FSKeyValueStorage
 from icij_worker.task_storage.neo4j_ import (
@@ -51,10 +52,13 @@ from icij_worker.typing_ import PercentProgress
 
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
+    app_config,
     DBMixin,
     mock_db,
     mock_db_session,
     test_async_app,
+    test_async_app_late,
+    late_ack_app_config,
 )
 
 RABBITMQ_TEST_PORT = 5673
@@ -160,7 +164,7 @@ RETURN task"""
 @pytest.fixture(scope="function")
 async def populate_cancel_events(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
-) -> List[CancelledTaskEvent]:
+) -> List[CancelTaskEvent]:
     namespace = getattr(request, "param", None)
     query_0 = """MATCH (task:_Task { id: $taskId })
 SET task.namespace = $namespace
@@ -169,7 +173,7 @@ RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now(), taskId=populate_tasks[0].id, namespace=namespace
     )
-    return [CancelledTaskEvent.from_neo4j(recs_0[0])]
+    return [CancelTaskEvent.from_neo4j(recs_0[0])]
 
 
 class Recoverable(ValueError):
@@ -178,8 +182,19 @@ class Recoverable(ValueError):
 
 @pytest.fixture(scope="function")
 def test_failing_async_app() -> AsyncApp:
+    return _make_app()
+
+
+@pytest.fixture(scope="function")
+def test_failing_async_app_late_ack(late_ack_app_config: AsyncAppConfig) -> AsyncApp:
+    return _make_app(late_ack_app_config)
+
+
+def _make_app(config: Optional[AsyncAppConfig] = None) -> AsyncApp:
     # TODO: add log deps here if it helps to debug
     app = AsyncApp(name="test-app", dependencies=[])
+    if config is not None:
+        app = app.with_config(config)
     already_failed = False
 
     @app.task("recovering_task", recover_from=(Recoverable,))
@@ -396,15 +411,19 @@ class TestableAMQPTaskManager(AMQPTaskManager):
 
 @pytest.fixture()
 async def test_amqp_task_manager(
-    fs_storage: TestableFSKeyValueStorage, rabbit_mq: str
+    fs_storage: TestableFSKeyValueStorage, rabbit_mq: str, test_async_app: AsyncApp
 ) -> TestableAMQPTaskManager:
     task_manager = TestableAMQPTaskManager(
-        fs_storage, app_name="test-app", broker_url=rabbit_mq
+        fs_storage, app_name=test_async_app.name, broker_url=rabbit_mq
     )
     async with task_manager:
         yield task_manager
 
 
 @pytest.fixture
-def neo4j_task_manager(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4JTaskManager:
-    return Neo4JTaskManager("test-app", neo4j_async_app_driver, max_queue_size=10)
+def neo4j_task_manager(
+    neo4j_async_app_driver: neo4j.AsyncDriver, test_async_app: AsyncApp
+) -> Neo4JTaskManager:
+    return Neo4JTaskManager(
+        test_async_app.name, neo4j_async_app_driver, max_task_queue_size=10
+    )
