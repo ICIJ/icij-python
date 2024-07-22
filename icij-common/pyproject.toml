@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "icij-common"
-version = "0.2.0"
+version = "0.3.0"
 description = "Common utils for ICIJ libs"
 authors = [
     "Clément Doumouro <cdoumouro@icij.org>",
