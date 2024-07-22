@@ -359,7 +359,7 @@ async def test_worker_negatively_acknowledge(
             expected = functools.partial(
                 _assert_has_size, queue_name=task_routing.queue_name, n=2
             )
-        timeout = 5  # Stats can take long to refresh...
+        timeout = 10  # Stats can take long to refresh...
         failure = f"Failed to requeue job in less than {timeout} seconds."
         assert await async_true_after(expected, after_s=timeout), failure
 
