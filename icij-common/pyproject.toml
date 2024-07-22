@@ -32,6 +32,10 @@ pytest-asyncio = "^0.20.3"
 [tool.poetry.group.neo4j.dependencies]
 neo4j = "^5.0.0"
 
+
+[tool.poetry.group.fastapi.dependencies]
+fastapi = ">=0.99,<0.111"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
