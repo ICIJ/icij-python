@@ -3,7 +3,6 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Callable, Optional
 
-from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
 from icij_common.test_utils import TEST_DB
 
@@ -74,6 +73,8 @@ class Namespacing:
     def neo4j_db(namespace: str) -> str:
         # pylint: disable=unused-argument
         # By default, task from all namespaces are saved in the default neo4j db
+        from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
+
         return NEO4J_COMMUNITY_DB
 
     @staticmethod
