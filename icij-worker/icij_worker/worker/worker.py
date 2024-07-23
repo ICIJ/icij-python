@@ -49,6 +49,7 @@ from icij_worker.objects import (
     ErrorEvent,
     ProgressEvent,
     TaskUpdate,
+    WorkerEvent,
 )
 from icij_worker.utils import Registrable
 from icij_worker.worker.process import HandleSignalsMixin
@@ -391,7 +392,7 @@ class Worker(
     async def _consume(self) -> Task: ...
 
     @abstractmethod
-    async def _consume_cancelled(self) -> CancelTaskEvent: ...
+    async def _consume_worker_events(self) -> WorkerEvent: ...
 
     @abstractmethod
     async def _save_result(self, result: TaskResult):
@@ -448,7 +449,7 @@ class Worker(
     async def _watch_cancelled(self):
         try:
             while True:
-                cancel_event = await self._consume_cancelled()
+                cancel_event = await self._consume_worker_events()
                 cancel_task_id = cancel_event.task_id
                 cant_handle = (
                     cancel_task_id in self._cancel_asked or self._current is None

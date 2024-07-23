@@ -204,7 +204,7 @@ async def _save_result_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str, result: str, completed_at: datetime
 ):
     query = f"""MATCH (t:{TASK_NODE} {{{TASK_ID}: $taskId }})
-SET t.{TASK_PROGRESS} = 100.0, t.{TASK_COMPLETED_AT} = $completedAt
+SET t.{TASK_PROGRESS} = 1.0, t.{TASK_COMPLETED_AT} = $completedAt
 WITH t
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 MERGE (task)-[:{TASK_HAS_RESULT_TYPE}]->(result:{TASK_RESULT_NODE})
@@ -422,6 +422,14 @@ ON (task.{TASK_NAME})
     await sess.execute_write(_rename_task_type_into_name_tx)
 
 
+async def migrate_task_progress_v0_tx(tx: neo4j.AsyncTransaction):
+    query = f"""MATCH (task:{TASK_NODE})
+SET task.{TASK_PROGRESS} = toFloat(task.{TASK_PROGRESS}) / 100.0
+RETURN task
+"""
+    await tx.run(query)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = {
     "add_support_for_async_task_tx": add_support_for_async_task_tx,
@@ -430,4 +438,5 @@ MIGRATIONS = {
     "migrate_add_index_to_task_namespace_v0_tx": migrate_add_index_to_task_namespace_v0_tx,
     "migrate_task_inputs_to_arguments_v0_tx": migrate_task_inputs_to_arguments_v0_tx,
     "migrate_task_type_to_name_v0": migrate_task_type_to_name_v0,
+    "migrate_task_progress_v0_tx": migrate_task_progress_v0_tx,
 }

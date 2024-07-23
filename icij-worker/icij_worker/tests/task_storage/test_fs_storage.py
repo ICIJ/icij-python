@@ -135,7 +135,7 @@ async def test_save_result(fs_storage: TestableFSKeyValueStorage):
         id="task-1",
         name="task-type-1",
         state=TaskState.DONE,
-        progress=100,
+        progress=1.0,
         created_at=task.created_at,
         completed_at=result.completed_at,
     )

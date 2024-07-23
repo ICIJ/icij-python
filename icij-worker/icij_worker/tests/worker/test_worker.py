@@ -65,7 +65,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
     expected_task = Task(
         id="some-id",
         name="hello_world",
-        progress=100,
+        progress=1.0,
         created_at=created_at,
         state=TaskState.DONE,
         arguments={"greeted": "world"},
@@ -81,7 +81,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         ProgressEvent(task_id="some-id", progress=0.0),
         ProgressEvent(task_id="some-id", progress=0.1),
         ProgressEvent(task_id="some-id", progress=0.99),
-        ProgressEvent(task_id="some-id", progress=100.0),
+        ProgressEvent(task_id="some-id", progress=1.0),
     ]
     assert worker.published_events == expected_events
     expected_result = TaskResult(
@@ -116,7 +116,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     expected_task = Task(
         id="some-id",
         name="hello_world_sync",
-        progress=100,
+        progress=1.0,
         created_at=created_at,
         state=TaskState.DONE,
         arguments={"greeted": "world"},
@@ -130,7 +130,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
     assert saved_task == expected_task
     expected_events = [
         ProgressEvent(task_id="some-id", progress=0.0),
-        ProgressEvent(task_id="some-id", progress=100.0),
+        ProgressEvent(task_id="some-id", progress=1.0),
     ]
     assert worker.published_events == expected_events
 
@@ -172,7 +172,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     expected_task = Task(
         id="some-id",
         name="recovering_task",
-        progress=100,
+        progress=1.0,
         created_at=created_at,
         state=TaskState.DONE,
         retries=1,
@@ -211,7 +211,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
         ),
         ProgressEvent(task_id="some-id", progress=0.0),
         ProgressEvent(task_id="some-id", progress=0.0),
-        ProgressEvent(task_id="some-id", progress=100.0),
+        ProgressEvent(task_id="some-id", progress=1.0),
     ]
     events = [e.dict(by_alias=True) for e in worker.published_events]
     event_errors = [e.pop("error", None) for e in events]

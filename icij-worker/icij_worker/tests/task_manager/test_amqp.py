@@ -137,13 +137,13 @@ async def test_task_manager_should_consume_events(
         arguments={"greeted": "world"},
     )
     await task_manager.save_task(task, namespace=None)
-    event = ProgressEvent(task_id=task.id, progress=100.0)
+    event = ProgressEvent(task_id=task.id, progress=1.0)
     message = event.json().encode()
 
     # When
-    exchange = await channel.get_exchange("exchangeMainEvents")
+    exchange = await channel.get_exchange("exchangeManagerEvents")
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
-    await exchange.publish(message, "routingKeyMainEvents")
+    await exchange.publish(message, "routingKeyManagerEvents")
     # Then
     consume_timeout = 5.0
     msg = f"Failed to consume event in less than {consume_timeout}"
@@ -157,7 +157,7 @@ async def test_task_manager_should_consume_events(
 
     assert await async_true_after(_is_running, after_s=consume_timeout), msg
     stored_task = await task_manager.get_task(task.id)
-    updates = {"progress": 100.0, "state": TaskState.RUNNING}
+    updates = {"progress": 1.0, "state": TaskState.RUNNING}
     expected = safe_copy(task, update=updates)
     assert stored_task == expected
 
@@ -179,9 +179,9 @@ async def test_task_manager_should_consume_errors(
     message = error.json().encode()
     channel = task_manager.channel
     # When
-    exchange = await channel.get_exchange("exchangeTaskResults")
+    exchange = await channel.get_exchange("exchangeManagerEvents")
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
-    await exchange.publish(message, "routingKeyMainTaskResults")
+    await exchange.publish(message, "routingKeyManagerEvents")
     # Then
     consume_timeout = 2.0
     msg = f"Failed to consume error in less than {consume_timeout}"
@@ -222,9 +222,9 @@ async def test_task_manager_should_consume_error_events(
     message = event.json().encode()
     channel = task_manager.channel
     # When
-    exchange = await channel.get_exchange("exchangeMainEvents")
+    exchange = await channel.get_exchange("exchangeManagerEvents")
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
-    await exchange.publish(message, "routingKeyMainEvents")
+    await exchange.publish(message, "routingKeyManagerEvents")
     # Then
     consume_timeout = 2.0
     msg = f"Failed to consume error event in less than {consume_timeout}"
@@ -245,9 +245,9 @@ async def test_task_manager_should_consume_result(test_amqp_task_manager):
     message = result.json().encode()
     channel = task_manager.channel
     # When
-    exchange = await channel.get_exchange("exchangeTaskResults")
+    exchange = await channel.get_exchange("exchangeManagerEvents")
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT, app_id="test-app")
-    await exchange.publish(message, "routingKeyMainTaskResults")
+    await exchange.publish(message, "routingKeyManagerEvents")
     # Then
     consume_timeout = 2.0
     msg = f"Failed to consume result in less than {consume_timeout}"
@@ -279,7 +279,7 @@ async def test_task_manager_cancel(
 
     # Then
     channel = task_manager.channel
-    res_queue = await channel.get_queue("RUNNER_EVENT")
+    res_queue = await channel.get_queue("WORKER_EVENT")
     receive_timeout = 1.0
     async with res_queue.iterator(timeout=receive_timeout) as messages:
         try:

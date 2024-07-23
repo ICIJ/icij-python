@@ -137,7 +137,7 @@ async def test_worker_consume_cancel_event(
 ):
     # pylint: disable=unused-argument,protected-access
     # When
-    task = asyncio.create_task(worker._consume_cancelled())
+    task = asyncio.create_task(worker._consume_worker_events())
     # Then
     timeout = 2
     await asyncio.wait([task], timeout=timeout)
@@ -199,7 +199,7 @@ async def test_worker_requeue(
     assert n_locks == 1
     # Let's publish some event to increment the progress and check that it's reset
     # correctly to 0
-    task = safe_copy(task, update={"progress": 50.0})
+    task = safe_copy(task, update={"progress": 0.5})
     event = ProgressEvent.from_task(task=task)
     await worker.publish_event(event)
     with_progress = safe_copy(task, update={"progress": event.progress})
@@ -255,7 +255,7 @@ async def test_worker_save_result(
     saved_result = await task_manager.get_task_result(task_id=task.id)
 
     # Then
-    expected = safe_copy(task, update={"state": TaskState.DONE, "progress": 100.0})
+    expected = safe_copy(task, update={"state": TaskState.DONE, "progress": 1.0})
     assert saved_task == expected
     assert saved_result == task_result
 
@@ -330,7 +330,7 @@ async def test_worker_ack_cm(
 
     # Then
     task = await task_manager.get_task(task_id=created.id)
-    update = {"progress": 100.0, "state": TaskState.DONE}
+    update = {"progress": 1.0, "state": TaskState.DONE}
     expected_task = safe_copy(task, update=update).dict(by_alias=True)
     expected_task.pop("completedAt")
     assert task.completed_at is not None

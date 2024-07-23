@@ -12,14 +12,14 @@ def to_raw_progress(progress: PercentProgress, max_progress: int) -> RawProgress
 
 
 def to_scaled_progress(
-    progress: PercentProgress, *, start: float = 0.0, end: float = 100.0
+    progress: PercentProgress, *, start: float = 0.0, end: float = 1.0
 ):
     if not 0 <= start < end:
         raise ValueError("start must be [0, end[")
     if not start < end <= 100:
-        raise ValueError("end must be ]start, 100]")
+        raise ValueError("end must be ]start, 1.0]")
 
     async def _scaled(p: float):
-        await progress(start + p * (end - start) / 100)
+        await progress(start + p * (end - start))
 
     return _scaled

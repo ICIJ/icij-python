@@ -49,7 +49,7 @@ from icij_worker import (
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
-from icij_worker.objects import CancelTaskEvent, TaskUpdate
+from icij_worker.objects import CancelTaskEvent, TaskUpdate, WorkerEvent
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
@@ -74,7 +74,7 @@ if _has_pytest:
         _lock_collection = "locks"
         _error_collection = "errors"
         _result_collection = "results"
-        _cancel_event_collection = "cancel_events"
+        _worker_event_collection = "cancel_events"
 
         _namespacing: Namespacing
 
@@ -116,7 +116,7 @@ if _has_pytest:
                 cls._lock_collection: dict(),
                 cls._error_collection: dict(),
                 cls._result_collection: dict(),
-                cls._cancel_event_collection: dict(),
+                cls._worker_event_collection: dict(),
             }
             db_path.write_text(json.dumps(db))
 
@@ -136,7 +136,7 @@ if _has_pytest:
             task = Task.parse_obj(db[self._task_collection][task_key])
             update = {
                 "completed_at": result.completed_at,
-                "progress": 100.0,
+                "progress": 1.0,
                 "state": TaskState.DONE.value,
             }
             task = safe_copy(task, update=update)
@@ -253,7 +253,7 @@ if _has_pytest:
             elapsed = (datetime.now() - start).total_seconds()
             await asyncio.sleep(s)
             if progress is not None:
-                p = int(elapsed / duration * 100)
+                p = min(elapsed / duration, 1.0)
                 await progress(p)
 
     @pytest.fixture(scope="session")
@@ -316,7 +316,7 @@ if _has_pytest:
                 task_id=task_id, requeue=requeue, cancelled_at=datetime.now()
             )
             db = self._read()
-            db[self._cancel_event_collection][key] = event.dict()
+            db[self._worker_event_collection][key] = event.dict()
             self._write(db)
 
         async def get_task(self, task_id: str) -> Task:
@@ -567,17 +567,17 @@ if _has_pytest:
             self._write(db)
             return task
 
-        async def _consume_cancelled(self) -> CancelTaskEvent:
+        async def _consume_worker_events(self) -> WorkerEvent:
             event = await self._consume_(
-                self._cancel_event_collection,
-                CancelTaskEvent,
+                self._worker_event_collection,
+                WorkerEvent,
                 namespace=self._namespace,
                 order=lambda e: e.cancelled_at,
             )
             db = self._read()
             db_name = self._get_task_db_name(event.task_id)
             key = self._task_key(event.task_id, db_name)
-            db[self._cancel_event_collection].pop(key)
+            db[self._worker_event_collection].pop(key)
             self._write(db)
             return event
 

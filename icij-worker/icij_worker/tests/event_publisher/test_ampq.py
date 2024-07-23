@@ -62,7 +62,7 @@ async def test_publisher_not_create_and_bind_exchanges_and_queues(rabbit_mq: str
     publisher = AMQPPublisher(broker_url=broker_url)
 
     # When
-    msg = "NOT_FOUND - no exchange 'exchangeMainEvents' in vhost '/'"
+    msg = "NOT_FOUND - no exchange 'exchangeManagerEvents' in vhost '/'"
     with pytest.raises(ChannelNotFoundEntity, match=msg):
         async with publisher:
             pass

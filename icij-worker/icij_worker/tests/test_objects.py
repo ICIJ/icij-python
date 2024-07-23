@@ -61,8 +61,8 @@ def test_precedence_sanity_check():
                 state=TaskState.QUEUED,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=50.0),
-            TaskUpdate(state=TaskState.RUNNING, progress=50.0),
+            ProgressEvent(task_id="task-id", progress=0.5),
+            TaskUpdate(state=TaskState.RUNNING, progress=0.5),
         ),
         (
             Task(
@@ -71,8 +71,8 @@ def test_precedence_sanity_check():
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=100),
-            TaskUpdate(state=TaskState.RUNNING, progress=100.0),
+            ProgressEvent(task_id="task-id", progress=1.0),
+            TaskUpdate(state=TaskState.RUNNING, progress=1.0),
         ),
         # Update error + retries
         (
@@ -136,7 +136,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
                 completed_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=100),
+            ProgressEvent(task_id="task-id", progress=1.0),
             None,
         ),
         # The task is on a final state, nothing is updated
@@ -173,7 +173,7 @@ def test_precedence_sanity_check():
                 state=TaskState.ERROR,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=100),
+            ProgressEvent(task_id="task-id", progress=1.0),
             None,
         ),
         (
@@ -183,7 +183,7 @@ def test_precedence_sanity_check():
                 state=TaskState.CANCELLED,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=50.0),
+            ProgressEvent(task_id="task-id", progress=0.5),
             None,
         ),
         (
@@ -314,3 +314,43 @@ def test_resolve_running_queued_state(
     resolved = TaskState.resolve_update_state(task, updated)
     # Then
     assert resolved == expected
+
+
+def test_error_event_ser():
+    # Given
+    event = ErrorEvent(
+        task_id="task-id",
+        retries=4,
+        error=TaskError(
+            id="error-id",
+            task_id="task-id",
+            name="some-error",
+            message="some message",
+            stacktrace=[
+                StacktraceItem(name="SomeError", file="some details", lineno=666)
+            ],
+            occurred_at=_ERROR_OCCURRED_AT,
+        ),
+        state=TaskState.QUEUED,
+    )
+    # When
+    ser = event.dict(exclude_unset=True, by_alias=True)
+    # Then
+    expected = {
+        "@type": "ErrorEvent",
+        "error": {
+            "@type": "TaskError",
+            "id": "error-id",
+            "message": "some message",
+            "name": "some-error",
+            "occurredAt": _ERROR_OCCURRED_AT,
+            "stacktrace": [
+                {"file": "some details", "lineno": 666, "name": "SomeError"}
+            ],
+            "taskId": "task-id",
+        },
+        "retries": 4,
+        "state": TaskState.QUEUED,
+        "taskId": "task-id",
+    }
+    assert ser == expected

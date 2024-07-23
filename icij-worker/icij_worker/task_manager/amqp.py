@@ -67,9 +67,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self._worker_evt_x: Optional[AbstractExchange] = None
         self._res_and_err_x: Optional[AbstractExchange] = None
 
-        self._evt_messages_it: Optional[AbstractQueueIterator] = None
-        self._err_messages_it: Optional[AbstractQueueIterator] = None
-        self._res_and_err_messages_it: Optional[AbstractQueueIterator] = None
+        self._manager_messages_it: Optional[AbstractQueueIterator] = None
 
         self._task_namespaces: Dict[str, Optional[str]] = dict()
 
@@ -78,12 +76,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._exit_stack.__aenter__()
         await self._exit_stack.enter_async_context(self._storage)
         await self._connection_workflow()
-        self._evt_messages_it = (
-            await self._get_queue_iterator(self.evt_routing(), declare_exchanges=False)
-        )[0]
-        self._res_and_err_messages_it = (
+        self._manager_messages_it = (
             await self._get_queue_iterator(
-                self.res_and_err_routing(), declare_exchanges=False
+                self.manager_evt_routing(), declare_exchanges=False
             )
         )[0]
         logger.info("starting consume loops..")
@@ -211,11 +206,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self._task_x = await self._channel.get_exchange(
             self.default_task_routing().exchange.name, ensure=True
         )
-        self._evt_messages_it = await self._channel.get_exchange(
-            self.default_task_routing().exchange.name, ensure=True
-        )
-        self._res_and_err_x = await self._channel.get_exchange(
-            self.res_and_err_routing().exchange.name, ensure=True
+        self._manager_evt_x = await self._channel.get_exchange(
+            self.manager_evt_routing().exchange.name, ensure=True
         )
         self._worker_evt_x = await self._channel.get_exchange(
             self.worker_evt_routing().exchange.name, ensure=True
@@ -225,36 +217,30 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     @cached_property
     def _other_routings(self) -> List[Routing]:
         worker_events_routing = AMQPMixin.worker_evt_routing()
-        events_routing = AMQPMixin.evt_routing()
-        res_and_err_routing = AMQPMixin.res_and_err_routing()
-        return [events_routing, worker_events_routing, res_and_err_routing]
+        manager_events_routing = AMQPMixin.manager_evt_routing()
+        return [worker_events_routing, manager_events_routing]
 
-    async def _consume_events(self):
-        while True:
-            message: AbstractIncomingMessage = await self._evt_messages_it.__anext__()
-            await message.ack()
-            event = cast(TaskEvent, Message.parse_raw(message.body))
-            logger.debug("saving event for task: %s", event.task_id)
-            await self._storage.save_event(event)
-
-    async def _consume_result_and_errors(self):
+    async def _consume(self):
         while True:
             message: AbstractIncomingMessage = (
-                await self._res_and_err_messages_it.__anext__()
+                await self._manager_messages_it.__anext__()
             )
             await message.ack()
-            msg = Message.parse_raw(message.body)
+            msg = cast(TaskEvent, Message.parse_raw(message.body))
             if isinstance(msg, TaskResult):
                 logger.debug("saving result for task: %s", msg.task_id)
                 await self._storage.save_result(msg)
             elif isinstance(msg, TaskError):
                 logger.debug("saving error: %s", msg)
                 await self._storage.save_error(msg)
+            elif isinstance(msg, TaskEvent):
+                logger.debug("saving event: %s", msg)
+                await self._storage.save_event(msg)
             else:
                 raise TypeError(f"unexpected message type {msg.__class__}")
 
     def _start_loops(self):
-        self._loops = [self._consume_result_and_errors(), self._consume_events()]
+        self._loops = [self._consume()]
         self._loops = [self._loop.create_task(t) for t in self._loops]
         callback = functools.partial(stop_other_tasks_when_exc, others=self._loops)
         for loop in self._loops:
