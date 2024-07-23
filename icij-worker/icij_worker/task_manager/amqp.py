@@ -76,6 +76,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def __aenter__(self) -> AMQPTaskManager:
         logger.info("starting task manager connection workflow...")
         await self._exit_stack.__aenter__()
+        await self._exit_stack.enter_async_context(self._storage)
         await self._connection_workflow()
         self._evt_messages_it = (
             await self._get_queue_iterator(self.evt_routing(), declare_exchanges=False)
