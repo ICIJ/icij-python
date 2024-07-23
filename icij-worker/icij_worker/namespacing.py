@@ -3,23 +3,25 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Callable, Optional
 
-from aio_pika import ExchangeType
-
 from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
 from icij_common.test_utils import TEST_DB
 
+try:
+    from aio_pika import ExchangeType
 
-class Exchange(NoEnumModel, LowerCamelCaseModel):
-    name: str
-    type: ExchangeType
+    class Exchange(NoEnumModel, LowerCamelCaseModel):
+        name: str
+        type: ExchangeType
 
+    class Routing(LowerCamelCaseModel):
+        exchange: Exchange
+        routing_key: str
+        queue_name: str
+        dead_letter_routing: Optional[Routing] = None
 
-class Routing(LowerCamelCaseModel):
-    exchange: Exchange
-    routing_key: str
-    queue_name: str
-    dead_letter_routing: Optional[Routing] = None
+except ImportError:
+    pass
 
 
 class Namespacing:
@@ -47,6 +49,7 @@ class Namespacing:
         if task_namespace is not None:
             routing_key += f".{task_namespace}"
             queue_name += f".{task_namespace}"
+
         return Routing(
             exchange=Exchange(name=exchange_name, type=ExchangeType.DIRECT),
             routing_key=routing_key,
