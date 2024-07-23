@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "icij-worker"
-version = "0.4.3"
+version = "0.4.4"
 description = "Create asynchronous tasks from Python functions"
 authors = [
     "Clément Doumouro <cdoumouro@icij.org>",
