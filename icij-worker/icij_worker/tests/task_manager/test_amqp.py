@@ -43,7 +43,7 @@ async def test_task_manager_enqueue(
     with fail_if_exception("failed to parse cancelled_at datetime"):
         datetime.fromisoformat(created_at)
     expected_json = {
-        "@type": "TaskCreation",
+        "@type": "Task",
         "id": "some-id",
         "state": "CREATED",
         "name": "hello_world",
@@ -82,7 +82,7 @@ async def test_task_manager_enqueue_with_namespace(
     with fail_if_exception("failed to parse cancelled_at datetime"):
         datetime.fromisoformat(created_at)
     expected_json = {
-        "@type": "TaskCreation",
+        "@type": "Task",
         "id": "some-id",
         "state": "CREATED",
         "name": "hello_world",
