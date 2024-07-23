@@ -199,16 +199,18 @@ async def test_get_tasks(
     expected_task: List[Task],
 ):
     # Given
-    store = fs_storage
+    storage = fs_storage
     # When
-    tasks = await store.get_tasks(namespace=namespace, task_name=task_name, state=state)
+    tasks = await storage.get_tasks(
+        namespace=namespace, task_name=task_name, state=state
+    )
     # Then
     assert tasks == expected_task
 
 
 async def test_get_result(fs_storage: TestableFSKeyValueStorage):
     # Given
-    store = fs_storage
+    storage = fs_storage
     db = _make_db(fs_storage.db_path, table_name="results")
     res = TaskResult(
         task_id="some-id", result="Hello world !", completed_at=datetime.now()
@@ -217,7 +219,7 @@ async def test_get_result(fs_storage: TestableFSKeyValueStorage):
         db["task-0"] = res.dict()
         db.commit()
     # When
-    result = await store.get_task_result(task_id="task-0")
+    result = await storage.get_task_result(task_id="task-0")
     # Then
     assert result == res
 

@@ -101,7 +101,11 @@ class FSKeyValueStorage(KeyValueStorage):
 
     def _make_db(self, filename: str, *, name: str) -> SqliteDict:
         return SqliteDict(
-            filename, tablename=name, encode=self._encode, decode=self._decode
+            filename,
+            tablename=name,
+            encode=self._encode,
+            decode=self._decode,
+            journal_mode="DEFAULT",
         )
 
     def _make_ns_dbs(self) -> Dict:

@@ -36,7 +36,7 @@ from icij_common.neo4j.migrate import (
 from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
-from icij_worker import AsyncApp, Namespacing, Neo4JTaskManager, Task
+from icij_worker import AsyncApp, Neo4JTaskManager, Task
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.objects import CancelTaskEvent, TaskState
@@ -395,7 +395,7 @@ def fs_storage_path(tmpdir: Path) -> Path:
 
 @pytest.fixture()
 async def fs_storage(fs_storage_path: Path) -> TestableFSKeyValueStorage:
-    store = TestableFSKeyValueStorage(fs_storage_path, namespacing=Namespacing())
+    store = TestableFSKeyValueStorage(fs_storage_path)
     async with store:
         yield store
 
