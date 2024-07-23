@@ -148,7 +148,7 @@ RETURN task"""
     id: 'task-1', 
     namespace: $namespace,
     name: 'hello_world',
-    progress: 66.6,
+    progress: 0.66,
     createdAt: $now,
     retries: 1,
     arguments: '{"greeted": "1"}'
@@ -367,7 +367,7 @@ class TestableAMQPPublisher(AMQPPublisher):
 
     @property
     def event_queue(self) -> str:
-        return self.__class__.evt_routing().queue_name
+        return self.__class__.manager_evt_routing().queue_name
 
 
 @pytest.fixture(scope="session")

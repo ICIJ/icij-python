@@ -247,12 +247,11 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return cls._validate_neo4j_datetime(value)
 
     @validator("progress")
-    def _validate_progress(cls, value: Optional[float]):
+    def _validate_progress(cls, value: float):
         # pylint: disable=no-self-argument
-        if isinstance(value, float) and not 0 <= value <= 100:
-            # We log here rather than raising since otherwise a single invalid log will
-            # prevent anything any deserialization related
-            logger.exception("progress is expected to be in [0, 100], found %s", value)
+        if value is not None and not 0 <= value <= 1.0:
+            msg = f"progress is expected to be in [0.0, 1.0], found {value}"
+            raise ValueError(msg)
         return value
 
     @final
@@ -441,18 +440,26 @@ class ErrorEvent(TaskEvent):
 class ProgressEvent(TaskEvent, FromTask):
     progress: float
 
+    @validator("progress")
+    def _validate_progress(cls, value: float):
+        # pylint: disable=no-self-argument
+        if not 0 <= value <= 1.0:
+            msg = f"progress is expected to be in [0.0, 1.0], found {value}"
+            raise ValueError(msg)
+        return value
+
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> ProgressEvent:
-        state = task.state
-        if state is TaskState.RUNNING and task.progress > 0:
-            # Publish state updates only at task start and completion
-            state = None
         event = cls(task_id=task.id, progress=task.progress, **kwargs)
         return event
 
 
+class WorkerEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+    pass
+
+
 @Message.register("CancelEvent")
-class CancelTaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+class CancelTaskEvent(WorkerEvent):
     task_id: str
     requeue: bool
     cancelled_at: datetime
@@ -508,7 +515,7 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
     @classmethod
     @lru_cache(maxsize=1)
     def done(cls, completed_at: Optional[datetime] = None) -> TaskUpdate:
-        return cls(progress=100, completed_at=completed_at, state=TaskState.DONE)
+        return cls(progress=1.0, completed_at=completed_at, state=TaskState.DONE)
 
 
 @Message.register("TaskResult")

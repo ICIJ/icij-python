@@ -56,8 +56,7 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         self._broker_url = broker_url
         self._connection_ = connection
         self._channel_: Optional[RobustChannel] = None
-        self._evt_x: Optional[AioPikaExchange] = None
-        self._res_and_err_x: Optional[AioPikaExchange] = None
+        self._manager_evt_x: Optional[AioPikaExchange] = None
         self._connection_timeout_s = connection_timeout_s
         self._reconnection_wait_s = reconnection_wait_s
         self._exit_stack = AsyncExitStack()
@@ -77,37 +76,29 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
 
     @cached_property
     def _routings(self) -> List[Routing]:
-        return [self.evt_routing(), self.res_and_err_routing()]
-
-    async def enqueue(self, result: TaskResult):
-        await self._publish_message(
-            result,
-            exchange=self._res_and_err_x,
-            routing_key=self.res_and_err_routing().routing_key,
-            mandatory=True,  # This is important
-        )
+        return [self.manager_evt_routing()]
 
     async def _publish_event(self, event: TaskEvent):
         await self._publish_message(
             event,
-            exchange=self._evt_x,
-            routing_key=self.evt_routing().routing_key,
+            exchange=self._manager_evt_x,
+            routing_key=self.manager_evt_routing().routing_key,
             mandatory=False,
         )
 
     async def publish_result(self, result: TaskResult):
         await self._publish_message(
             result,
-            exchange=self._res_and_err_x,
-            routing_key=self.res_and_err_routing().routing_key,
+            exchange=self._manager_evt_x,
+            routing_key=self.manager_evt_routing().routing_key,
             mandatory=True,  # This is important
         )
 
     async def publish_error(self, error: TaskError):
         await self._publish_message(
             error,
-            exchange=self._res_and_err_x,
-            routing_key=self.res_and_err_routing().routing_key,
+            exchange=self._manager_evt_x,
+            routing_key=self.manager_evt_routing().routing_key,
             mandatory=True,  # This is important
         )
 
@@ -129,12 +120,8 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         await self._exit_stack.enter_async_context(self._channel)
         await self._channel_.set_qos(1, global_=False)
         if self._declare_and_bind:
-            await self._create_routing(self.evt_routing())
-            await self._create_routing(self.res_and_err_routing())
-        self._evt_x = await self._channel.get_exchange(
-            self.evt_routing().exchange.name, ensure=True
-        )
-        self._res_and_err_x = await self._channel.get_exchange(
-            self.res_and_err_routing().exchange.name, ensure=True
+            await self._create_routing(self.manager_evt_routing())
+        self._manager_evt_x = await self._channel.get_exchange(
+            self.manager_evt_routing().exchange.name, ensure=True
         )
         self.info("channel opened !")

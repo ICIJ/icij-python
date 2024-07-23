@@ -42,7 +42,7 @@ from icij_worker import (
 )
 from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
 from icij_worker.exceptions import TaskAlreadyReserved, UnknownTask
-from icij_worker.objects import CancelTaskEvent
+from icij_worker.objects import CancelTaskEvent, WorkerEvent
 
 _TASK_MANDATORY_FIELDS_BY_ALIAS = {
     f for f in Task.schema(by_alias=True)["required"] if f != "id"
@@ -134,7 +134,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher):
         )
         return Task.from_neo4j({"task": task})
 
-    async def _consume_cancelled(self) -> CancelTaskEvent:
+    async def _consume_worker_events(self) -> WorkerEvent:
         return await self._consume_(
             functools.partial(_consume_cancelled_task_tx, namespace=self._namespace),
             refresh_interval_s=self._cancelled_tasks_refresh_interval_s,
@@ -232,7 +232,7 @@ RETURN task"""
 
 async def _consume_cancelled_task_tx(
     tx: neo4j.AsyncTransaction, namespace: Optional[str], **_
-) -> Optional[CancelTaskEvent]:
+) -> Optional[WorkerEvent]:
     where_ns = ""
     if namespace is not None:
         where_ns = f"AND task.{TASK_NAMESPACE} = $namespace"

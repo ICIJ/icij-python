@@ -15,6 +15,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_cancelled_event_created_at_v0_tx,
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
+    migrate_task_progress_v0_tx,
     migrate_task_type_to_name_v0,
 )
 
@@ -38,7 +39,7 @@ RETURN task"""
     id: 'task-1', 
     namespace: $namespace,
     name: 'hello_world',
-    progress: 66.6,
+    progress: 0.66,
     createdAt: $now,
     retries: 1,
     inputs: '{"greeted": "1"}'
@@ -63,6 +64,31 @@ RETURN task"""
     id: 'task-1', 
     namespace: $namespace,
     type: 'hello_world',
+    progress: 0.66,
+    createdAt: $now,
+    retries: 1,
+    arguments: '{"greeted": "1"}'
+ }) 
+RETURN task"""
+    await neo4j_test_driver.execute_query(query_1, now=_NOW, namespace=namespace)
+
+
+@pytest.fixture(scope="function")
+async def populate_tasks_legacy_v2(neo4j_test_driver: neo4j.AsyncDriver, request):
+    namespace = getattr(request, "param", None)
+    query_0 = """CREATE (task:_Task:QUEUED {
+    namespace: $namespace,
+    id: 'task-0', 
+    name: 'hello_world',
+    createdAt: $now,
+    arguments: '{"greeted": "0"}'
+ }) 
+RETURN task"""
+    await neo4j_test_driver.execute_query(query_0, now=_NOW, namespace=namespace)
+    query_1 = """CREATE (task:_Task:RUNNING {
+    id: 'task-1', 
+    namespace: $namespace,
+    name: 'hello_world',
     progress: 66.6,
     createdAt: $now,
     retries: 1,
@@ -223,7 +249,7 @@ async def test_migrate_task_inputs_to_arguments_v0_tx(
             name="hello_world",
             arguments={"greeted": "1"},
             state=TaskState.RUNNING,
-            progress=66.6,
+            progress=0.66,
             created_at=datetime.now(),
             retries=1,
         ),
@@ -276,7 +302,7 @@ ON (task.{TASK_TYPE_DEPRECATED})"""
                 name="hello_world",
                 arguments={"greeted": "1"},
                 state=TaskState.RUNNING,
-                progress=66.6,
+                progress=0.66,
                 created_at=datetime.now(),
                 retries=1,
             ),
@@ -293,3 +319,49 @@ ON (task.{TASK_TYPE_DEPRECATED})"""
             t.pop("createdAt")
         retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
         assert retrieved_tasks == expected
+
+
+async def test_migrate_task_progress_v0_tx(
+    neo4j_test_driver: neo4j.AsyncDriver, populate_tasks_legacy_v2
+):
+    # pylint: disable=unused-argument
+    # Given
+    task_manager = Neo4JTaskManager(
+        "test-app", neo4j_test_driver, max_task_queue_size=10
+    )
+    driver = task_manager.driver
+    # When
+    async with driver.session() as session:
+        await session.execute_write(migrate_task_progress_v0_tx)
+
+    # Then / When
+    expected = [
+        Task(
+            id="task-0",
+            name="hello_world",
+            arguments={"greeted": "0"},
+            state=TaskState.QUEUED,
+            created_at=datetime.now(),
+        ),
+        Task(
+            id="task-1",
+            name="hello_world",
+            arguments={"greeted": "1"},
+            state=TaskState.RUNNING,
+            progress=66.6 / 100,
+            created_at=datetime.now(),
+            retries=1,
+        ),
+    ]
+    expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
+    for t in expected:
+        t.pop("createdAt")
+    expected = sorted(expected, key=lambda x: x["id"])
+    retrieved_tasks = await task_manager.get_tasks(namespace=None)
+    retrieved_tasks = [
+        t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
+    ]
+    for t in retrieved_tasks:
+        t.pop("createdAt")
+    retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
+    assert retrieved_tasks == pytest.approx(expected, abs=0.01)

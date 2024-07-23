@@ -29,7 +29,7 @@ from icij_worker.event_publisher.amqp import (
 )
 from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
-from icij_worker.objects import CancelTaskEvent, TaskState
+from icij_worker.objects import Message, TaskState, WorkerEvent
 from icij_worker.utils.amqp import AMQPMixin
 from icij_worker.utils.from_config import T
 
@@ -99,7 +99,7 @@ class AMQPWorker(Worker, AMQPMixin):
             inactive_after_s=inactive_after_s,
         )
         cancel_evt_queue_name = f"{self.worker_evt_routing().queue_name}-{self._id}"
-        self._cancel_evt_routing = safe_copy(
+        self._worker_evt_routing = safe_copy(
             self.worker_evt_routing(), update={"queue_name": cancel_evt_queue_name}
         )
 
@@ -108,7 +108,7 @@ class AMQPWorker(Worker, AMQPMixin):
         self._task_queue_: Optional[RobustQueue] = None
         self._task_queue_iterator: Optional[AbstractQueueIterator] = None
         self._cancel_evt_queue_: Optional[RobustQueue] = None
-        self._cancel_evt_queue_iterator: Optional[AbstractQueueIterator] = None
+        self._worker_evt_queue_iterator: Optional[AbstractQueueIterator] = None
         self._task_routing: Optional[Routing] = None
         self._delivered: Dict[str, AbstractIncomingMessage] = dict()
 
@@ -130,7 +130,7 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._channel.set_qos(prefetch_count=1, global_=False)
         await self._exit_stack.enter_async_context(self._channel)
         await self._bind_task_queue()
-        await self._bind_cancel_event_queue()
+        await self._bind_worker_event_queue()
 
     async def _bind_task_queue(self):
         self._task_routing = self.task_routing(self._namespace)
@@ -150,17 +150,17 @@ class AMQPWorker(Worker, AMQPMixin):
         )
         await self._exit_stack.enter_async_context(self._task_queue_iterator)
 
-    async def _bind_cancel_event_queue(self):
-        self._cancel_evt_queue_iterator, _, _ = await self._get_queue_iterator(
-            self._cancel_evt_routing,
+    async def _bind_worker_event_queue(self):
+        self._worker_evt_queue_iterator, _, _ = await self._get_queue_iterator(
+            self._worker_evt_routing,
             declare_queues=True,  # The worker always creates its own transient queue
             durable_queues=False,
             declare_exchanges=self._declare_exchanges,
         )
-        self._cancel_evt_queue_iterator = cast(
-            AbstractAsyncContextManager, self._cancel_evt_queue_iterator
+        self._worker_evt_queue_iterator = cast(
+            AbstractAsyncContextManager, self._worker_evt_queue_iterator
         )
-        await self._exit_stack.enter_async_context(self._cancel_evt_queue_iterator)
+        await self._exit_stack.enter_async_context(self._worker_evt_queue_iterator)
 
     async def _aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
@@ -171,10 +171,10 @@ class AMQPWorker(Worker, AMQPMixin):
         self._delivered[task.id] = message
         return task
 
-    async def _consume_cancelled(self) -> CancelTaskEvent:
-        message: AbstractIncomingMessage = await self._cancel_events_it.__anext__()
+    async def _consume_worker_events(self) -> WorkerEvent:
+        message: AbstractIncomingMessage = await self._worker_events_it.__anext__()
         await message.ack()
-        event = CancelTaskEvent.parse_raw(message.body)
+        event = cast(WorkerEvent, Message.parse_raw(message.body))
         return event
 
     @property
@@ -188,14 +188,14 @@ class AMQPWorker(Worker, AMQPMixin):
         return self._task_queue_iterator
 
     @property
-    def _cancel_events_it(self) -> AbstractQueueIterator:
-        if self._cancel_evt_queue_iterator is None:
+    def _worker_events_it(self) -> AbstractQueueIterator:
+        if self._worker_evt_queue_iterator is None:
             msg = (
                 f"Worker as no cancel events iterator, "
                 f"please call {AMQPWorker.__aenter__} first"
             )
             raise ValueError(msg)
-        return self._cancel_evt_queue_iterator
+        return self._worker_evt_queue_iterator
 
     async def _acknowledge(self, task: Task):
         message = self._delivered[task.id]

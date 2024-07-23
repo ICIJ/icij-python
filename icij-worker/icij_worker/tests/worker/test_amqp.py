@@ -23,7 +23,13 @@ from icij_worker import (
     WorkerConfig,
 )
 from icij_worker.namespacing import Namespacing
-from icij_worker.objects import CancelTaskEvent, ProgressEvent, StacktraceItem
+from icij_worker.objects import (
+    CancelTaskEvent,
+    ErrorEvent,
+    ProgressEvent,
+    StacktraceItem,
+    TaskEvent,
+)
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     RABBITMQ_TEST_HOST,
@@ -170,7 +176,7 @@ async def test_worker_work_forever(
     broker_url = rabbit_mq
     connection = await connect_robust(url=broker_url)
     channel = await connection.channel()
-    res_routing = TestableAMQPWorker.res_and_err_routing()
+    res_routing = TestableAMQPWorker.manager_evt_routing()
 
     # When
     async with amqp_worker:
@@ -182,15 +188,17 @@ async def test_worker_work_forever(
         async with res_queue.iterator(timeout=receive_timeout) as messages:
             try:
                 async for message in messages:
-                    result = TaskResult.parse_raw(message.body)
+                    msg = Message.parse_raw(message.body)
+                    if not isinstance(msg, TaskResult):
+                        continue
                     break
             except asyncio.TimeoutError:
                 pytest.fail(f"Failed to receive result in less than {receive_timeout}")
         task = populate_tasks[0]
         expected_result = TaskResult(
-            task_id=task.id, result="Hello world !", completed_at=result.completed_at
+            task_id=task.id, result="Hello world !", completed_at=msg.completed_at
         )
-        assert result == expected_result
+        assert msg == expected_result
 
 
 @pytest.mark.parametrize(
@@ -364,17 +372,52 @@ async def test_worker_negatively_acknowledge(
         assert await async_true_after(expected, after_s=timeout), failure
 
 
+_ERROR_OCCURRED_AT = datetime.now()
+
+
+@pytest.mark.parametrize(
+    "event,expected_json",
+    [
+        (
+            ProgressEvent(task_id="some-id", progress=0.5),
+            '{"taskId": "some-id", "progress": 0.5, "@type": "ProgressEvent"}',
+        ),
+        (
+            ErrorEvent(
+                task_id="some-id",
+                retries=4,
+                error=TaskError(
+                    id="error-id",
+                    task_id="task-id",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
+                    occurred_at=_ERROR_OCCURRED_AT,
+                ),
+                state=TaskState.QUEUED,
+            ),
+            '{"taskId": "some-id", "error": {"id": "error-id", "taskId": "task-id", '
+            '"name": "some-error", "message": "some message", "stacktrace": [{"name": '
+            '"SomeError", "file": "some details", "lineno": 666}], "occurredAt": '
+            f'"{_ERROR_OCCURRED_AT.isoformat()}", "@type": "TaskError"}}, "retries": 4,'
+            ' "state": "QUEUED", "@type": "ErrorEvent"}',
+        ),
+    ],
+)
 async def test_publish_event(
     test_async_app: AsyncApp,
     amqp_worker: TestableAMQPWorker,
     rabbit_mq: str,
-    hello_world_task: Task,
+    event: TaskEvent,
+    expected_json: str,
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
     broker_url = rabbit_mq
-    task = hello_world_task
-    event = ProgressEvent(task_id=task.id, progress=50.0)
     # When
     async with amqp_worker:
         await amqp_worker.publish_event(event)
@@ -382,19 +425,14 @@ async def test_publish_event(
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
-        event_routing = amqp_worker.evt_routing()
+        event_routing = amqp_worker.manager_evt_routing()
         queue = await channel.get_queue(event_routing.queue_name)
         async with queue.iterator(timeout=2.0) as messages:
             async for message in messages:
-                received_event_json = json.loads(message.body)
+                received_event_json = message.body.decode()
                 break
-        expected_json = {
-            "@type": "ProgressEvent",
-            "progress": 50.0,
-            "taskId": "some-id",
-        }
         assert received_event_json == expected_json
-        assert Message.parse_obj(received_event_json) == event
+        assert Message.parse_obj(json.loads(received_event_json)) == event
 
 
 async def test_publish_error(
@@ -420,7 +458,7 @@ async def test_publish_error(
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
-        error_routing = amqp_worker.res_and_err_routing()
+        error_routing = amqp_worker.manager_evt_routing()
         error_queue = await channel.get_queue(error_routing.queue_name)
         async with error_queue.iterator(timeout=2.0) as messages:
             async for message in messages:
@@ -459,7 +497,7 @@ async def test_publish_result(
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
-        result_routing = amqp_worker.res_and_err_routing()
+        result_routing = amqp_worker.manager_evt_routing()
         result_queue = await channel.get_queue(result_routing.queue_name)
         async with result_queue.iterator(timeout=2.0) as messages:
             async for message in messages:
@@ -526,8 +564,7 @@ async def test_worker_connection_workflow(
     async with route_creator:
         # These are supposed to be created by the TM
         await route_creator._create_routing(route_creator.default_task_routing())
-        await route_creator._create_routing(route_creator.evt_routing())
-        await route_creator._create_routing(route_creator.res_and_err_routing())
+        await route_creator._create_routing(route_creator.manager_evt_routing())
         await route_creator.channel.declare_exchange(
             route_creator.worker_evt_routing().exchange.name, durable=True
         )
@@ -536,5 +573,5 @@ async def test_worker_connection_workflow(
         with fail_if_exception(msg):
             async with worker:
                 # Ensure that the worker created it own queue
-                expected_queue = "RUNNER_EVENT-test-worker"
+                expected_queue = "WORKER_EVENT-test-worker"
                 await route_creator.channel.get_queue(expected_queue, ensure=True)
