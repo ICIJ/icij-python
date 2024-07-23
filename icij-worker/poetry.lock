@@ -4,7 +4,7 @@
 name = "aio-pika"
 version = "9.4.2"
 description = "Wrapper around the aiormq for asyncio and humans"
-optional = false
+optional = true
 python-versions = "<4.0,>=3.8"
 files = [
     {file = "aio_pika-9.4.2-py3-none-any.whl", hash = "sha256:22e5fa27d10a3817dd24c031cc477953aaf7c3be5f4f25d2582a55ec229adc4c"},
@@ -115,7 +115,7 @@ speedups = ["Brotli", "aiodns", "brotlicffi"]
 name = "aiormq"
 version = "6.8.0"
 description = "Pure python AMQP asynchronous client library"
-optional = false
+optional = true
 python-versions = ">=3.8,<4.0"
 files = [
     {file = "aiormq-6.8.0-py3-none-any.whl", hash = "sha256:9a16174dcae4078c957a773d2f02d3dfd6c2fcf12c909dc244333a458f2aeab0"},
@@ -326,7 +326,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.3.0"
+version = "0.3.1"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -334,7 +334,12 @@ files = []
 develop = true
 
 [package.dependencies]
+neo4j = {version = "^5.0.0", optional = true}
 pydantic = "^1.10"
+
+[package.extras]
+fastapi = ["fastapi (>=0.99,<0.111)"]
+neo4j = ["neo4j (>=5.0.0,<6.0.0)"]
 
 [package.source]
 type = "directory"
@@ -555,7 +560,7 @@ files = [
 name = "pamqp"
 version = "3.3.0"
 description = "RabbitMQ Focused AMQP low-level library"
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "pamqp-3.3.0-py2.py3-none-any.whl", hash = "sha256:c901a684794157ae39b52cbf700db8c9aae7a470f13528b9d7b4e5f7202f8eb0"},
@@ -1046,7 +1051,12 @@ files = [
 idna = ">=2.0"
 multidict = ">=4.0"
 
+[extras]
+amqp = ["aio-pika"]
+fs = ["sqlitedict", "ujson"]
+neo4j = ["neo4j"]
+
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "76ca0265b37ce5ca8d3a4812542fabbad7e31a0b2102211b1020702586485ca4"
+content-hash = "27ff53c4d927d5a5263cc704847d6f1e59c571a319e16b4453cd0f39798009ae"

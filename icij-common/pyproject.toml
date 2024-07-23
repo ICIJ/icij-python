@@ -23,18 +23,20 @@ asyncio_mode = "auto"
 python = "^3.9"
 pydantic = "^1.10" # Sadly needed for now because of Pyinstaller
 
+# fastapi
+fastapi = { version = ">=0.99,<0.111", optional = true }
+# neo4j
+neo4j = { version = "^5.0.0", optional = true }
+
+[tool.poetry.extras]
+fastapi = ["fastapi"]
+neo4j = ["neo4j"]
+
 [tool.poetry.group.dev.dependencies]
 neo4j = "^5.0.0"
 pylint = "^3.1.0"
 pytest = "^7.2.1"
 pytest-asyncio = "^0.20.3"
-
-[tool.poetry.group.neo4j.dependencies]
-neo4j = "^5.0.0"
-
-
-[tool.poetry.group.fastapi.dependencies]
-fastapi = ">=0.99,<0.111"
 
 [build-system]
 requires = ["poetry-core"]

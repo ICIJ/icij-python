@@ -32,6 +32,22 @@ python = "^3.9"
 icij_common = "^0.3.0"
 typer = { extras = ["all"], version = "^0.12.3" }
 
+# amqp
+aio-pika = { version = "^9.4.0", optional = true }
+# fs
+sqlitedict = { version = "^2.1.0", optional = true }
+ujson = { version = "^5.10.0", optional = true }
+# neo4j
+neo4j = { version = "^5.0.0", optional = true }
+
+[tool.poetry.extras]
+amqp = ["aio-pika"]
+fs = ["sqlitedict", "ujson"]
+neo4j = ["neo4j"]
+
+[tool.poetry.group.fs.dependencies]
+sqlitedict = "^2.1.0"
+ujson = "^5.10.0"
 
 [tool.poetry.group.dev.dependencies]
 neo4j = "^5.0.0"
@@ -42,17 +58,6 @@ pytest-asyncio = "^0.20.3"
 icij-common = { path = "../icij-common", develop = true, extras = ["neo4j"] }
 aiohttp = "^3.9.3"
 
-[tool.poetry.group.neo4j.dependencies]
-icij-common = { version = "^0.3.0", extras = ["neo4j"] }
-neo4j = "^5.0.0"
-
-[tool.poetry.group.amqp.dependencies]
-aio-pika = "^9.4.0"
-
-
-[tool.poetry.group.fs.dependencies]
-sqlitedict = "^2.1.0"
-ujson = "^5.10.0"
 
 [build-system]
 requires = ["poetry-core"]
