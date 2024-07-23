@@ -27,7 +27,7 @@ jobs:
           # TODO: use a version matrix here
           python-version: 3.9
           cache: poetry
-      - run: cd icij-worker && poetry install -v --with dev --sync
+      - run: cd icij-worker && poetry install -v --with dev --all-extras --sync
       - name: Run tests
         run: |
           cd icij-worker
