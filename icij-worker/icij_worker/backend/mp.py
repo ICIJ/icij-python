@@ -5,6 +5,7 @@ import signal
 from concurrent.futures import (
     CancelledError,
     Future,
+    InvalidStateError,
     ProcessPoolExecutor,
     as_completed,
 )
@@ -112,6 +113,22 @@ def _get_mp_async_runner(
     return executor, futures
 
 
+def _cancel_other_callback(errored: Future, others: List[Future]):
+    try:
+        e = errored.exception()
+    except CancelledError:
+        return
+    if isinstance(e, CancelledError):
+        return
+    for task in others:
+        if task is errored:
+            continue
+        try:
+            task.cancel(f"cancelled by {errored}")
+        except InvalidStateError:
+            pass
+
+
 @contextmanager
 def _handle_executor_termination(
     executor: ProcessPoolExecutor, futures: Set[Future], handle_signals: bool
@@ -136,8 +153,6 @@ def _handle_executor_termination(
         for f in futures:
             if not f.done():
                 f.set_exception(exc)
-        for f in futures:
-            futures.discard(f)
         logger.info("Sending termination signal to workers (SIGTERM)...")
         executor.shutdown(wait=False, cancel_futures=True)
         logger.info("Terminated worker executor !")
@@ -168,13 +183,21 @@ def run_workers_with_multiprocessing_cm(
     for process_runner in worker_runners:
         future = process_runner()
         futures.add(future)
+    for f in futures:
+        f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
     logger.info("started %s workers for app %s", n_workers, app)
+    original_error = None
     with _handle_executor_termination(executor, futures, True):
         for f in as_completed(futures):
             try:
                 f.result()
             except CancelledError:
                 pass
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                original_error = e
+        del futures
+    if original_error:
+        raise original_error
 
 
 def run_workers_with_multiprocessing(
@@ -202,11 +225,18 @@ def run_workers_with_multiprocessing(
     for process_runner in worker_runners:
         future = process_runner()
         futures.add(future)
-        future.add_done_callback(futures.discard)
+    for f in futures:
+        f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
     logger.info("started %s workers for app %s", n_workers, app)
+    original_error = None
     with _handle_executor_termination(executor, futures, True):
         for f in as_completed(futures):
             try:
                 f.result()
             except CancelledError:
                 pass
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                original_error = e
+        del futures
+    if original_error:
+        raise original_error

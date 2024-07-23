@@ -197,7 +197,7 @@ class Registrable(ICIJModel, RegistrableMixin, ABC):
 class Message(Registrable): ...  # pylint: disable=multiple-statements
 
 
-@Message.register("TaskCreation")
+@Message.register("Task")
 class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     name: str
