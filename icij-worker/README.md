@@ -4,8 +4,14 @@
 
 ## Installation
 
+With AMQP:
 ```bash
-pip install icij-worker
+pip install icij-worker["amqp"]
+```
+
+With neo4j:
+```bash
+pip install icij-worker["neo4j"]
 ```
 
 ## Usage
@@ -41,10 +47,10 @@ Optionally add progress handlers for a better task monitoring:
 
 ```python
 @my_app.task
-def long_running_task(greeted: str, progress_handler: Callable[[float], None]) -> str:
-    progress_handler(0.0)
+def long_running_task(greeted: str, progress: Callable[[float], None]) -> str:
+    progress(0.0)
     greeting = f"Hello {greeted} !"
-    progress_handler(100.0)
+    progress(100.0)
     return greeting
 ```
 
