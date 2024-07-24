@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, final
 
 from icij_worker import Task, TaskState
-from icij_worker.exceptions import TaskAlreadyExists, UnknownTask
+from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask
 from icij_worker.namespacing import Namespacing
 from icij_worker.task_storage import TaskStorage
 
@@ -30,8 +30,9 @@ class TaskManager(TaskStorage, ABC):
             msg = f"invalid state {task.state}, expected {TaskState.CREATED}"
             raise ValueError(msg)
         try:
-            await self.get_task(task.id)
-            raise TaskAlreadyExists(task.id)
+            task = await self.get_task(task.id)
+            if task.state is TaskState.QUEUED:
+                raise TaskAlreadyQueued(task.id)
         except UnknownTask:
             pass
         await self.save_task(task, namespace)

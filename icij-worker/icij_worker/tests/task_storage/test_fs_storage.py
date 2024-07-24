@@ -67,10 +67,11 @@ async def test_save_task(fs_storage: TestableFSKeyValueStorage, hello_world_task
     task = hello_world_task
     db = _make_db(fs_storage.db_path, table_name="tasks")
     # When
-    await fs_storage.save_task(task)
+    is_new = await fs_storage.save_task(task, None)
     # Then
     with db:
         db_task = db.get(task.id)
+    assert is_new
     assert db_task is not None
     db_task.pop("namespace", None)
     db_task = Task.parse_obj(db_task)
@@ -82,7 +83,7 @@ async def test_save_task_with_different_ns_should_fail(
 ):
     # Given
     task = hello_world_task
-    await fs_storage.save_task(task)
+    await fs_storage.save_task(task, None)
     # When
     msg = re.escape(
         "DB task namespace (None) differs from save task namespace: some-namespace"
@@ -96,7 +97,7 @@ async def test_save_task_should_not_update_non_updatable_field(
 ):
     # Given
     task = hello_world_task
-    await fs_storage.save_task(task)
+    await fs_storage.save_task(task, None)
     updates = {
         "name": "another-type",
         "created_at": datetime.now(),
@@ -104,7 +105,8 @@ async def test_save_task_should_not_update_non_updatable_field(
     }
     updated = safe_copy(task, update=updates)
     # When
-    await fs_storage.save_task(updated)
+    is_new = await fs_storage.save_task(updated, None)
+    assert not is_new
     stored = await fs_storage.get_task(task.id)
     # Then
     assert stored == task
@@ -113,7 +115,7 @@ async def test_save_task_should_not_update_non_updatable_field(
 async def test_save_result(fs_storage: TestableFSKeyValueStorage):
     # Given
     task = task_1()
-    await fs_storage.save_task(task)
+    await fs_storage.save_task(task, None)
     result = TaskResult(
         task_id="task-1", result="some_result", completed_at=datetime.now()
     )
