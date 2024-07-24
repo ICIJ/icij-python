@@ -123,8 +123,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             namespace, task_name=task_name, state=state
         )
 
-    async def save_task(self, task: Task, namespace: Optional[str]):
-        await self._storage.save_task(task, namespace)
+    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
+        return await self._storage.save_task(task, namespace)
 
     async def save_result(self, result: TaskResult):
         await self._storage.save_result(result)

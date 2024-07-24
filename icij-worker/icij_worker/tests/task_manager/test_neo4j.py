@@ -16,7 +16,7 @@ from icij_worker import (
     TaskResult,
     TaskState,
 )
-from icij_worker.exceptions import MissingTaskResult, TaskAlreadyExists, TaskQueueIsFull
+from icij_worker.exceptions import MissingTaskResult, TaskAlreadyQueued, TaskQueueIsFull
 from icij_worker.objects import CancelTaskEvent, StacktraceItem
 
 
@@ -86,7 +86,7 @@ RETURN task, result"""
 
 
 @pytest.mark.parametrize(
-    "populate_tasks,namespace,task,,expected_task",
+    "populate_tasks,namespace,task,,expected_task,is_new",
     [
         # Insertion
         (
@@ -108,6 +108,7 @@ RETURN task, result"""
                 "name": "hello_world",
                 "createdAt": datetime.now(),
             },
+            True,
         ),
         # Insertion with ns
         (
@@ -130,6 +131,7 @@ RETURN task, result"""
                 "createdAt": datetime.now(),
                 "namespace": "some-namespace",
             },
+            True,
         ),
         # Update
         (
@@ -153,6 +155,7 @@ RETURN task, result"""
                 "createdAt": datetime.now(),
                 "name": "hello_world",
             },
+            False,
         ),
         # Update with ns
         (
@@ -177,6 +180,7 @@ RETURN task, result"""
                 "namespace": "some-namespace",
                 "createdAt": datetime.now(),
             },
+            False,
         ),
         # Should not update non updatable fields
         (
@@ -198,6 +202,7 @@ RETURN task, result"""
                 "name": "hello_world",
                 "createdAt": datetime.now(),
             },
+            False,
         ),
     ],
     indirect=["populate_tasks"],
@@ -208,12 +213,14 @@ async def test_save_task(
     task: Task,
     namespace: Optional[str],
     expected_task: Dict,
+    is_new: bool,
 ):
     ## pylint: disable=unused-argument
     # Given
     driver = neo4j_task_manager.driver
     # When
-    await neo4j_task_manager.save_task(task, namespace)
+    saved = await neo4j_task_manager.save_task(task, namespace)
+    assert saved == is_new
     # Then
     query = "MATCH (task:_Task { id: $taskId }) RETURN task"
     recs, _, _ = await driver.execute_query(query, taskId=task.id)
@@ -465,7 +472,7 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     await neo4j_task_manager.enqueue(task, namespace=None)
 
     # When/Then
-    with pytest.raises(TaskAlreadyExists):
+    with pytest.raises(TaskAlreadyQueued):
         await neo4j_task_manager.enqueue(task, namespace=None)
 
 

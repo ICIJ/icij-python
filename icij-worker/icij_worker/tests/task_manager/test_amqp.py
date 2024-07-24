@@ -9,7 +9,7 @@ from aio_pika import DeliveryMode, Message
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import Task, TaskError, TaskState
-from icij_worker.exceptions import TaskAlreadyExists, TaskQueueIsFull, UnknownTask
+from icij_worker.exceptions import TaskAlreadyQueued, TaskQueueIsFull, UnknownTask
 from icij_worker.objects import ErrorEvent, ProgressEvent, StacktraceItem, TaskResult
 from icij_worker.tests.conftest import (
     TestableAMQPTaskManager,
@@ -103,7 +103,7 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     await task_manager.enqueue(task, namespace=None)
 
     # When/Then
-    with pytest.raises(TaskAlreadyExists):
+    with pytest.raises(TaskAlreadyQueued):
         await task_manager.enqueue(task, namespace=None)
 
 

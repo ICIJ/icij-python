@@ -157,9 +157,11 @@ if _has_pytest:
             self._write(db)
 
         async def save_task(self, task: Task, namespace: Optional[str]):
+            new_task = False
             try:
                 ns = await self.get_task_namespace(task_id=task.id)
             except UnknownTask:
+                new_task = True
                 if namespace is not None:
                     db_name = self._namespacing.test_db(namespace)
                 else:
@@ -184,6 +186,7 @@ if _has_pytest:
             db[self._task_collection][task_key] = updated
             self._write(db)
             self._task_meta[task.id] = (db_name, namespace)
+            return new_task
 
     @pytest.fixture(scope="session")
     def mock_db_session() -> Path:

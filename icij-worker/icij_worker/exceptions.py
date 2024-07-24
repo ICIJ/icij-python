@@ -36,9 +36,9 @@ class TaskAlreadyCancelled(ICIJWorkerError, RuntimeError):
         super().__init__(f'Task(id="{task_id}") has been cancelled')
 
 
-class TaskAlreadyExists(ICIJWorkerError, ValueError):
+class TaskAlreadyQueued(ICIJWorkerError, ValueError):
     def __init__(self, task_id: Optional[str] = None):
-        msg = f'task "{task_id}" already exists'
+        msg = f'task "{task_id}" is already queued'
         super().__init__(msg)
 
 

@@ -91,17 +91,18 @@ class Neo4jStorage(TaskStorage):
         except KeyError as e:
             raise UnknownTask(task_id) from e
 
-    async def save_task(self, task: Task, namespace: Optional[str]):
+    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
         db = self._namespacing.neo4j_db(namespace)
         async with self._db_session(db) as sess:
             task_props = task.dict(by_alias=True, exclude_unset=True)
-            await sess.execute_write(
+            new_task = await sess.execute_write(
                 _save_task_tx,
                 task_id=task.id,
                 task_props=task_props,
                 namespace=namespace,
             )
         self._task_meta[task.id] = (db, namespace)
+        return new_task
 
     async def save_result(self, result: TaskResult):
         async with self._task_session(result.task_id) as sess:
@@ -172,12 +173,11 @@ async def _save_task_tx(
     task_id: str,
     task_props: Dict,
     namespace: Optional[str],
-):
+) -> bool:
     query = f"MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }}) RETURN task"
     res = await tx.run(query, taskId=task_id)
     existing = None
     task_props = deepcopy(task_props)
-
     try:
         existing = await res.single(strict=True)
     except ResultNotSingleError:
@@ -198,6 +198,7 @@ async def _save_task_tx(
         raise ValueError(msg)
     query = f"MERGE (task:{TASK_NODE} {{{TASK_ID}: $taskId }}) SET task += $taskProps"
     await tx.run(query, taskId=task_id, taskProps=task_props)
+    return existing is None
 
 
 async def _save_result_tx(

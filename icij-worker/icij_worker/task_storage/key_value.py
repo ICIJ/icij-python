@@ -19,12 +19,14 @@ class KeyValueStorage(TaskStorage, ABC):
             namespacing = Namespacing()
         self._namespacing = namespacing
 
-    async def save_task(self, task: Task, namespace: Optional[str] = None):
+    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
         """When possible override this to be transactional"""
         key = self._key(task.id, obj_cls=TaskResult)
+        new_task = False
         try:
             ns = await self.get_task_namespace(task_id=task.id)
         except UnknownTask:
+            new_task = True
             task = task.dict(exclude_unset=True)
             task["namespace"] = namespace
             await self._insert(self._tasks_db_name, task, key=key)
@@ -37,6 +39,7 @@ class KeyValueStorage(TaskStorage, ABC):
                 raise ValueError(msg)
             update = TaskUpdate.from_task(task).dict(exclude_none=True, by_alias=True)
             await self._update(self._tasks_db_name, update, key=key)
+        return new_task
 
     async def save_result(self, result: TaskResult):
         res_key = self._key(result.task_id, obj_cls=TaskResult)
