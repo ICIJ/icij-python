@@ -39,7 +39,7 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 from icij_worker import AsyncApp, Neo4JTaskManager, Task
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.objects import CancelTaskEvent, TaskState
+from icij_worker.objects import CancelEvent, TaskState
 from icij_worker.task_manager.amqp import AMQPTaskManager
 from icij_worker.task_storage.fs import FSKeyValueStorage
 from icij_worker.task_storage.neo4j_ import (
@@ -164,7 +164,7 @@ RETURN task"""
 @pytest.fixture(scope="function")
 async def populate_cancel_events(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
-) -> List[CancelTaskEvent]:
+) -> List[CancelEvent]:
     namespace = getattr(request, "param", None)
     query_0 = """MATCH (task:_Task { id: $taskId })
 SET task.namespace = $namespace
@@ -173,7 +173,7 @@ RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
         query_0, now=datetime.now(), taskId=populate_tasks[0].id, namespace=namespace
     )
-    return [CancelTaskEvent.from_neo4j(recs_0[0])]
+    return [CancelEvent.from_neo4j(recs_0[0])]
 
 
 class Recoverable(ValueError):

@@ -42,7 +42,7 @@ from icij_worker import (
 )
 from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
 from icij_worker.exceptions import TaskAlreadyReserved, UnknownTask
-from icij_worker.objects import CancelTaskEvent, WorkerEvent
+from icij_worker.objects import CancelEvent, WorkerEvent
 
 _TASK_MANDATORY_FIELDS_BY_ALIAS = {
     f for f in Task.schema(by_alias=True)["required"] if f != "id"
@@ -249,7 +249,7 @@ LIMIT 1
         event = await res.single(strict=True)
     except ResultNotSingleError:
         return None
-    return CancelTaskEvent.from_neo4j(event)
+    return CancelEvent.from_neo4j(event)
 
 
 async def _acknowledge_task_tx(

@@ -28,7 +28,7 @@ class HandleSignalsMixin(LogWithNameMixin, ABC):
             self._setup_child_process_signal_handlers()
 
     async def _signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
-        async with self._cancellation_lock:
+        async with self.cancel_condition:
             self._worker_cancelled = True
             self.exception("received %s", signal_name)
             self._graceful_shutdown = graceful

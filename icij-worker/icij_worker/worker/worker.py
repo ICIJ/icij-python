@@ -9,6 +9,7 @@ import socket
 import threading
 import traceback
 from abc import abstractmethod
+from asyncio import FIRST_COMPLETED
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
@@ -44,7 +45,7 @@ from icij_worker.exceptions import (
 )
 from icij_worker.namespacing import Namespacing
 from icij_worker.objects import (
-    CancelTaskEvent,
+    CancelEvent,
     CancelledEvent,
     ErrorEvent,
     ProgressEvent,
@@ -59,6 +60,7 @@ logger = logging.getLogger(__name__)
 PROGRESS_HANDLER_ARG = "progress"
 
 C = TypeVar("C", bound="WorkerConfig")
+WE = TypeVar("WE", bound=WorkerEvent)
 
 
 class Worker(
@@ -89,14 +91,9 @@ class Worker(
         self._watch_cancelled_task: Optional[asyncio.Task] = None
         self._already_exiting = False
         self._current: Optional[Task] = None
-        self._cancel_asked: Dict[str, CancelTaskEvent] = dict()
-        self._cancelling: Optional[str] = None
+        self._worker_events: Dict[Type[WE], Dict[str, WE]] = {CancelEvent: dict()}
         self._config: Optional[C] = None
-        # We use asyncio lock, not thread lock, since the worker is supposed run in a
-        # single thread (not thread-safe for now)
-        self._cancellation_lock = asyncio.Lock()
-        # Not sure if this is even necessary, since there might be a single loop
-        # reading and writing the current stuf
+        self._cancel_condition = asyncio.Condition()
         self._current_lock = asyncio.Lock()
         self._successful_exit = False
 
@@ -114,6 +111,10 @@ class Worker(
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
         return self._loop
+
+    @property
+    def cancel_condition(self) -> asyncio.Condition:
+        return self._cancel_condition
 
     @property
     def _namespacing(self) -> Optional[Namespacing]:
@@ -168,9 +169,9 @@ class Worker(
                 self.info("tried to consume a cancelled task, skipping...")
                 continue
 
-    def _get_cancel_event(self, task: Task) -> CancelTaskEvent:
+    def _get_worker_event(self, task: Task, type: Type[WE]) -> WE:
         try:
-            return self._cancel_asked[task.id]
+            return self._worker_events[type][task.id]
         except KeyError as e:
             raise UnknownTask(task_id=task.id, worker_id=self._id) from e
 
@@ -223,7 +224,7 @@ class Worker(
             await self.publish_event(progress_event)
             self.info('Task(id="%s") successful !', progress_event.task_id)
         except asyncio.CancelledError as e:
-            await self._handle_cancel_event(e)
+            await self._handle_task_cancellation(e)
         except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
             # Let this bubble up and the worker continue without recording anything
             raise e
@@ -263,7 +264,7 @@ class Worker(
             await self.publish_event(progress_event)
             self.info('Task(id="%s") successful !', progress_event.task_id)
         except asyncio.CancelledError as e:
-            await self._handle_cancel_event(e)
+            await self._handle_task_cancellation(e)
         except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
             # Let this bubble up and the worker continue without recording anything
             raise e
@@ -308,8 +309,45 @@ class Worker(
         else:
             await self.requeue(task, is_error=True)
 
-    async def _handle_cancel_event(self, e: asyncio.CancelledError):
-        async with self._current_lock, self._cancellation_lock:
+    async def _handle_cancel_event(self, cancel_event: CancelEvent):
+        async with self.cancel_condition, self._current_lock:
+            if self._current is None:
+                self.info(
+                    'Task(id="%s") completed before cancellation was effective, '
+                    "skipping cancellation!",
+                    cancel_event.task_id,
+                )
+                return
+            if self._current.id != cancel_event.task_id:
+                self.info(
+                    'worker switched to Task(id="%s") before it could cancel'
+                    ' Task(id="%s"), skipping cancellation!',
+                    self._current.id,
+                    cancel_event.task_id,
+                )
+                return
+            self.info(
+                'received cancel event for Task(id="%s"), cancelling it !',
+                cancel_event.task_id,
+            )
+            self._work_once_task.cancel()
+            sent_cancelled = asyncio.create_task(self.cancel_condition.wait())
+            finished_task = self._work_once_task
+            await asyncio.wait(
+                [finished_task, sent_cancelled], return_when=FIRST_COMPLETED
+            )
+            if not sent_cancelled.done():
+                try:
+                    finished_task.result()
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    self.info(
+                        'Task(id="%s") worker failed to cancel task because of %s',
+                        cancel_event.task_id,
+                        e,
+                    )
+
+    async def _handle_task_cancellation(self, e: asyncio.CancelledError):
+        async with self.cancel_condition:
             if self._worker_cancelled:
                 # we just raise and the Worker.__aexit__ will take care of
                 # handling worker shutdown gracefully
@@ -320,7 +358,7 @@ class Worker(
                     " in between, discarding cancel event !"
                 )
                 return
-            event = self._get_cancel_event(self._current)
+            event = self._get_worker_event(self._current, CancelEvent)
             update = {
                 "state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED
             }
@@ -335,8 +373,7 @@ class Worker(
                 await self._negatively_acknowledge_(self._current, is_error=False)
                 self._current = None
             await self.publish_event(cancelled_event)
-            self._cancelling = None
-            self._cancel_asked.pop(cancelled_event.task_id)
+            self.cancel_condition.notify()
 
     @functools.cached_property
     def _late_ack(self) -> bool:
@@ -446,36 +483,21 @@ class Worker(
         return task_fn, recoverable
 
     @final
-    async def _watch_cancelled(self):
+    async def _watch_worker_events(self):
         try:
             while True:
-                cancel_event = await self._consume_worker_events()
-                cancel_task_id = cancel_event.task_id
-                cant_handle = (
-                    cancel_task_id in self._cancel_asked or self._current is None
-                )
-                if cant_handle:
+                worker_event = await self._consume_worker_events()
+                event_task_id = worker_event.task_id
+                existing_events = self._worker_events[worker_event.__class__]
+                already_received = event_task_id in existing_events
+                not_processing = self._current is None
+                if already_received or not_processing:
                     continue
-                async with self._current_lock, self._cancellation_lock:
-                    # async with self._current_lock, self._cancellation_lock:
-                    if cancel_task_id not in self._cancel_asked:
-                        self._cancel_asked[cancel_task_id] = cancel_event
-                    else:
-                        continue
-                    if self._current.id != cancel_task_id:
-                        continue
-                    already_cancelling = self._cancelling == cancel_task_id
-                    if already_cancelling:
-                        continue
-                    # TODO: we might want to ignore the signal went the last
-                    #  cancellation was asked recently to avoid queued/cancelled loops
-                    self._cancelling = cancel_task_id
-                    self.info(
-                        'received cancel event for Task(id="%s"), cancelling it !',
-                        cancel_task_id,
-                    )
-                    self._work_once_task.cancel()
-                await self._work_once_task
+                existing_events[event_task_id] = worker_event
+                if isinstance(worker_event, CancelEvent):
+                    await self._handle_cancel_event(worker_event)
+                else:
+                    raise ValueError(f"unexpected event type {worker_event}")
         except Exception as fatal_error:
             async with self._current_lock:
                 if self._current is not None:
@@ -506,7 +528,7 @@ class Worker(
     async def __aenter__(self):
         await self._aenter__()
         # Start watching cancelled tasks
-        self._watch_cancelled_task = self._loop.create_task(self._watch_cancelled())
+        self._watch_cancelled_task = self._loop.create_task(self._watch_worker_events())
 
     async def _aenter__(self):
         pass
@@ -616,8 +638,8 @@ async def _retry_task(
     worker.info('Task(id="%s") complete, saving result...', task.id)
     task = safe_copy(task, update={"completed_at": datetime.now()})
     result = TaskResult.from_task(task=task, result=task_res)
-    await worker.save_result(result)
-    return
+    async with worker.cancel_condition:
+        await worker.save_result(result)
 
 
 def add_missing_args(

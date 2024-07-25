@@ -3,7 +3,7 @@ import asyncio
 import functools
 import json
 from datetime import datetime
-from typing import ClassVar, Dict, List, Optional
+from typing import ClassVar, Dict, List, Optional, Type
 
 import pytest
 from aio_pika import Message as AMQPMessage, RobustConnection, connect_robust
@@ -24,7 +24,7 @@ from icij_worker import (
 )
 from icij_worker.namespacing import Namespacing
 from icij_worker.objects import (
-    CancelTaskEvent,
+    CancelEvent,
     ErrorEvent,
     ProgressEvent,
     StacktraceItem,
@@ -39,6 +39,7 @@ from icij_worker.tests.conftest import (
 )
 from icij_worker.utils.amqp import AMQPMixin
 from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
+from icij_worker.worker.worker import WE
 
 
 @WorkerConfig.register("test-amqp")
@@ -78,8 +79,8 @@ class TestableAMQPWorker(AMQPWorker):
         return self._publisher
 
     @property
-    def cancelled(self) -> Dict[str, CancelTaskEvent]:
-        return self._cancel_asked
+    def worker_events(self) -> Dict[Type[WE], Dict[str, WE]]:
+        return self._worker_events
 
     @property
     def late_ack(self) -> bool:
@@ -287,12 +288,12 @@ async def test_worker_consume_cancel_events(
         failure = f"failed to consume cancel event in less than {after_s}s"
 
         async def _received_event() -> bool:
-            return bool(amqp_worker.cancelled)
+            return bool(amqp_worker.worker_events[CancelEvent])
 
         assert await async_true_after(_received_event, after_s=after_s), failure
-        assert len(amqp_worker.cancelled) == 1
-        received_event = amqp_worker.cancelled.pop("some-id")
-        expected_event = CancelTaskEvent(
+        assert len(amqp_worker.worker_events) == 1
+        received_event = amqp_worker.worker_events[CancelEvent].pop("some-id")
+        expected_event = CancelEvent(
             task_id="some-id", requeue=requeue, cancelled_at=datetime.now()
         ).dict()
         assert isinstance(received_event.cancelled_at, datetime)

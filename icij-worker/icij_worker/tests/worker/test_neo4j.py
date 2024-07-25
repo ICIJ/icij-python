@@ -19,7 +19,7 @@ from icij_worker import (
     TaskState,
 )
 from icij_worker.objects import (
-    CancelTaskEvent,
+    CancelEvent,
     CancelledEvent,
     ErrorEvent,
     ProgressEvent,
@@ -133,7 +133,7 @@ async def test_should_consume_with_namespace(
 
 @pytest.mark.parametrize("worker", [None], indirect=["worker"])
 async def test_worker_consume_cancel_event(
-    populate_cancel_events: List[CancelTaskEvent], worker: Neo4jWorker
+    populate_cancel_events: List[CancelEvent], worker: Neo4jWorker
 ):
     # pylint: disable=unused-argument,protected-access
     # When

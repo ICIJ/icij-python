@@ -316,7 +316,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             update["state"] = state
         if isinstance(event, ErrorEvent) and event.state is not None:
             update["state"] = TaskState.resolve_update_state(self, updated)
-        if isinstance(event, (CancelTaskEvent, CancelledEvent)):
+        if isinstance(event, (CancelEvent, CancelledEvent)):
             cancelled_update = {
                 "state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED
             }
@@ -412,7 +412,7 @@ class TaskError(Message, LowerCamelCaseModel, FromTask):
         return trace
 
 
-class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, ABC):
+class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, ABC):
     task_id: str
 
     @classmethod
@@ -421,8 +421,16 @@ class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, ABC):
         return event
 
 
+class WorkerEvent(TaskEvent, ABC):
+    pass
+
+
+class ManagerEvent(TaskEvent, ABC):
+    pass
+
+
 @Message.register("ErrorEvent")
-class ErrorEvent(TaskEvent):
+class ErrorEvent(WorkerEvent):
     error: TaskError
     retries: Optional[int] = None
     state: Literal[TaskState.QUEUED, TaskState.ERROR]
@@ -437,7 +445,7 @@ class ErrorEvent(TaskEvent):
 
 
 @Message.register("ProgressEvent")
-class ProgressEvent(TaskEvent, FromTask):
+class ProgressEvent(WorkerEvent):
     progress: float
 
     @validator("progress")
@@ -454,12 +462,8 @@ class ProgressEvent(TaskEvent, FromTask):
         return event
 
 
-class WorkerEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
-    pass
-
-
 @Message.register("CancelEvent")
-class CancelTaskEvent(WorkerEvent):
+class CancelEvent(WorkerEvent):
     task_id: str
     requeue: bool
     cancelled_at: datetime
@@ -471,7 +475,7 @@ class CancelTaskEvent(WorkerEvent):
     @classmethod
     def from_neo4j(
         cls, record: "neo4j.Record", *, event_key: str = "event", task_key: str = "task"
-    ) -> CancelTaskEvent:
+    ) -> CancelEvent:
         task = record.get(task_key)
         event = record.get(event_key)
         task_id = task[TASK_ID]
@@ -481,7 +485,7 @@ class CancelTaskEvent(WorkerEvent):
 
 
 @Message.register("CancelledEvent")
-class CancelledEvent(TaskEvent, FromTask, Neo4jDatetimeMixin):
+class CancelledEvent(ManagerEvent):
     requeue: bool
     cancelled_at: datetime
 
