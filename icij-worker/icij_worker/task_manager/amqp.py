@@ -21,7 +21,7 @@ from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
 from icij_worker.objects import (
-    CancelTaskEvent,
+    CancelEvent,
     Message,
     TaskError,
     TaskEvent,
@@ -147,7 +147,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def _cancel(self, *, task_id: str, requeue: bool):
         cancelled_at = datetime.now()
-        cancel_event = CancelTaskEvent(
+        cancel_event = CancelEvent(
             task_id=task_id, requeue=requeue, cancelled_at=cancelled_at
         )
         # TODO: for now cancellation is not namespaced, workers from other namespace

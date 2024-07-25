@@ -6,7 +6,7 @@ from typing import Optional
 import pytest
 
 from icij_worker.objects import (
-    CancelTaskEvent,
+    CancelEvent,
     CancelledEvent,
     ErrorEvent,
     PRECEDENCE,
@@ -193,9 +193,7 @@ def test_precedence_sanity_check():
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
-            CancelTaskEvent(
-                task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME
-            ),
+            CancelEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
             TaskUpdate(
                 cancelled_at=_ANOTHER_TIME, state=TaskState.QUEUED, progress=0.0
             ),
@@ -207,9 +205,7 @@ def test_precedence_sanity_check():
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
-            CancelTaskEvent(
-                task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME
-            ),
+            CancelEvent(task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME),
             TaskUpdate(cancelled_at=_ANOTHER_TIME, state=TaskState.CANCELLED),
         ),
         (

@@ -17,7 +17,7 @@ from icij_worker import (
     TaskState,
 )
 from icij_worker.exceptions import MissingTaskResult, TaskAlreadyQueued, TaskQueueIsFull
-from icij_worker.objects import CancelTaskEvent, StacktraceItem
+from icij_worker.objects import CancelEvent, StacktraceItem
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -494,7 +494,7 @@ async def test_task_manager_cancel(
 RETURN task, event"""
     recs, _, _ = await driver.execute_query(query, taskId=task.id)
     assert len(recs) == 1
-    event = CancelTaskEvent.from_neo4j(recs[0])
+    event = CancelEvent.from_neo4j(recs[0])
     # Then
     assert event.task_id == task.id
     assert event.cancelled_at is not None

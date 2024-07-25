@@ -49,7 +49,7 @@ from icij_worker import (
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
-from icij_worker.objects import CancelTaskEvent, TaskUpdate, WorkerEvent
+from icij_worker.objects import CancelEvent, TaskUpdate, WorkerEvent
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
@@ -315,7 +315,7 @@ if _has_pytest:
         async def _cancel(self, *, task_id: str, requeue: bool):
             db = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db)
-            event = CancelTaskEvent(
+            event = CancelEvent(
                 task_id=task_id, requeue=requeue, cancelled_at=datetime.now()
             )
             db = self._read()
