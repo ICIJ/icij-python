@@ -10,24 +10,14 @@ from aio_pika.abc import (
     AbstractQueueIterator,
     AbstractRobustConnection,
 )
-from aiormq import DeliveryError
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
-from icij_worker import (
-    AsyncApp,
-    Task,
-    TaskError,
-    TaskEvent,
-    TaskResult,
-    Worker,
-    WorkerConfig,
-    WorkerType,
-)
+from icij_worker import (AsyncApp, ManagerEvent, ResultEvent, Task, TaskError, Worker,
+                         WorkerConfig, WorkerType)
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
-from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
 from icij_worker.objects import Message, TaskState, WorkerEvent
 from icij_worker.utils.amqp import AMQPMixin
@@ -208,25 +198,10 @@ class AMQPWorker(Worker, AMQPMixin):
         requeue = nacked.state is not TaskState.ERROR
         await message.nack(requeue=requeue)
 
-    async def _requeue(self, task: Task, acknowledge: bool):
-        delivered = self._delivered[task.id]
-        exchange = await self.channel.get_exchange(delivered.exchange)
-        try:
-            await self._publish_message(
-                task,
-                exchange=exchange,
-                routing_key=delivered.routing_key,
-                mandatory=True,  # This is important
-            )
-        except DeliveryError as e:
-            raise TaskQueueIsFull(None) from e
-        if acknowledge:
-            await self._acknowledge(task)
-
-    async def _publish_event(self, event: TaskEvent):
+    async def _publish_event(self, event: ManagerEvent):
         await self._publisher.publish_event(event)
 
-    async def _save_result(self, result: TaskResult):
+    async def _save_result(self, result: ResultEvent):
         await self._publisher.publish_result(result)
 
     async def _save_error(self, error: TaskError):

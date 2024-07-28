@@ -2,7 +2,7 @@ import pytest
 from aio_pika import ExchangeType, connect_robust
 from aiormq import ChannelNotFoundEntity
 
-from icij_worker import Task, TaskEvent
+from icij_worker import Task, ManagerEvent
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
@@ -51,7 +51,7 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     queue = await channel.get_queue(publisher.event_queue)
     async with queue.iterator(timeout=2.0) as messages:
         async for message in messages:
-            received_event = TaskEvent.parse_raw(message.body)
+            received_event = ManagerEvent.parse_raw(message.body)
             break
     assert received_event == event
 

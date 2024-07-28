@@ -10,7 +10,7 @@ from neo4j.exceptions import ResultNotSingleError
 
 from icij_common.neo4j.constants import (
     TASK_ARGUMENTS,
-    TASK_CANCEL_EVENT_CANCELLED_AT,
+    TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_NODE,
     TASK_COMPLETED_AT,
@@ -30,6 +30,8 @@ from icij_common.neo4j.constants import (
     TASK_LOCK_NODE,
     TASK_LOCK_TASK_ID,
     TASK_LOCK_WORKER_ID,
+    TASK_MANAGER_EVENT_NODE,
+    TASK_MANAGER_EVENT_NODE_CREATED_AT,
     TASK_NAME,
     TASK_NAMESPACE,
     TASK_NODE,
@@ -41,7 +43,7 @@ from icij_common.neo4j.constants import (
 from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_common.pydantic_utils import jsonable_encoder
-from icij_worker import Task, TaskError, TaskResult, TaskState
+from icij_worker import ResultEvent, Task, TaskError, TaskState
 from icij_worker.exceptions import MissingTaskResult, UnknownTask
 from icij_worker.objects import TaskUpdate
 from icij_worker.task_storage import TaskStorage
@@ -63,7 +65,7 @@ class Neo4jStorage(TaskStorage):
         errors = [TaskError.from_neo4j(rec, task_id=task_id) for rec in recs]
         return errors
 
-    async def get_task_result(self, task_id: str) -> TaskResult:
+    async def get_task_result(self, task_id: str) -> ResultEvent:
         async with self._task_session(task_id) as sess:
             return await sess.execute_read(_get_task_result_tx, task_id=task_id)
 
@@ -101,10 +103,11 @@ class Neo4jStorage(TaskStorage):
                 task_props=task_props,
                 namespace=namespace,
             )
+
         self._task_meta[task.id] = (db, namespace)
         return new_task
 
-    async def save_result(self, result: TaskResult):
+    async def save_result(self, result: ResultEvent):
         async with self._task_session(result.task_id) as sess:
             res_str = json.dumps(jsonable_encoder(result.result))
             await sess.execute_write(
@@ -196,8 +199,14 @@ async def _save_task_tx(
             f" save task namespace: {namespace}"
         )
         raise ValueError(msg)
-    query = f"MERGE (task:{TASK_NODE} {{{TASK_ID}: $taskId }}) SET task += $taskProps"
-    await tx.run(query, taskId=task_id, taskProps=task_props)
+    query = f"""MERGE (t:{TASK_NODE} {{{TASK_ID}: $taskId }})
+SET t += $taskProps
+WITH t
+CALL apoc.create.setLabels(t, $labels) YIELD node AS task
+RETURN task"""
+    state = task_props.pop("state")
+    labels = [TASK_NODE, state.value]
+    await tx.run(query, taskId=task_id, taskProps=task_props, labels=labels)
     return existing is None
 
 
@@ -350,13 +359,13 @@ ORDER BY error.{TASK_ERROR_OCCURRED_AT} DESC
 
 async def _get_task_result_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str
-) -> TaskResult:
+) -> ResultEvent:
     query = f"""MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
 MATCH (task)-[:{TASK_HAS_RESULT_TYPE}]->(result:{TASK_RESULT_NODE})
 RETURN task, result
 """
     res = await tx.run(query, taskId=task_id)
-    results = [TaskResult.from_neo4j(t) async for t in res]
+    results = [ResultEvent.from_neo4j(t) async for t in res]
     if not results:
         raise MissingTaskResult(task_id)
     return results[0]
@@ -376,7 +385,7 @@ RETURN error
 
 async def migrate_cancelled_event_created_at_v0_tx(tx: neo4j.AsyncTransaction):
     query = f"""MATCH (event:{TASK_CANCEL_EVENT_NODE})
-SET event.{TASK_CANCEL_EVENT_CANCELLED_AT} 
+SET event.{TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED} 
     = event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
 REMOVE event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
 RETURN event
@@ -431,13 +440,25 @@ RETURN task
     await tx.run(query)
 
 
+async def migrate_index_event_dates_v0_tx(tx: neo4j.AsyncTransaction):
+    manager_event_query = f"""CREATE INDEX index_manager_events_created_at IF NOT EXISTS
+FOR (event:{TASK_MANAGER_EVENT_NODE})
+ON (event.{TASK_MANAGER_EVENT_NODE_CREATED_AT})"""
+    await tx.run(manager_event_query)
+    worker_event_query = f"""CREATE INDEX index_canceled_events_created_at IF NOT EXISTS
+FOR (event:{TASK_CANCEL_EVENT_NODE})
+ON (event.{TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED})"""
+    await tx.run(worker_event_query)
+
+
 # pylint: disable=line-too-long
-MIGRATIONS = {
-    "add_support_for_async_task_tx": add_support_for_async_task_tx,
-    "migrate_task_errors_v0": migrate_task_errors_v0_tx,
-    "migrate_cancelled_event_created_at_v0": migrate_cancelled_event_created_at_v0_tx,
-    "migrate_add_index_to_task_namespace_v0_tx": migrate_add_index_to_task_namespace_v0_tx,
-    "migrate_task_inputs_to_arguments_v0_tx": migrate_task_inputs_to_arguments_v0_tx,
-    "migrate_task_type_to_name_v0": migrate_task_type_to_name_v0,
-    "migrate_task_progress_v0_tx": migrate_task_progress_v0_tx,
-}
+MIGRATIONS = [
+    add_support_for_async_task_tx,
+    migrate_task_errors_v0_tx,
+    migrate_cancelled_event_created_at_v0_tx,
+    migrate_add_index_to_task_namespace_v0_tx,
+    migrate_task_inputs_to_arguments_v0_tx,
+    migrate_task_type_to_name_v0,
+    migrate_task_progress_v0_tx,
+    migrate_index_event_dates_v0_tx,
+]

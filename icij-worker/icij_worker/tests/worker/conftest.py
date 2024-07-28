@@ -1,7 +1,6 @@
 # pylint: disable=redefined-outer-name
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 import pytest
@@ -29,21 +28,3 @@ def make_app(namespacing: Optional[Namespacing] = None):
 @pytest.fixture(scope="module")
 def test_app() -> AsyncApp:
     return make_app()
-
-
-@pytest.fixture(
-    scope="function",
-    params=[{"app": "test_async_app"}, {"app": "test_async_app_late"}],
-)
-def mock_worker(mock_db: Path, request) -> MockWorker:
-    param = getattr(request, "param", dict())
-    app = request.getfixturevalue(param.get("app"))
-    worker = MockWorker(
-        app,
-        "test-worker",
-        namespace=param.get("namespace"),
-        db_path=mock_db,
-        task_queue_poll_interval_s=0.1,
-        teardown_dependencies=False,
-    )
-    return worker

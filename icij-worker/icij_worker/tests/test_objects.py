@@ -6,16 +6,16 @@ from typing import Optional
 import pytest
 
 from icij_worker.objects import (
-    CancelEvent,
     CancelledEvent,
     ErrorEvent,
     PRECEDENCE,
     ProgressEvent,
     READY_STATES,
+    ResultEvent,
     StacktraceItem,
     Task,
     TaskError,
-    TaskEvent,
+    ManagerEvent,
     TaskState,
     TaskUpdate,
 )
@@ -30,9 +30,9 @@ def test_precedence_sanity_check():
 
 
 @pytest.mark.parametrize(
-    "task,event,expected_update",
+    "task,event,max_retries,expected_task",
     [
-        # Update the state
+        # ProgresEvent
         (
             Task(
                 id="task-id",
@@ -41,19 +41,16 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", progress=0.0),
-            TaskUpdate(state=TaskState.RUNNING, progress=0.0),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
+                created_at=_CREATED_AT,
+                progress=0.0,
+            ),
         ),
         # State is updated when not in a final state
-        (
-            Task(
-                id="task-id",
-                name="hello_world",
-                state=TaskState.CREATED,
-                created_at=_CREATED_AT,
-            ),
-            ProgressEvent(task_id="task-id", progress=0.0),
-            TaskUpdate(state=TaskState.RUNNING, progress=0.0),
-        ),
         (
             Task(
                 id="task-id",
@@ -62,7 +59,14 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", progress=0.5),
-            TaskUpdate(state=TaskState.RUNNING, progress=0.5),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
+                created_at=_CREATED_AT,
+                progress=0.5,
+            ),
         ),
         (
             Task(
@@ -72,14 +76,43 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ProgressEvent(task_id="task-id", progress=1.0),
-            TaskUpdate(state=TaskState.RUNNING, progress=1.0),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
+                created_at=_CREATED_AT,
+                progress=1.0,
+            ),
         ),
-        # Update error + retries
+        # Result event
         (
             Task(
                 id="task-id",
                 name="hello_world",
-                state=TaskState.CREATED,
+                state=TaskState.RUNNING,
+                progress=0.5,
+                created_at=_CREATED_AT,
+            ),
+            ResultEvent(
+                task_id="task-id", result="some-result", completed_at=_ANOTHER_TIME
+            ),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.DONE,
+                progress=1.0,
+                created_at=_CREATED_AT,
+                completed_at=_ANOTHER_TIME,
+            ),
+        ),
+        # Error event can retry
+        (
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
             ErrorEvent(
@@ -97,20 +130,27 @@ def test_precedence_sanity_check():
                     ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
-                state=TaskState.QUEUED,
             ),
-            TaskUpdate(retries=4, state=TaskState.QUEUED, progress=0.0),
+            5,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.QUEUED,
+                created_at=_CREATED_AT,
+                retries=4,
+            ),
         ),
+        # Error event can't retry
         (
             Task(
                 id="task-id",
                 name="hello_world",
-                state=TaskState.CREATED,
+                state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
             ErrorEvent(
                 task_id="task-id",
-                retries=None,
+                retries=1,
                 error=TaskError(
                     id="error-id",
                     task_id="task-id",
@@ -123,9 +163,124 @@ def test_precedence_sanity_check():
                     ],
                     occurred_at=_ERROR_OCCURRED_AT,
                 ),
-                state=TaskState.ERROR,
             ),
-            TaskUpdate(retries=None, state=TaskState.ERROR),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.ERROR,
+                created_at=_CREATED_AT,
+                retries=1,
+            ),
+        ),
+        (
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
+                created_at=_CREATED_AT,
+            ),
+            ErrorEvent(
+                task_id="task-id",
+                retries=5,
+                error=TaskError(
+                    id="error-id",
+                    task_id="task-id",
+                    name="some-error",
+                    message="some message",
+                    stacktrace=[
+                        StacktraceItem(
+                            name="SomeError", file="some details", lineno=666
+                        )
+                    ],
+                    occurred_at=_ERROR_OCCURRED_AT,
+                ),
+            ),
+            5,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.ERROR,
+                created_at=_CREATED_AT,
+                retries=5,
+            ),
+        ),
+        # CancelledEvent, requeue
+        (
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.QUEUED,
+                created_at=_CREATED_AT,
+            ),
+            CancelledEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.QUEUED,
+                created_at=_CREATED_AT,
+                progress=0.0,
+            ),
+        ),
+        (
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
+                created_at=_CREATED_AT,
+                progress=0.5,
+            ),
+            CancelledEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.QUEUED,
+                created_at=_CREATED_AT,
+                progress=0.0,
+            ),
+        ),
+        # CancelledEvent, error
+        (
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.QUEUED,
+                created_at=_CREATED_AT,
+            ),
+            CancelledEvent(
+                task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME
+            ),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.CANCELLED,
+                cancelled_at=_ANOTHER_TIME,
+                created_at=_CREATED_AT,
+            ),
+        ),
+        (
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.RUNNING,
+                created_at=_CREATED_AT,
+                progress=0.5,
+            ),
+            CancelledEvent(
+                task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME
+            ),
+            None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.CANCELLED,
+                cancelled_at=_ANOTHER_TIME,
+                created_at=_CREATED_AT,
+                progress=0.5,
+            ),
         ),
         # Completed at is not updated
         (
@@ -138,6 +293,13 @@ def test_precedence_sanity_check():
             ),
             ProgressEvent(task_id="task-id", progress=1.0),
             None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.DONE,
+                created_at=_CREATED_AT,
+                completed_at=_CREATED_AT,
+            ),
         ),
         # The task is on a final state, nothing is updated
         (
@@ -149,7 +311,6 @@ def test_precedence_sanity_check():
             ),
             ErrorEvent(
                 task_id="task-id",
-                state=TaskState.ERROR,
                 retries=4,
                 error=TaskError(
                     id="error-id",
@@ -165,6 +326,12 @@ def test_precedence_sanity_check():
                 ),
             ),
             None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.DONE,
+                created_at=_CREATED_AT,
+            ),
         ),
         (
             Task(
@@ -175,6 +342,12 @@ def test_precedence_sanity_check():
             ),
             ProgressEvent(task_id="task-id", progress=1.0),
             None,
+            Task(
+                id="task-id",
+                name="hello_world",
+                state=TaskState.ERROR,
+                created_at=_CREATED_AT,
+            ),
         ),
         (
             Task(
@@ -185,62 +358,25 @@ def test_precedence_sanity_check():
             ),
             ProgressEvent(task_id="task-id", progress=0.5),
             None,
-        ),
-        (
             Task(
                 id="task-id",
                 name="hello_world",
-                state=TaskState.RUNNING,
+                state=TaskState.CANCELLED,
                 created_at=_CREATED_AT,
             ),
-            CancelEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
-            TaskUpdate(
-                cancelled_at=_ANOTHER_TIME, state=TaskState.QUEUED, progress=0.0
-            ),
-        ),
-        (
-            Task(
-                id="task-id",
-                name="hello_world",
-                state=TaskState.RUNNING,
-                created_at=_CREATED_AT,
-            ),
-            CancelEvent(task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME),
-            TaskUpdate(cancelled_at=_ANOTHER_TIME, state=TaskState.CANCELLED),
-        ),
-        (
-            Task(
-                id="task-id",
-                name="hello_world",
-                state=TaskState.RUNNING,
-                created_at=_CREATED_AT,
-            ),
-            CancelledEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
-            TaskUpdate(
-                cancelled_at=_ANOTHER_TIME, state=TaskState.QUEUED, progress=0.0
-            ),
-        ),
-        (
-            Task(
-                id="task-id",
-                name="hello_world",
-                state=TaskState.RUNNING,
-                created_at=_CREATED_AT,
-            ),
-            CancelledEvent(
-                task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME
-            ),
-            TaskUpdate(cancelled_at=_ANOTHER_TIME, state=TaskState.CANCELLED),
         ),
     ],
 )
-def test_resolve_event(
-    task: Task, event: TaskEvent, expected_update: Optional[TaskEvent]
+def test_as_resolve_event(
+    task: Task,
+    event: ManagerEvent,
+    max_retries: Optional[int],
+    expected_task: Optional[Task],
 ):
     # When
-    updated = task.resolve_event(event)
+    updated = task.as_resolved(event, max_retries=max_retries)
     # Then
-    assert updated == expected_update
+    assert updated == expected_task
 
 
 _UNCHANGED = [(s, s, s) for s in TaskState]
@@ -327,7 +463,6 @@ def test_error_event_ser():
             ],
             occurred_at=_ERROR_OCCURRED_AT,
         ),
-        state=TaskState.QUEUED,
     )
     # When
     ser = event.dict(exclude_unset=True, by_alias=True)
@@ -346,7 +481,6 @@ def test_error_event_ser():
             "taskId": "task-id",
         },
         "retries": 4,
-        "state": TaskState.QUEUED,
         "taskId": "task-id",
     }
     assert ser == expected
