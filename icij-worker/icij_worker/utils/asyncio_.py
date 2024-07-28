@@ -19,7 +19,10 @@ def stop_other_tasks_when_exc(t: asyncio.Task, others: List[asyncio.Task]) -> No
         )
         logger.debug(msg, t)
         return
-
+    if exc is None:
+        msg = "attempted to cancel %s, which was already done"
+        logger.debug(msg, t)
+        return
     loop = t.get_loop()
     others = [task for task in others if t is not task]
     for task in others:

@@ -14,7 +14,7 @@ from aio_pika import (
 from aio_pika.abc import AbstractRobustConnection
 
 from icij_common.logging_utils import LogWithNameMixin
-from icij_worker import TaskError, TaskEvent, TaskResult
+from icij_worker import ManagerEvent
 from . import EventPublisher
 from ..namespacing import Routing
 from ..utils.amqp import AMQPMixin
@@ -78,28 +78,12 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
     def _routings(self) -> List[Routing]:
         return [self.manager_evt_routing()]
 
-    async def _publish_event(self, event: TaskEvent):
+    async def _publish_event(self, event: ManagerEvent):
         await self._publish_message(
             event,
             exchange=self._manager_evt_x,
             routing_key=self.manager_evt_routing().routing_key,
             mandatory=False,
-        )
-
-    async def publish_result(self, result: TaskResult):
-        await self._publish_message(
-            result,
-            exchange=self._manager_evt_x,
-            routing_key=self.manager_evt_routing().routing_key,
-            mandatory=True,  # This is important
-        )
-
-    async def publish_error(self, error: TaskError):
-        await self._publish_message(
-            error,
-            exchange=self._manager_evt_x,
-            routing_key=self.manager_evt_routing().routing_key,
-            mandatory=True,  # This is important
         )
 
     async def _connection_workflow(self):

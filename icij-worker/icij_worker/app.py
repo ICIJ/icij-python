@@ -5,8 +5,6 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
-from pydantic import Field
-
 from icij_common.pydantic_utils import ICIJModel, ICIJSettings
 from icij_worker.namespacing import Namespacing
 from icij_worker.typing_ import Dependency
@@ -27,8 +25,7 @@ class AsyncAppConfig(ICIJSettings):
 class RegisteredTask(ICIJModel):
     task: Callable
     recover_from: Tuple[Type[Exception], ...] = tuple()
-    # TODO: enable max retries
-    max_retries: Optional[int] = Field(const=True, default=None)
+    max_retries: Optional[int]
 
 
 class AsyncApp:
@@ -74,7 +71,7 @@ class AsyncApp:
         return self._name
 
     @functools.cached_property
-    def namespacing(self) -> Optional[Namespacing]:
+    def namespacing(self) -> Namespacing:
         return self._namespacing
 
     def with_namespacing(self, ns: Namespacing) -> AsyncApp:
@@ -90,6 +87,8 @@ class AsyncApp:
         if callable(key) and not recover_from and max_retries is None:
             f = key
             return functools.partial(self._register_task, name=f.__name__)(f)
+        if max_retries is None:
+            max_retries = 3
         return functools.partial(
             self._register_task,
             name=key,

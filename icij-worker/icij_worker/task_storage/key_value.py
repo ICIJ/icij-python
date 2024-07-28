@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Type
 
-from icij_worker import Namespacing, Task, TaskError, TaskResult
+from icij_worker import Namespacing, Task, TaskError, ResultEvent
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import TaskUpdate
 from icij_worker.task_storage import TaskStorage
@@ -21,7 +21,7 @@ class KeyValueStorage(TaskStorage, ABC):
 
     async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
         """When possible override this to be transactional"""
-        key = self._key(task.id, obj_cls=TaskResult)
+        key = self._key(task.id, obj_cls=ResultEvent)
         new_task = False
         try:
             ns = await self.get_task_namespace(task_id=task.id)
@@ -41,14 +41,9 @@ class KeyValueStorage(TaskStorage, ABC):
             await self._update(self._tasks_db_name, update, key=key)
         return new_task
 
-    async def save_result(self, result: TaskResult):
-        res_key = self._key(result.task_id, obj_cls=TaskResult)
+    async def save_result(self, result: ResultEvent):
+        res_key = self._key(result.task_id, obj_cls=ResultEvent)
         await self._insert(self._results_db_name, result.dict(), key=res_key)
-        task_key = self._key(result.task_id, obj_cls=Task)
-        update = TaskUpdate.done(result.completed_at).dict(
-            exclude_none=True, by_alias=True
-        )
-        await self._update(self._tasks_db_name, update, key=task_key)
 
     async def save_error(self, error: TaskError):
         key = self._key(error.task_id, obj_cls=TaskError)
@@ -81,13 +76,13 @@ class KeyValueStorage(TaskStorage, ABC):
         errors = [TaskError.parse_obj(err) for err in errors]
         return errors
 
-    async def get_task_result(self, task_id: str) -> TaskResult:
-        key = self._key(task_id, obj_cls=TaskResult)
+    async def get_task_result(self, task_id: str) -> ResultEvent:
+        key = self._key(task_id, obj_cls=ResultEvent)
         try:
             result = await self._read_key(self._results_db_name, key=key)
         except KeyError as e:
             raise UnknownTask(task_id) from e
-        return TaskResult.parse_obj(result)
+        return ResultEvent.parse_obj(result)
 
     @abstractmethod
     async def _read_key(self, db: str, *, key: str) -> Dict: ...

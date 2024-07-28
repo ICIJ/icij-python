@@ -2,6 +2,8 @@ import asyncio
 import logging
 from functools import partial
 
+import pytest
+
 from icij_worker.utils.asyncio_ import stop_other_tasks_when_exc
 
 logger = logging.getLogger(__name__)
@@ -27,5 +29,10 @@ def test_run_loops_should_raise_exceptions():
     callback = partial(stop_other_tasks_when_exc, others=tasks)
     for t in tasks:
         t.add_done_callback(callback)
-        # with pytest.raises(SomeFailure):
-    loop.run_until_complete(asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED))
+    done, pending = loop.run_until_complete(
+        asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+    )
+    assert not pending
+    for t in done:
+        with pytest.raises((asyncio.CancelledError, SomeFailure)):
+            t.result()

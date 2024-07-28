@@ -43,14 +43,14 @@ class AMQPMixin:
     _channel_: AbstractRobustChannel
     _namespacing: Namespacing
     _task_x: AbstractExchange
-    _max_task_queue_size: Optional[int]
+    max_task_queue_size: Optional[int]
 
     def __init__(
         self,
         broker_url: str,
         *,
-        connection_timeout_s: Optional[float] = None,
-        reconnection_wait_s: Optional[float] = None,
+        connection_timeout_s: float = 1.0,
+        reconnection_wait_s: float = 5.0,
         inactive_after_s: Optional[float] = None,
     ):
         self._broker_url = broker_url
@@ -158,8 +158,8 @@ class AMQPMixin:
                 "x-dead-letter-exchange": dlx_name,
                 "x-dead-letter-routing-key": dl_routing_key,
             }
-            if self._max_task_queue_size is not None:
-                arguments["x-max-length"] = self._max_task_queue_size
+            if self.max_task_queue_size is not None:
+                arguments["x-max-length"] = self.max_task_queue_size
                 arguments["x-overflow"] = "reject-publish"
             queue = await self._channel.declare_queue(
                 routing.queue_name, durable=True, arguments=arguments

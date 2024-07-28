@@ -9,10 +9,12 @@ from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_TYPE_DEPRECATED,
 )
-from icij_worker import Neo4JTaskManager, Task, TaskError, TaskState
+from icij_worker import AsyncApp, Neo4JTaskManager, Task, TaskError, TaskState
+from icij_worker.app import AsyncAppConfig
 from icij_worker.task_storage.neo4j_ import (
     migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
+    migrate_index_event_dates_v0_tx,
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
     migrate_task_progress_v0_tx,
@@ -20,6 +22,13 @@ from icij_worker.task_storage.neo4j_ import (
 )
 
 _NOW = datetime.now()
+
+
+@pytest.fixture
+def neo4j_task_manager(neo4j_test_driver: neo4j.AsyncDriver) -> Neo4JTaskManager:
+    app = AsyncApp("test-app", config=AsyncAppConfig(max_task_queue_size=True))
+    task_manager = Neo4JTaskManager(app, neo4j_test_driver)
+    return task_manager
 
 
 @pytest.fixture(scope="function")
@@ -223,13 +232,11 @@ async def test_migrate_add_index_to_task_namespace_v0_tx(
 
 
 async def test_migrate_task_inputs_to_arguments_v0_tx(
-    neo4j_test_driver: neo4j.AsyncDriver, populate_tasks_legacy_v0
+    neo4j_task_manager: Neo4JTaskManager, populate_tasks_legacy_v0
 ):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager(
-        "test-app", neo4j_test_driver, max_task_queue_size=10
-    )
+    task_manager = neo4j_task_manager
     driver = task_manager.driver
     # When
     async with driver.session() as session:
@@ -269,12 +276,12 @@ async def test_migrate_task_inputs_to_arguments_v0_tx(
 
 
 async def test_migrate_task_type_to_name_v0_tx(
-    neo4j_test_driver: neo4j.AsyncDriver,
+    neo4j_task_manager: Neo4JTaskManager,
     populate_tasks_legacy_v1,  # pylint: disable=unused-argument
 ):
     # Given
-    driver = neo4j_test_driver
-    task_manager = Neo4JTaskManager("test-app", driver, max_task_queue_size=10)
+    task_manager = neo4j_task_manager
+    driver = neo4j_task_manager.driver
     create_legacy_index = f"""CREATE INDEX task_type_index
 FOR (task:_Task) 
 ON (task.{TASK_TYPE_DEPRECATED})"""
@@ -322,13 +329,11 @@ ON (task.{TASK_TYPE_DEPRECATED})"""
 
 
 async def test_migrate_task_progress_v0_tx(
-    neo4j_test_driver: neo4j.AsyncDriver, populate_tasks_legacy_v2
+    neo4j_task_manager: Neo4JTaskManager, populate_tasks_legacy_v2
 ):
     # pylint: disable=unused-argument
     # Given
-    task_manager = Neo4JTaskManager(
-        "test-app", neo4j_test_driver, max_task_queue_size=10
-    )
+    task_manager = neo4j_task_manager
     driver = task_manager.driver
     # When
     async with driver.session() as session:
@@ -365,3 +370,24 @@ async def test_migrate_task_progress_v0_tx(
         t.pop("createdAt")
     retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
     assert retrieved_tasks == pytest.approx(expected, abs=0.01)
+
+
+async def test_migrate_index_event_dates_v0_tx(neo4j_test_driver: neo4j.AsyncDriver):
+    async with neo4j_test_driver.session() as sess:
+        indexes_res = await sess.run("SHOW INDEXES")
+        existing_indexes = set()
+        async for rec in indexes_res:
+            existing_indexes.add(rec["name"])
+        assert "index_manager_events_created_at" not in existing_indexes
+        assert "index_canceled_events_created_at" not in existing_indexes
+
+        # When
+        await sess.execute_write(migrate_index_event_dates_v0_tx)
+
+        # Then
+        indexes_res = await sess.run("SHOW INDEXES")
+        existing_indexes = set()
+        async for rec in indexes_res:
+            existing_indexes.add(rec["name"])
+        assert "index_manager_events_created_at" in existing_indexes
+        assert "index_canceled_events_created_at" in existing_indexes

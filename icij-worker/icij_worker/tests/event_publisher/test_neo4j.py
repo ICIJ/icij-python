@@ -1,24 +1,24 @@
 # pylint: disable=redefined-outer-name
+import json
 from datetime import datetime
 from typing import List
 
 import neo4j
 import pytest
 
-from icij_common.pydantic_utils import safe_copy
 from icij_worker import (
+    ManagerEvent,
     Neo4JTaskManager,
     Neo4jEventPublisher,
     Task,
-    TaskEvent,
     TaskState,
 )
 from icij_worker.objects import (
     ErrorEvent,
+    Message,
     ProgressEvent,
     StacktraceItem,
     TaskError,
-    TaskUpdate,
 )
 
 
@@ -29,43 +29,44 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
 
 
 @pytest.mark.parametrize(
-    "event,task_update",
+    "event",
     [
-        (
-            ProgressEvent(task_id="task-0", progress=0.66),
-            TaskUpdate(progress=0.66),
-        ),
-        (
-            ErrorEvent(
+        ProgressEvent(task_id="task-0", progress=0.66),
+        ErrorEvent(
+            task_id="task-0",
+            retries=2,
+            error=TaskError(
+                id="error-id",
                 task_id="task-0",
-                retries=2,
-                error=TaskError(
-                    id="error-id",
-                    task_id="task-0",
-                    name="some-error",
-                    message="some message",
-                    stacktrace=[
-                        StacktraceItem(
-                            name="SomeError", file="some details", lineno=666
-                        )
-                    ],
-                    occurred_at=datetime.now(),
-                ),
-                state=TaskState.QUEUED,
+                name="some-error",
+                message="some message",
+                stacktrace=[
+                    StacktraceItem(name="SomeError", file="some details", lineno=666)
+                ],
+                occurred_at=datetime.now(),
             ),
-            TaskUpdate(retries=2, progress=0.0),
+        ),
+        ErrorEvent(
+            task_id="task-0",
+            retries=1,
+            error=TaskError(
+                id="error-id",
+                task_id="task-0",
+                name="some-error",
+                message="some message",
+                stacktrace=[
+                    StacktraceItem(name="SomeError", file="some details", lineno=666)
+                ],
+                occurred_at=datetime.now(),
+            ),
         ),
     ],
 )
 async def test_worker_publish_event(
-    populate_tasks: List[Task],
-    neo4j_task_manager: Neo4JTaskManager,
-    publisher: Neo4jEventPublisher,
-    event: TaskEvent,
-    task_update: TaskUpdate,
+    populate_tasks: List[Task], publisher: Neo4jEventPublisher, event: ManagerEvent
 ):
     # Given
-    task_manager = neo4j_task_manager
+    driver = publisher.driver
     task = populate_tasks[0]
     assert task.state == TaskState.QUEUED
     assert task.progress is None
@@ -74,14 +75,14 @@ async def test_worker_publish_event(
 
     # When
     await publisher.publish_event(event)
-    saved_task = await task_manager.get_task(task_id=task.id)
 
     # Then
-    update = task_update.dict(exclude_unset=True)
-    update.pop("task_id", None)
-    update.pop("error", None)
-    expected = safe_copy(task, update=update)
-    assert saved_task == expected
+    query = "MATCH (event:_ManagerEvent) RETURN event"
+    db_events, _, _ = await driver.execute_query(query)
+    assert len(db_events) == 1
+    json_event = db_events[0]["event"]["event"]
+    db_event = Message.parse_obj(json.loads(json_event))
+    assert db_event == event
 
 
 async def test_worker_publish_done_task_event_should_not_update_task(
@@ -131,7 +132,7 @@ async def test_worker_publish_event_for_unknown_task(
         created_at=created_at,
         state=TaskState.QUEUED,
     )
-    event = ProgressEvent(task_id=task_id, state=TaskState.QUEUED, progress=0.0)
+    event = ProgressEvent(task_id=task_id, progress=0.0)
 
     # When
     await publisher.publish_event(event)

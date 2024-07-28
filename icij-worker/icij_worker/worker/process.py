@@ -16,7 +16,7 @@ class HandleSignalsMixin(LogWithNameMixin, ABC):
     _work_forever_task: Optional[asyncio.Task]
     _worker_cancelled: bool = False
     _loop: AbstractEventLoop
-    _cancellation_lock: asyncio.Lock
+    cancel_lock: asyncio.Lock
 
     def __init__(self, logger: logging.Logger, handle_signals: bool = True):
         super().__init__(logger)
@@ -28,7 +28,7 @@ class HandleSignalsMixin(LogWithNameMixin, ABC):
             self._setup_child_process_signal_handlers()
 
     async def _signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
-        async with self.cancel_condition:
+        async with self.cancel_lock:
             self._worker_cancelled = True
             self.exception("received %s", signal_name)
             self._graceful_shutdown = graceful

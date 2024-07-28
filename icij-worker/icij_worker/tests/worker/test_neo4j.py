@@ -1,7 +1,9 @@
 # pylint: disable=redefined-outer-name
 import asyncio
+import itertools
+import json
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Callable, List
 
 import neo4j
 import pytest
@@ -14,20 +16,22 @@ from icij_worker import (
     Namespacing,
     Neo4JTaskManager,
     Neo4jWorker,
+    ResultEvent,
     TaskError,
-    TaskResult,
     TaskState,
 )
 from icij_worker.objects import (
     CancelEvent,
     CancelledEvent,
     ErrorEvent,
+    ManagerEvent,
+    Message,
     ProgressEvent,
-    StacktraceItem,
     Task,
 )
+from icij_worker.tests.conftest import count_locks
 from icij_worker.tests.worker.conftest import make_app
-from icij_worker.worker import neo4j_
+from icij_worker.utils import neo4j_
 
 
 @pytest.fixture(
@@ -44,19 +48,9 @@ def worker(neo4j_async_app_driver: neo4j.AsyncDriver, request) -> Neo4jWorker:
         "test-worker",
         namespace=namespace,
         driver=neo4j_async_app_driver,
-        cancelled_tasks_refresh_interval_s=0.1,
-        new_tasks_refresh_interval_s=0.1,
+        poll_interval_s=0.1,
     )
     return worker
-
-
-async def _count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
-    # Now let's check that no lock if left in the DB
-    count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
-    async with db_specific_session(driver, db=db) as sess:
-        recs = await sess.run(count_locks_query)
-        counts = await recs.single(strict=True)
-    return counts["nLocks"]
 
 
 @pytest.mark.parametrize(
@@ -114,8 +108,7 @@ async def test_should_consume_with_namespace(
         "test-worker",
         namespace=other_namespace,
         driver=neo4j_async_app_driver,
-        cancelled_tasks_refresh_interval_s=refresh_interval,
-        new_tasks_refresh_interval_s=refresh_interval,
+        poll_interval_s=refresh_interval,
     )
     # When
     async with worker:
@@ -167,149 +160,54 @@ async def test_worker_negatively_acknowledge(
     # When
     task = await worker.consume()
     task = safe_copy(task, update={"state": nacked_state})
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
+    n_locks = await count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 1
     await worker._negatively_acknowledge(task)
     nacked = await task_manager.get_task(task_id=task.id)
 
     # Then
-    assert nacked == task
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
+    expected = safe_copy(populate_tasks[0], update={"state": TaskState.RUNNING})
+    assert nacked == expected
+    n_locks = await count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
     assert n_locks == 0
 
 
-@pytest.mark.parametrize("is_error", [True, False])
-async def test_worker_requeue(
-    worker: Neo4jWorker, neo4j_task_manager: Neo4JTaskManager, is_error: bool
-):
-    # pylint: disable=unused-argument
-    # Given
-    task_manager = neo4j_task_manager
-    created_at = datetime.now()
-    task = Task(
-        id="some-id", name="hello_world", created_at=created_at, state=TaskState.CREATED
-    )
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
-    assert n_locks == 0
-
-    # When
-    await task_manager.enqueue(task, namespace=None)
-    task = await worker.consume()
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
-    assert n_locks == 1
-    # Let's publish some event to increment the progress and check that it's reset
-    # correctly to 0
-    task = safe_copy(task, update={"progress": 0.5})
-    event = ProgressEvent.from_task(task=task)
-    await worker.publish_event(event)
-    with_progress = safe_copy(task, update={"progress": event.progress})
-    await worker.requeue(task, is_error)
-    if is_error:
-        task_error = TaskError(
-            id="error-id",
-            task_id=task.id,
-            name="someErrorTitle",
-            message="with_details",
-            stacktrace=[
-                StacktraceItem(name="someErrorTitle", file="with_details", lineno=666)
-            ],
-            occurred_at=datetime.now(),
-        )
-        retries = task.retries or 0 + 1
-        await worker.publish_error_event(task_error, task, retries=retries)
-        update = {"state": TaskState.QUEUED, "retries": retries, "progress": 0.0}
-    else:
-        cancelled_evt = CancelledEvent.from_task(task=task, requeue=True)
-        await worker.publish_event(cancelled_evt)
-        update = {
-            "state": TaskState.QUEUED,
-            "cancelled_at": cancelled_evt.cancelled_at,
-            "progress": 0.0,
-        }
-    nacked = await task_manager.get_task(task_id=task.id)
-
-    # Then
-    expected_nacked = safe_copy(with_progress, update=update)
-    assert nacked == expected_nacked
-    n_locks = await _count_locks(worker.driver, db=NEO4J_COMMUNITY_DB)
-    assert n_locks == 0
-
-
-@pytest.mark.parametrize("worker", [None], indirect=["worker"])
-async def test_worker_save_result(
-    populate_tasks: List[Task],
-    worker: Neo4jWorker,
-    neo4j_task_manager: Neo4JTaskManager,
-):
-    # Given
-    task_manager = neo4j_task_manager
-    task = populate_tasks[0]
-    assert task.state == TaskState.QUEUED
-    result = "hello everyone"
-    task = safe_copy(task, update={"completed_at": datetime.now()})
-    task_result = TaskResult.from_task(task=task, result=result)
-
-    # When
-    await worker.save_result(result=task_result)
-    saved_task = await task_manager.get_task(task_id=task.id)
-    saved_result = await task_manager.get_task_result(task_id=task.id)
-
-    # Then
-    expected = safe_copy(task, update={"state": TaskState.DONE, "progress": 1.0})
-    assert saved_task == expected
-    assert saved_result == task_result
+_TASK = Task.create(task_id="some-id", task_name="some-task-name", arguments=dict())
+_EVENTS = (
+    ProgressEvent.from_task(
+        safe_copy(_TASK, update={"progress": 0.66, "state": TaskState.RUNNING})
+    ),
+    ErrorEvent.from_error(
+        TaskError.from_exception(ValueError("there's an error here"), _TASK), retries=3
+    ),
+    ResultEvent.from_task(
+        safe_copy(_TASK, update={"completed_at": datetime.now()}), "some-result"
+    ),
+    CancelledEvent.from_task(
+        safe_copy(_TASK, update={"cancelled_at": datetime.now()}), requeue=True
+    ),
+)
 
 
 @pytest.mark.parametrize(
-    "worker,retries", [(None, None), (None, 4)], indirect=["worker"]
+    "event,worker", list(zip(_EVENTS, itertools.repeat(None))), indirect=["worker"]
 )
-async def test_worker_save_error(
-    populate_tasks: List[Task],
-    worker: Neo4jWorker,
-    neo4j_task_manager: Neo4JTaskManager,
-    retries: Optional[int],
+async def test_worker_publish_event(
+    worker: Neo4jWorker, neo4j_task_manager: Neo4JTaskManager, event: ManagerEvent
 ):
-    task_manager = neo4j_task_manager
-    task = populate_tasks[1]
-    assert task.state == TaskState.RUNNING
-    exc = ValueError("there's an error here")
-    error = TaskError.from_exception(exc, task=task)
-
     # When
-    await worker.publish_event(ErrorEvent.from_error(error, task.id, retries=retries))
-    await worker.save_error(error)
-    saved_task = await task_manager.get_task(task_id=task.id)
-    saved_errors = await task_manager.get_task_errors(task_id=task.id)
+    driver = worker.driver
+    await neo4j_task_manager.save_task(_TASK, None)
+    await worker.publish_event(event)
 
     # Then
-    if retries is not None:
-        expected = safe_copy(
-            task,
-            update={"state": TaskState.QUEUED, "progress": 0.0, "retries": retries},
-        )
-    else:
-        expected = safe_copy(task, update={"state": TaskState.ERROR})
-    assert saved_task == expected
-    assert saved_errors == [error]
+    query = "MATCH (event:_ManagerEvent) RETURN event"
+    saved_events, _, _ = await driver.execute_query(query)
 
-
-@pytest.mark.parametrize("worker", [None], indirect=["worker"])
-async def test_worker_should_raise_when_saving_existing_result(
-    populate_tasks: List[Task], worker: Neo4jWorker
-):
-    # Given
-    task = populate_tasks[0]
-    assert task.state == TaskState.QUEUED
-    result = "hello everyone"
-    task = safe_copy(task, update={"completed_at": datetime.now()})
-    task_result = TaskResult.from_task(task=task, result=result)
-
-    # When
-    await worker.save_result(result=task_result)
-    # Then
-    expected = "Attempted to save result for task task-0 but found existing result"
-    with pytest.raises(ValueError, match=expected):
-        await worker.save_result(result=task_result)
+    assert len(saved_events) == 1
+    saved = saved_events[0]
+    saved = Message.parse_obj(json.loads(saved["event"]["event"]))
+    assert saved == event
 
 
 async def test_worker_ack_cm(
@@ -326,7 +224,7 @@ async def test_worker_ack_cm(
         task = await task_manager.get_task(task_id=created.id)
         assert task.state is TaskState.RUNNING
         task = safe_copy(task, update={"completed_at": datetime.now()})
-        await worker.save_result(TaskResult.from_task(task, "some_res"))
+        await worker.save_result(ResultEvent.from_task(task, "some_res"))
 
     # Then
     task = await task_manager.get_task(task_id=created.id)

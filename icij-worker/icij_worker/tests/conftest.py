@@ -26,6 +26,7 @@ from icij_common.logging_utils import (
 from icij_common.neo4j.db import (
     NEO4J_COMMUNITY_DB,
     add_multidatabase_support_migration_tx,
+    db_specific_session,
 )
 from icij_common.neo4j.migrate import (
     Migration,
@@ -39,26 +40,32 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 from icij_worker import AsyncApp, Neo4JTaskManager, Task
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.objects import CancelEvent, TaskState
+from icij_worker.objects import CancelEvent, ManagerEvent, TaskState
 from icij_worker.task_manager.amqp import AMQPTaskManager
+from icij_worker.task_storage import TaskStorage
 from icij_worker.task_storage.fs import FSKeyValueStorage
 from icij_worker.task_storage.neo4j_ import (
     add_support_for_async_task_tx,
     migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
+    migrate_index_event_dates_v0_tx,
     migrate_task_errors_v0_tx,
+    migrate_task_inputs_to_arguments_v0_tx,
+    migrate_task_progress_v0_tx,
+    migrate_task_type_to_name_v0,
 )
 from icij_worker.typing_ import PercentProgress
 
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
-    app_config,
     DBMixin,
+    MockWorker,
+    app_config,
+    late_ack_app_config,
     mock_db,
     mock_db_session,
     test_async_app,
     test_async_app_late,
-    late_ack_app_config,
 )
 
 RABBITMQ_TEST_PORT = 5673
@@ -105,6 +112,26 @@ TEST_MIGRATIONS = [
         version="0.4.0",
         label="add index on task namespace",
         migration_fn=migrate_add_index_to_task_namespace_v0_tx,
+    ),
+    Migration(
+        version="0.5.0",
+        label="rename inputs into arguments",
+        migration_fn=migrate_task_inputs_to_arguments_v0_tx,
+    ),
+    Migration(
+        version="0.6.0",
+        label="rename task type into name",
+        migration_fn=migrate_task_type_to_name_v0,
+    ),
+    Migration(
+        version="0.7.0",
+        label="scale task progress",
+        migration_fn=migrate_task_progress_v0_tx,
+    ),
+    Migration(
+        version="0.8.0",
+        label="index events by dates",
+        migration_fn=migrate_index_event_dates_v0_tx,
     ),
 ]
 
@@ -306,13 +333,10 @@ async def exchange_exists(name: str) -> bool:
 
 async def get_queue(name: str) -> Dict:
     url = get_test_management_url(f"/api/queues/{DEFAULT_VHOST}/{name}")
-    try:
-        async with rabbit_mq_test_session() as sess:
-            async with sess.get(url) as res:
-                res.raise_for_status()
-                return await res.json()
-    except ClientResponseError:
-        return False
+    async with rabbit_mq_test_session() as sess:
+        async with sess.get(url) as res:
+            res.raise_for_status()
+            return await res.json()
 
 
 async def get_queue_size(name: str) -> int:
@@ -401,12 +425,22 @@ async def fs_storage(fs_storage_path: Path) -> TestableFSKeyValueStorage:
 
 
 class TestableAMQPTaskManager(AMQPTaskManager):
+    def __init__(self, app: AsyncApp, task_store: TaskStorage, *, broker_url: str):
+        super().__init__(app, task_store, broker_url=broker_url)
+        self.consumed: List[ManagerEvent] = []
+
     @cached_property
     def channel(self) -> AbstractRobustChannel:
         return self._channel
 
-    async def consume_errors(self):
-        await self._consume_errors()
+    async def _consume(self) -> ManagerEvent:
+        event = await super()._consume()
+        self.consumed.append(event)
+        return event
+
+    @property
+    def app(self) -> AsyncApp:
+        return self._app
 
 
 @pytest.fixture()
@@ -414,16 +448,58 @@ async def test_amqp_task_manager(
     fs_storage: TestableFSKeyValueStorage, rabbit_mq: str, test_async_app: AsyncApp
 ) -> TestableAMQPTaskManager:
     task_manager = TestableAMQPTaskManager(
-        fs_storage, app_name=test_async_app.name, broker_url=rabbit_mq
+        test_async_app, fs_storage, broker_url=rabbit_mq
     )
     async with task_manager:
         yield task_manager
 
 
+class TestableNeo4JTaskManager(Neo4JTaskManager):
+    def __init__(self, app: AsyncApp, driver: neo4j.AsyncDriver):
+        super().__init__(app, driver)
+        self.consumed: List[ManagerEvent] = []
+
+    async def _consume(self) -> ManagerEvent:
+        event = await super()._consume()
+        self.consumed.append(event)
+        return event
+
+    @property
+    def app(self) -> AsyncApp:
+        return self._app
+
+
 @pytest.fixture
 def neo4j_task_manager(
-    neo4j_async_app_driver: neo4j.AsyncDriver, test_async_app: AsyncApp
-) -> Neo4JTaskManager:
-    return Neo4JTaskManager(
-        test_async_app.name, neo4j_async_app_driver, max_task_queue_size=10
+    neo4j_async_app_driver: neo4j.AsyncDriver, request
+) -> TestableNeo4JTaskManager:
+    app = getattr(request, "param", "test_async_app")
+    app = request.getfixturevalue(app)
+    return TestableNeo4JTaskManager(app, neo4j_async_app_driver)
+
+
+async def count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
+    # Now let's check that no lock if left in the DB
+    count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
+    async with db_specific_session(driver, db=db) as sess:
+        recs = await sess.run(count_locks_query)
+        counts = await recs.single(strict=True)
+    return counts["nLocks"]
+
+
+@pytest.fixture(
+    scope="function",
+    params=[{"app": "test_async_app"}, {"app": "test_async_app_late"}],
+)
+def mock_worker(mock_db: Path, request) -> MockWorker:
+    param = getattr(request, "param", dict()) or dict()
+    app = request.getfixturevalue(param.get("app", "test_async_app"))
+    worker = MockWorker(
+        app,
+        "test-worker",
+        namespace=param.get("namespace"),
+        db_path=mock_db,
+        poll_interval_s=0.1,
+        teardown_dependencies=False,
     )
+    return worker

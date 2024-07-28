@@ -8,14 +8,13 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
 from functools import lru_cache
-from typing import Callable, ClassVar, Literal, Union, cast
+from typing import Callable, ClassVar, Union, cast
 
 from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
 from icij_common.neo4j.constants import (
-    TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_REQUEUE,
     TASK_COMPLETED_AT,
     TASK_ID,
@@ -209,6 +208,17 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     cancelled_at: Optional[datetime] = None
     retries: Optional[int] = None
 
+    _non_inherited_from_event = [
+        "requeue",
+        "created_at",
+        "error",
+        "occurred_at",
+        "task_name",
+        "result",
+        "task_id",
+        "retries",
+    ]
+
     @validator("arguments", pre=True, always=True)
     def args_as_dict(cls, v: Optional[Dict[str, Any]]):
         # pylint: disable=no-self-argument
@@ -217,13 +227,13 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return v
 
     @classmethod
-    def create(cls, *, task_id: str, task_name: str, task_args: Dict[str, Any]) -> Task:
+    def create(cls, *, task_id: str, task_name: str, arguments: Dict[str, Any]) -> Task:
         created_at = datetime.now()
         state = TaskState.CREATED
         return cls(
             id=task_id,
             name=task_name,
-            args=task_args,
+            arguments=arguments,
             created_at=created_at,
             state=state,
         )
@@ -276,56 +286,80 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return cls(**node)
 
     @final
-    @classmethod
-    def mandatory_fields(cls, event: TaskEvent | Task, keep_id: bool) -> Dict[str, Any]:
-        event = event.dict(by_alias=True, exclude_unset=True)
-        mandatory = dict()
-        for f, v in event.items():
-            task_field = f.replace("task", "")
-            task_field = f"{task_field[0].lower()}{task_field[1:]}"
-            if task_field == "id" and not keep_id:
-                continue
-            if task_field not in cls._schema(by_alias=True)["required"]:
-                continue
-            mandatory[task_field] = v
-        return mandatory
-
-    @final
-    def resolve_event(self, event: TaskEvent) -> Optional[TaskUpdate]:
+    def resolve_event(
+        self, event: TaskEvent, max_retries: Optional[int] = None
+    ) -> Optional[TaskUpdate]:
         if self.state in READY_STATES:
             return None
         updated = event.dict(exclude_unset=True, by_alias=False)
-        updated.pop("task_id", None)
-        updated.pop("requeue", None)
-        updated.pop("created_at", None)
-        updated.pop("error", None)
-        updated.pop("occurred_at", None)
-        updated.pop("task_name", None)
+        for k in self._non_inherited_from_event:
+            updated.pop(k, None)
         if self.completed_at is not None:
             updated.pop("completed_at", None)
         updated.pop(event.registry_key.default, None)
-        if not updated:
-            return None
-        update = dict()
-        updated = TaskUpdate(**updated)
+        base_update = TaskUpdate(**updated)
         # Update the state to make it consistent in case of race condition
         if isinstance(event, ProgressEvent):
-            state = TaskState.resolve_update_state(
-                self, TaskUpdate(state=TaskState.RUNNING)
-            )
-            update["state"] = state
-        if isinstance(event, ErrorEvent) and event.state is not None:
-            update["state"] = TaskState.resolve_update_state(self, updated)
-        if isinstance(event, (CancelEvent, CancelledEvent)):
-            cancelled_update = {
-                "state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED
-            }
-            updated = safe_copy(updated, update=cancelled_update)
-            update["state"] = TaskState.resolve_update_state(self, updated)
-        if update.get("state") is TaskState.QUEUED:
+            return self._progress_update(base_update)
+        if isinstance(event, ErrorEvent):
+            return self._error_update(base_update, event, max_retries)
+        if isinstance(event, CancelledEvent):
+            return self._cancel_update(base_update, event)
+        if isinstance(event, ResultEvent):
+            return self._result_update(base_update, event)
+        raise TypeError(f"Unexpected event type {event.__class__}")
+
+    def _result_update(self, base_update: TaskUpdate, event: ResultEvent) -> TaskUpdate:
+        update = dict()
+        update["progress"] = 1.0
+        update["state"] = TaskState.DONE
+        update["completed_at"] = event.completed_at
+        return safe_copy(base_update, update=update)
+
+    def _cancel_update(
+        self, base_update: TaskUpdate, event: CancelledEvent
+    ) -> TaskUpdate:
+        update = dict()
+        cancelled_state = TaskState.QUEUED if event.requeue else TaskState.CANCELLED
+        update["state"] = cancelled_state
+        if event.requeue:
+            update["cancelled_at"] = None
             update["progress"] = 0.0
-        updated = safe_copy(updated, update=update)
+        updated = safe_copy(base_update, update=update)
         return updated
+
+    def _error_update(
+        self, base_update: TaskUpdate, event: ErrorEvent, max_retries: Optional[int]
+    ):
+        update = dict()
+        can_retry = (
+            event.retries is not None
+            and max_retries is not None
+            and event.retries < max_retries
+        )
+        if can_retry:
+            state_update = TaskUpdate(state=TaskState.QUEUED, retries=event.retries)
+        else:
+            state_update = TaskUpdate(state=TaskState.ERROR, retries=event.retries)
+        update["state"] = TaskState.resolve_update_state(self, state_update)
+        update["retries"] = event.retries
+        updated = safe_copy(base_update, update=update)
+        return updated
+
+    def _progress_update(self, updated: TaskUpdate) -> TaskUpdate:
+        state = TaskState.resolve_update_state(
+            self, TaskUpdate(state=TaskState.RUNNING)
+        )
+        update = {"state": state}
+        if state is TaskState.QUEUED:
+            update["progress"] = 0.0
+        return safe_copy(updated, update=update)
+
+    def as_resolved(self, event: TaskEvent, max_retries: Optional[int] = None) -> Task:
+        update = self.resolve_event(event, max_retries=max_retries)
+        if update is None:
+            return self
+        return safe_copy(self, update=update.dict(exclude_unset=True))
 
     @final
     @classmethod
@@ -412,13 +446,10 @@ class TaskError(Message, LowerCamelCaseModel, FromTask):
         return trace
 
 
-class TaskEvent(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, ABC):
+class TaskEvent(
+    Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, FromTask, ABC
+):
     task_id: str
-
-    @classmethod
-    def from_task(cls, task: Task, **kwargs) -> TaskEvent:
-        event = cls(task_id=task.id, task_name=task.name, **kwargs)
-        return event
 
 
 class WorkerEvent(TaskEvent, ABC):
@@ -429,23 +460,8 @@ class ManagerEvent(TaskEvent, ABC):
     pass
 
 
-@Message.register("ErrorEvent")
-class ErrorEvent(WorkerEvent):
-    error: TaskError
-    retries: Optional[int] = None
-    state: Literal[TaskState.QUEUED, TaskState.ERROR]
-
-    @classmethod
-    def from_error(
-        cls, error: TaskError, task_id: str, retries: Optional[int] = None
-    ) -> ErrorEvent:
-        state = TaskState.QUEUED if retries is not None else TaskState.ERROR
-        event = cls(task_id=task_id, error=error, retries=retries, state=state)
-        return event
-
-
 @Message.register("ProgressEvent")
-class ProgressEvent(WorkerEvent):
+class ProgressEvent(ManagerEvent):
     progress: float
 
     @validator("progress")
@@ -464,13 +480,7 @@ class ProgressEvent(WorkerEvent):
 
 @Message.register("CancelEvent")
 class CancelEvent(WorkerEvent):
-    task_id: str
     requeue: bool
-    cancelled_at: datetime
-
-    @validator("cancelled_at", pre=True)
-    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
 
     @classmethod
     def from_neo4j(
@@ -480,8 +490,12 @@ class CancelEvent(WorkerEvent):
         event = record.get(event_key)
         task_id = task[TASK_ID]
         requeue = event[TASK_CANCEL_EVENT_REQUEUE]
-        cancelled_at = event[TASK_CANCEL_EVENT_CANCELLED_AT]
-        return cls(task_id=task_id, requeue=requeue, cancelled_at=cancelled_at)
+        return cls(task_id=task_id, requeue=requeue)
+
+    @classmethod
+    def from_task(cls, task: Task, *, requeue: bool, **kwargs) -> CancelEvent:
+        # pylint: disable=arguments-differ
+        return cls(task_id=task.id, requeue=requeue)
 
 
 @Message.register("CancelledEvent")
@@ -499,6 +513,55 @@ class CancelledEvent(ManagerEvent):
         cancelled_at = task.cancelled_at or datetime.now()
         event = cls(task_id=task.id, cancelled_at=cancelled_at, requeue=requeue)
         return event
+
+
+@Message.register("ResultEvent")
+class ResultEvent(ManagerEvent):
+    task_id: str
+    result: object
+    completed_at: datetime
+
+    @validator("completed_at", pre=True)
+    def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
+
+    @classmethod
+    def from_neo4j(
+        cls,
+        record: "neo4j.Record",
+        *,
+        task_key: str = "task",
+        result_key: str = "result",
+    ) -> ResultEvent:
+        result = record.get(result_key)
+        if result is not None:
+            result = json.loads(result[TASK_RESULT_RESULT])
+        task_id = record[task_key][TASK_ID]
+        completed_at = record[task_key][TASK_COMPLETED_AT]
+        as_dict = {"result": result, "task_id": task_id, "completed_at": completed_at}
+        return ResultEvent(**as_dict)
+
+    @classmethod
+    def from_task(cls, task: Task, result: object, **kwargs) -> ResultEvent:
+        # pylint: disable=arguments-differ
+        return cls(
+            task_id=task.id, result=result, completed_at=task.completed_at, **kwargs
+        )
+
+
+@Message.register("ErrorEvent")
+class ErrorEvent(ManagerEvent):
+    error: TaskError
+    retries: Optional[int]
+
+    @classmethod
+    def from_error(cls, error: TaskError, retries: Optional[int]) -> ErrorEvent:
+        event = cls(task_id=error.task_id, error=error, retries=retries)
+        return event
+
+    @classmethod
+    def from_task(cls, task: Task, **kwargs) -> FromTask:
+        raise NotImplementedError()
 
 
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
@@ -520,40 +583,6 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
     @lru_cache(maxsize=1)
     def done(cls, completed_at: Optional[datetime] = None) -> TaskUpdate:
         return cls(progress=1.0, completed_at=completed_at, state=TaskState.DONE)
-
-
-@Message.register("TaskResult")
-class TaskResult(Message, LowerCamelCaseModel, FromTask, Neo4jDatetimeMixin):
-    task_id: str
-    result: object
-    completed_at: datetime
-
-    @validator("completed_at", pre=True)
-    def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
-
-    @classmethod
-    def from_neo4j(
-        cls,
-        record: "neo4j.Record",
-        *,
-        task_key: str = "task",
-        result_key: str = "result",
-    ) -> TaskResult:
-        result = record.get(result_key)
-        if result is not None:
-            result = json.loads(result[TASK_RESULT_RESULT])
-        task_id = record[task_key][TASK_ID]
-        completed_at = record[task_key][TASK_COMPLETED_AT]
-        as_dict = {"result": result, "task_id": task_id, "completed_at": completed_at}
-        return TaskResult(**as_dict)
-
-    @classmethod
-    def from_task(cls, task: Task, result: object, **kwargs) -> TaskResult:
-        # pylint: disable=arguments-differ
-        return cls(
-            task_id=task.id, result=result, completed_at=task.completed_at, **kwargs
-        )
 
 
 def _id_title(title: str) -> str:

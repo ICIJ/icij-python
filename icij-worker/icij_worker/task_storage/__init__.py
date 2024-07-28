@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
-from icij_worker import Task, TaskError, TaskEvent, TaskResult, TaskState
+from icij_worker import AsyncApp, ResultEvent, Task, TaskError, TaskState
 from icij_worker.namespacing import Namespacing
+from icij_worker.objects import ProgressEvent
 
 
 class TaskStorage(ABC):
     _namespacing: Namespacing
+    _app: AsyncApp
 
     @abstractmethod
     async def get_task(self, task_id: str) -> Task: ...
@@ -15,7 +17,7 @@ class TaskStorage(ABC):
     async def get_task_errors(self, task_id: str) -> List[TaskError]: ...
 
     @abstractmethod
-    async def get_task_result(self, task_id: str) -> TaskResult: ...
+    async def get_task_result(self, task_id: str) -> ResultEvent: ...
 
     @abstractmethod
     async def get_task_namespace(self, task_id: str) -> Optional[str]: ...
@@ -30,22 +32,18 @@ class TaskStorage(ABC):
         **kwargs,
     ) -> List[Task]: ...
 
-    @abstractmethod
-    async def save_task(self, task: Task, namespace: Optional[str]) -> bool: ...
-
-    async def save_event(self, event: TaskEvent):
+    async def _save_progress_event(self, event: ProgressEvent):
         # Might be better to be overridden to be performed in a transactional manner
         # when possible
         task = await self.get_task(event.task_id)
-        update = task.resolve_event(event)
-        task_as_dict = task.dict()
-        task_as_dict.update(update)
-        updated = Task.parse_obj(task_as_dict)
+        task = task.as_resolved(event)
         namespace = await self.get_task_namespace(event.task_id)
-        await self.save_task(updated, namespace=namespace)
+        await self.save_task(task, namespace=namespace)
 
     @abstractmethod
-    async def save_result(self, result: TaskResult): ...
+    async def save_task(self, task: Task, namespace: Optional[str]) -> bool: ...
+    @abstractmethod
+    async def save_result(self, result: ResultEvent): ...
 
     @abstractmethod
     async def save_error(self, error: TaskError): ...

@@ -19,9 +19,9 @@ from typing import (
     List,
     Optional,
     Tuple,
-    Type,
     TypeVar,
     Union,
+    cast,
 )
 
 from pydantic import Field
@@ -36,11 +36,11 @@ from icij_common.pydantic_utils import (
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
     AsyncApp,
+    ManagerEvent,
     Namespacing,
+    ResultEvent,
     Task,
     TaskError,
-    TaskEvent,
-    TaskResult,
     TaskState,
     Worker,
     WorkerConfig,
@@ -49,7 +49,15 @@ from icij_worker import (
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
-from icij_worker.objects import CancelEvent, TaskUpdate, WorkerEvent
+from icij_worker.objects import (
+    CancelEvent,
+    CancelledEvent,
+    ErrorEvent,
+    Message,
+    ProgressEvent,
+    TaskUpdate,
+    WorkerEvent,
+)
 from icij_worker.task_manager import TaskManager
 from icij_worker.typing_ import PercentProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
@@ -71,10 +79,11 @@ if _has_pytest:
     # TODO: make this one a MockStorage
     class DBMixin(ABC):
         _task_collection = "tasks"
-        _lock_collection = "locks"
-        _error_collection = "errors"
         _result_collection = "results"
-        _worker_event_collection = "cancel_events"
+        _error_collection = "errors"
+        _lock_collection = "locks"
+        _manager_event_collection = "manager_events"
+        _worker_event_collection = "worker_events"
 
         _namespacing: Namespacing
 
@@ -116,6 +125,7 @@ if _has_pytest:
                 cls._lock_collection: dict(),
                 cls._error_collection: dict(),
                 cls._result_collection: dict(),
+                cls._manager_event_collection: dict(),
                 cls._worker_event_collection: dict(),
             }
             db_path.write_text(json.dumps(db))
@@ -126,38 +136,25 @@ if _has_pytest:
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
-        async def save_result(self, result: TaskResult):
+        async def save_result(self, result: ResultEvent):
             db = self._get_task_db_name(result.task_id)
             task_key = self._task_key(task_id=result.task_id, db=db)
             db = self._read()
             db[self._result_collection][task_key] = result
-            task = db[self._task_collection][task_key]
-            ns = task.pop("namespace")
-            task = Task.parse_obj(db[self._task_collection][task_key])
-            update = {
-                "completed_at": result.completed_at,
-                "progress": 1.0,
-                "state": TaskState.DONE.value,
-            }
-            task = safe_copy(task, update=update)
-            task = task.dict(by_alias=True, exclude_unset=True)
-            task["namespace"] = ns
-            db[self._task_collection][task_key] = task
             self._write(db)
 
         async def save_error(self, error: TaskError):
             db = self._get_task_db_name(task_id=error.task_id)
             task_key = self._task_key(task_id=error.task_id, db=db)
             db = self._read()
-            errors = db[self._error_collection].get(task_key)
-            if errors is None:
-                errors = []
+            errors = db[self._error_collection].get(task_key, [])
             errors.append(error)
             db[self._error_collection][task_key] = errors
             self._write(db)
 
         async def save_task(self, task: Task, namespace: Optional[str]):
             new_task = False
+            ns = None
             try:
                 ns = await self.get_task_namespace(task_id=task.id)
             except UnknownTask:
@@ -166,7 +163,6 @@ if _has_pytest:
                     db_name = self._namespacing.test_db(namespace)
                 else:
                     db_name = TEST_DB
-                update = task.dict(exclude_unset=True, by_alias=True)
             else:
                 if ns != namespace:
                     msg = (
@@ -175,18 +171,64 @@ if _has_pytest:
                     )
                     raise ValueError(msg)
                 db_name = self._get_task_db_name(task.id)
-                update = TaskUpdate.from_task(task).dict(
-                    exclude_none=True, by_alias=True
-                )
+            update = TaskUpdate.from_task(task).dict(exclude_none=True, by_alias=True)
             update["namespace"] = namespace
             task_key = self._task_key(task_id=task.id, db=db_name)
             db = self._read()
-            updated = db[self._task_collection].get(task_key, dict())
+            updated = db[self._task_collection].get(
+                task_key, task.dict(exclude_none=True, by_alias=True)
+            )
             updated.update(update)
             db[self._task_collection][task_key] = updated
             self._write(db)
-            self._task_meta[task.id] = (db_name, namespace)
+            self._task_meta[task.id] = (db_name, ns)
             return new_task
+
+        @staticmethod
+        def _order_events(events: List[Dict]) -> float:
+            events = [
+                datetime.fromisoformat(evt["timestamp"]).timestamp() for evt in events
+            ]
+            return -min(events)
+
+        async def _consume_(
+            self,
+            collection: str,
+            sleep_interval: float,
+            factory: Callable[[Any], R],
+            namespace: Optional[str] = None,
+            select: Optional[Callable[[R], bool]] = None,
+            order: Optional[Callable[[R], Any]] = None,
+        ) -> R:
+            while "i'm waiting until I find something interesting":
+                db = self._read()
+                selected = deepcopy(db[collection])
+                if collection == self._task_collection:
+                    selected = {
+                        k: v
+                        for k, v in selected.items()
+                        if k not in db[self._lock_collection]
+                    }
+                if namespace is not None:
+                    selected = [
+                        (k, t)
+                        for k, t in selected.items()
+                        if t.get("namespace") == namespace
+                    ]
+                    for k, t in selected:
+                        t.pop("namespace", None)
+                else:
+                    selected = selected.items()
+                selected = [(k, factory(t)) for k, t in selected]
+                if select is not None:
+                    selected = [(k, t) for k, t in selected if select(t)]
+                if selected:
+                    if order is not None:
+                        k, t = min(selected, key=lambda x: order(x[1]))
+                    else:
+                        k, t = selected[0]
+                    return t
+                await asyncio.sleep(sleep_interval)
 
     @pytest.fixture(scope="session")
     def mock_db_session() -> Path:
@@ -246,7 +288,7 @@ if _has_pytest:
         greeting = f"Hello {greeted} !"
         return greeting
 
-    @APP.task
+    @APP.task(max_retries=1)
     async def sleep_for(
         duration: float, s: float = 0.01, progress: Optional[PercentProgress] = None
     ):
@@ -278,61 +320,63 @@ if _has_pytest:
     class MockManager(DBMixin, TaskManager):
 
         def __init__(
-            self,
-            db_path: Path,
-            max_task_queue_size: int,
-            app_name: str = "test-app",
-            namespacing: Optional[Namespacing] = None,
+            self, app: AsyncApp, db_path: Path, event_refresh_interval_s: float = 0.1
         ):
             super().__init__(db_path)
-            super(DBMixin, self).__init__(app_name, max_task_queue_size, namespacing)
+            super(DBMixin, self).__init__(app)
+            self._event_refresh_interval_s = event_refresh_interval_s
 
-        async def _enqueue(self, task: Task, **kwargs) -> Task:
+        @property
+        def app(self) -> AsyncApp:
+            return self._app
+
+        async def _ensure_queue_size(self, task: Task):
             # pylint: disable=arguments-differ
-            namespace = await self.get_task_namespace(task.id)
-            if namespace is not None:
-                db = self._namespacing.test_db(namespace)
-            else:
-                db = TEST_DB
-            key = self._task_key(task.id, db=db)
+            db_name = self._get_task_db_name(task.id)
+            key = self._task_key(task.id, db=db_name)
             db = self._read()
             tasks = db[self._task_collection]
             n_queued = sum(
                 1 for t in tasks.values() if t["state"] == TaskState.QUEUED.value
             )
-            if n_queued > self._max_task_queue_size:
-                raise TaskQueueIsFull(self._max_task_queue_size)
-            updated = tasks.get(key)
-            if updated is None:
+            if (
+                self.max_task_queue_size is not None
+                and n_queued > self.max_task_queue_size
+            ):
+                raise TaskQueueIsFull(self.max_task_queue_size)
+            db_task = tasks.get(key)
+            if db_task is None:
                 raise UnknownTask(task.id)
-            update = {"state": TaskState.QUEUED, "progress": 0.0}
-            updated.update(update)
-            db[self._task_collection][key] = updated
-            self._write(db)
-            updated.pop("namespace")
-            return Task.parse_obj(updated)
 
-        async def _cancel(self, *, task_id: str, requeue: bool):
-            db = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db)
-            event = CancelEvent(
-                task_id=task_id, requeue=requeue, cancelled_at=datetime.now()
-            )
+        async def _enqueue(self, task: Task):
+            await self._ensure_queue_size(task)
+
+        async def _requeue(self, task: Task):
+            await self._ensure_queue_size(task)
+            db_name = self._get_task_db_name(task.id)
+            key = self._task_key(task.id, db=db_name)
             db = self._read()
-            db[self._worker_event_collection][key] = event.dict()
+            db_task = db[self._task_collection][key]
+            db_task.pop("namespace")
+            db_task = Task.parse_obj(db_task)
+            update = TaskUpdate(progress=0.0, state=TaskState.QUEUED).dict(
+                exclude_none=True, by_alias=True
+            )
+            requeued = safe_copy(db_task, update=update)
+            db[self._task_collection][key] = requeued
             self._write(db)
 
         async def get_task(self, task_id: str) -> Task:
-            db = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db)
+            db_name = self._get_task_db_name(task_id)
+            key = self._task_key(task_id=task_id, db=db_name)
             db = self._read()
             try:
                 tasks = db[self._task_collection]
-                task = deepcopy(tasks[key])
-                task.pop("namespace")
-                return Task.parse_obj(task)
             except KeyError as e:
                 raise UnknownTask(task_id) from e
+            task = deepcopy(tasks[key])
+            task.pop("namespace")
+            return Task.parse_obj(task)
 
         async def get_task_errors(self, task_id: str) -> List[TaskError]:
             db = self._get_task_db_name(task_id)
@@ -343,13 +387,13 @@ if _has_pytest:
             errors = [TaskError.parse_obj(err) for err in errors]
             return errors
 
-        async def get_task_result(self, task_id: str) -> TaskResult:
+        async def get_task_result(self, task_id: str) -> ResultEvent:
             db = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db)
             db = self._read()
             results = db[self._result_collection]
             try:
-                return TaskResult.parse_obj(results[key])
+                return ResultEvent.parse_obj(results[key])
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
@@ -371,7 +415,44 @@ if _has_pytest:
                 tasks = (t for t in tasks if t.state in state)
             return list(tasks)
 
-    R = TypeVar("R", bound=ICIJModel)
+        async def _consume(self) -> ManagerEvent:
+            events = await self._consume_(
+                self._manager_event_collection,
+                self._event_refresh_interval_s,
+                list,
+                select=lambda events: bool(  # pylint: disable=unnecessary-lambda
+                    events
+                ),
+                order=self._order_events,
+            )
+            events = sorted(
+                events,
+                key=lambda e: datetime.fromisoformat(e["timestamp"]).timestamp(),
+            )
+            event = events[0]
+            db = self._read()
+            task_id = event["taskId"]
+            db_name = self._get_task_db_name(task_id)
+            key = self._task_key(task_id=task_id, db=db_name)
+            db[self._manager_event_collection][key] = events[1:]
+            self._write(db)
+            event.pop("timestamp")
+            return cast(ManagerEvent, Message.parse_obj(event))
+
+        async def cancel(self, task_id: str, *, requeue: bool):
+            cancel_event = CancelEvent(task_id=task_id, requeue=requeue)
+            db_name = self._get_task_db_name(task_id)
+            key = self._task_key(task_id=task_id, db=db_name)
+            db = self._read()
+            events = db[self._worker_event_collection]
+            if key not in events:
+                events[key] = []
+            event_dict = cancel_event.dict(exclude_unset=True, by_alias=True)
+            event_dict["timestamp"] = datetime.now()
+            events[key].append(event_dict)
+            self._write(db)
+
+    R = TypeVar("R")
 
     class MockEventPublisher(DBMixin, EventPublisher):
         _excluded_from_event_update = {"error"}
@@ -380,8 +461,17 @@ if _has_pytest:
             super().__init__(db_path)
             self.published_events = []
 
-        async def _publish_event(self, event: TaskEvent):
-            self.published_events.append(event)
+        async def _publish_event(self, event: ManagerEvent):
+            if isinstance(event, ProgressEvent):
+                timestamp = datetime.now()
+            elif isinstance(event, ErrorEvent):
+                timestamp = event.error.occurred_at
+            elif isinstance(event, ResultEvent):
+                timestamp = event.completed_at
+            elif isinstance(event, CancelledEvent):
+                timestamp = event.cancelled_at
+            else:
+                raise TypeError(f"unexpected event type: {event}")
             # Let's simulate that we have an event handler which will reflect some event
             # into the DB, we could not do it. In this case tests should not expect that
             # events are reflected in the DB. They would only be registered inside
@@ -389,25 +479,15 @@ if _has_pytest:
             # Here we choose to reflect the change in the DB since its closer to what
             # will happen IRL and test integration further
             db_name = self._get_task_db_name(event.task_id)
-            ns = await self.get_task_namespace(event.task_id)
             key = self._task_key(task_id=event.task_id, db=db_name)
             db = self._read()
-            try:
-                task = self._get_db_task(db, task_id=event.task_id, db_name=db_name)
-                task.pop("namespace")
-                task = Task.parse_obj(task)
-            except UnknownTask:
-                task = Task.parse_obj(Task.mandatory_fields(event, keep_id=True))
-            update = task.resolve_event(event)
-            if update is not None:
-                update = {
-                    k: v for k, v in update.dict(by_alias=True).items() if v is not None
-                }
-                task = task.dict(exclude_unset=True, by_alias=True)
-                task["namespace"] = ns
-                task.update(update)
-                db[self._task_collection][key] = task
-                self._write(db)
+            event_dict = event.dict(exclude_unset=True, by_alias=True)
+            event_dict["timestamp"] = timestamp
+            if key not in db[self._manager_event_collection]:
+                db[self._manager_event_collection][key] = []
+            db[self._manager_event_collection][key].append(event_dict)
+            self._write(db)
+            self.published_events.append(event)
 
         def _get_db_task(self, db: Dict, *, task_id: str, db_name: str) -> Dict:
             tasks = db[self._task_collection]
@@ -434,15 +514,19 @@ if _has_pytest:
             *,
             namespace: Optional[str],
             db_path: Path,
-            task_queue_poll_interval_s: float,
+            poll_interval_s: float,
             **kwargs,
         ):
             super().__init__(app, worker_id, namespace=namespace, **kwargs)
             MockEventPublisher.__init__(self, db_path)
-            self._task_queue_poll_interval_s = task_queue_poll_interval_s
+            self._poll_interval_s = poll_interval_s
             self._worker_id = worker_id
             self._logger_ = logging.getLogger(__name__)
             self.terminated_cancelled_event_loop = False
+
+        @property
+        def app(self) -> AsyncApp:
+            return self._app
 
         @property
         def watch_cancelled_task(self) -> Optional[asyncio.Task]:
@@ -463,6 +547,14 @@ if _has_pytest:
         def successful_exit(self) -> bool:
             return self._successful_exit
 
+        @property
+        def current(self) -> Optional[Task]:
+            return self._current
+
+        @current.setter
+        def current(self, value: Optional[Task]):
+            self._current = value
+
         async def signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
             await self._signal_handler(signal_name, graceful=graceful)
 
@@ -474,19 +566,13 @@ if _has_pytest:
         def _from_config(cls, config: MockWorkerConfig, **extras) -> MockWorker:
             worker = cls(
                 db_path=config.db_path,
-                task_queue_poll_interval_s=config.task_queue_poll_interval_s,
+                poll_interval_s=config.task_queue_poll_interval_s,
                 **extras,
             )
             return worker
 
         def _to_config(self) -> MockWorkerConfig:
             return MockWorkerConfig(db_path=self._db_path)
-
-        async def _save_result(self, result: TaskResult):
-            return await super(Worker, self).save_result(result)
-
-        async def _save_error(self, error: TaskError):
-            await super(Worker, self).save_error(error)
 
         def _get_db_errors(self, task_id: str, db_name: str) -> List[TaskError]:
             key = self._task_key(task_id=task_id, db=db_name)
@@ -497,7 +583,7 @@ if _has_pytest:
             except KeyError as e:
                 raise UnknownTask(task_id) from e
 
-        def _get_db_result(self, task_id: str, db_name: str) -> TaskResult:
+        def _get_db_result(self, task_id: str, db_name: str) -> ResultEvent:
             key = self._task_key(task_id=task_id, db=db_name)
             db = self._read()
             try:
@@ -517,48 +603,22 @@ if _has_pytest:
             self._write(db)
 
         async def _negatively_acknowledge(self, nacked: Task):
-            if nacked.state is TaskState.QUEUED:
-                placeholder = True
-                await self._requeue(nacked, placeholder)
-            elif nacked.state is TaskState.ERROR:
-                db_name = self._get_task_db_name(nacked.id)
-                key = self._task_key(nacked.id, db_name)
-                db = self._read()
-                update = TaskUpdate(state=TaskState.ERROR).dict(
-                    by_alias=True, exclude_unset=True
-                )
-                task = db[self._task_collection][key]
-                task.update(update)
-                db[self._lock_collection].pop(key)
-                self._write(db)
-            elif nacked.state is TaskState.CANCELLED:
-                db_name = self._get_task_db_name(nacked.id)
-                key = self._task_key(nacked.id, db_name)
-                db = self._read()
-                db[self._lock_collection].pop(key)
-                self._write(db)
-            else:
-                msg = (
-                    f"expected {TaskState.QUEUED} or {TaskState.ERROR},"
-                    f" found {nacked.state}"
-                )
-                raise ValueError(msg)
-
-        async def _requeue(self, task: Task, acknowledge: bool):
-            db_name = self._get_task_db_name(task.id)
-            key = self._task_key(task.id, db_name)
+            db_name = self._get_task_db_name(nacked.id)
+            key = self._task_key(nacked.id, db_name)
             db = self._read()
-            update = TaskUpdate(
-                progress=0.0, state=TaskState.QUEUED, retries=task.retries
-            ).dict(by_alias=True, exclude_unset=True)
-            db[self._task_collection][key].update(update)
-            db[self._lock_collection].pop(key, None)
+            db[self._lock_collection].pop(key)
             self._write(db)
+
+        @staticmethod
+        def _task_factory(obj: Dict) -> Task:
+            obj.pop("namespace", None)
+            return Task.parse_obj(obj)
 
         async def _consume(self) -> Task:
             task = await self._consume_(
                 self._task_collection,
-                Task,
+                self._poll_interval_s,
+                self._task_factory,
                 namespace=self._namespace,
                 select=lambda t: t.state is TaskState.QUEUED,
                 order=lambda t: t.created_at,
@@ -571,56 +631,32 @@ if _has_pytest:
             return task
 
         async def _consume_worker_events(self) -> WorkerEvent:
-            event = await self._consume_(
+            events = await self._consume_(
                 self._worker_event_collection,
-                WorkerEvent,
+                self._poll_interval_s,
+                list,
                 namespace=self._namespace,
-                order=lambda e: e.cancelled_at,
+                select=lambda events: bool(  # pylint: disable=unnecessary-lambda
+                    events
+                ),
+                order=self._order_events,
             )
+            events = sorted(
+                events,
+                key=lambda e: datetime.fromisoformat(e["timestamp"]).timestamp(),
+            )
+            event = events[0]
+            event.pop("timestamp")
+            event = cast(WorkerEvent, Message.parse_obj(event))
             db = self._read()
             db_name = self._get_task_db_name(event.task_id)
             key = self._task_key(event.task_id, db_name)
-            db[self._worker_event_collection].pop(key)
+            db[self._worker_event_collection][key] = events[1:]
             self._write(db)
             return event
 
-        async def _consume_(
-            self,
-            collection: str,
-            consumed_cls: Type[R],
-            namespace: Optional[str] = None,
-            select: Optional[Callable[[R], bool]] = None,
-            order: Optional[Callable[[R], Any]] = None,
-        ) -> R:
-            while "i'm waiting until I find something interesting":
-                db = self._read()
-                selected = deepcopy(db[collection])
-                if collection == self._task_collection:
-                    selected = {
-                        k: v
-                        for k, v in selected.items()
-                        if k not in db[self._lock_collection]
-                    }
-                if namespace is not None:
-                    selected = [
-                        (k, t)
-                        for k, t in selected.items()
-                        if t.get("namespace") == namespace
-                    ]
-                else:
-                    selected = selected.items()
-                for k, t in selected:
-                    t.pop("namespace", None)
-                selected = [(k, consumed_cls.parse_obj(t)) for k, t in selected]
-                if select is not None:
-                    selected = [(k, t) for k, t in selected if select(t)]
-                if selected:
-                    if order is not None:
-                        k, t = min(selected, key=lambda x: order(x[1]))
-                    else:
-                        k, t = selected[0]
-                    return t
-                await asyncio.sleep(self._task_queue_poll_interval_s)
-
         async def work_once(self):
             await self._work_once()
+
+        async def publish_cancelled_event(self, cancel_event: CancelEvent):
+            await self._publish_cancelled_event(cancel_event)
