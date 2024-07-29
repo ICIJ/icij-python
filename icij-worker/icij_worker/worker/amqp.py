@@ -143,6 +143,7 @@ class AMQPWorker(Worker, AMQPMixin):
         self._task_queue_iterator, _, _ = await self._get_queue_iterator(
             self._task_routing,
             declare_exchanges=self._declare_exchanges,
+            declare_queues=self._declare_exchanges,
             queue_args=arguments,
         )
         self._task_queue_iterator = cast(
