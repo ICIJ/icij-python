@@ -326,7 +326,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.3.2"
+version = "0.3.3"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -1059,4 +1059,4 @@ neo4j = ["neo4j"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "ea2dda2ddd0bdf01afbf62189e8dee4bc8aebec5dd99b11f0e1a6b17a7b1d24a"
+content-hash = "0ef55614dd632ae273bf15e7b463544474b331792f5dc48812f551f0cc98517b"
