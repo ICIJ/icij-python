@@ -13,8 +13,16 @@ from aio_pika.abc import (
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
-from icij_worker import (AsyncApp, ManagerEvent, ResultEvent, Task, TaskError, Worker,
-                         WorkerConfig, WorkerType)
+from icij_worker import (
+    AsyncApp,
+    ManagerEvent,
+    ResultEvent,
+    Task,
+    TaskError,
+    Worker,
+    WorkerConfig,
+    WorkerType,
+)
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
