@@ -13,7 +13,7 @@ from pydantic import Field
 
 from icij_common.neo4j.constants import (
     TASK_CANCELLED_BY_EVENT_REL,
-    TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED,
+    TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_EFFECTIVE,
     TASK_CANCEL_EVENT_NODE,
     TASK_LOCK_NODE,
@@ -182,7 +182,7 @@ async def _consume_worker_events_tx(
 WHERE NOT event.{TASK_CANCEL_EVENT_EFFECTIVE}{where_ns}
 SET event.{TASK_CANCEL_EVENT_EFFECTIVE} = true
 RETURN task, event
-ORDER BY event.{TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED} ASC
+ORDER BY event.{TASK_CANCEL_EVENT_CANCELLED_AT} ASC
 LIMIT 1
 """
     res = await tx.run(get_event_query, namespace=namespace)
