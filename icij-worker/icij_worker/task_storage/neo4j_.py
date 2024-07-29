@@ -10,7 +10,7 @@ from neo4j.exceptions import ResultNotSingleError
 
 from icij_common.neo4j.constants import (
     TASK_ARGUMENTS,
-    TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED,
+    TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     TASK_CANCEL_EVENT_NODE,
     TASK_COMPLETED_AT,
@@ -385,7 +385,7 @@ RETURN error
 
 async def migrate_cancelled_event_created_at_v0_tx(tx: neo4j.AsyncTransaction):
     query = f"""MATCH (event:{TASK_CANCEL_EVENT_NODE})
-SET event.{TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED} 
+SET event.{TASK_CANCEL_EVENT_CANCELLED_AT} 
     = event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
 REMOVE event.{TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}
 RETURN event
@@ -447,7 +447,7 @@ ON (event.{TASK_MANAGER_EVENT_NODE_CREATED_AT})"""
     await tx.run(manager_event_query)
     worker_event_query = f"""CREATE INDEX index_canceled_events_created_at IF NOT EXISTS
 FOR (event:{TASK_CANCEL_EVENT_NODE})
-ON (event.{TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED})"""
+ON (event.{TASK_CANCEL_EVENT_CANCELLED_AT})"""
     await tx.run(worker_event_query)
 
 

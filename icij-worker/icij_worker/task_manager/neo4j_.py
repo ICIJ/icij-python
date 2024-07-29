@@ -7,7 +7,7 @@ from neo4j.exceptions import ResultNotSingleError
 
 from icij_common.neo4j.constants import (
     TASK_CANCELLED_BY_EVENT_REL,
-    TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED,
+    TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_EFFECTIVE,
     TASK_CANCEL_EVENT_NODE,
     TASK_CANCEL_EVENT_REQUEUE,
@@ -112,7 +112,7 @@ async def _cancel_task_tx(tx: neo4j.AsyncTransaction, task_id: str, requeue: boo
 CREATE (task)-[
     :{TASK_CANCELLED_BY_EVENT_REL}
 ]->(:{TASK_CANCEL_EVENT_NODE} {{ 
-        {TASK_CANCEL_EVENT_CANCELLED_AT_DEPRECATED}: $cancelledAt, 
+        {TASK_CANCEL_EVENT_CANCELLED_AT}: $cancelledAt, 
         {TASK_CANCEL_EVENT_EFFECTIVE}: false,
         {TASK_CANCEL_EVENT_REQUEUE}: $requeue
     }})
