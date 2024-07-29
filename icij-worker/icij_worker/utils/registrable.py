@@ -46,8 +46,8 @@ class RegistrableMixin(ABC):
         cls, name: Optional[str] = None, exist_ok: bool = False
     ) -> Callable[[Type[_T]], Type[_T]]:
         # pylint: disable=protected-access
-        registry = Registrable._registry[cls]
-        registered_names = Registrable._registered_names[cls]
+        registry = RegistrableMixin._registry[cls]
+        registered_names = RegistrableMixin._registered_names[cls]
 
         def add_subclass_to_registry(subclass: Type[_T]) -> Type[_T]:
             registered_name = name
@@ -88,9 +88,9 @@ class RegistrableMixin(ABC):
     @classmethod
     def resolve_class_name(cls: Type[_RegistrableT], name: str) -> Type[_RegistrableT]:
         # pylint: disable=protected-access
-        sub_registry = Registrable._registry.get(cls, None)
+        sub_registry = RegistrableMixin._registry.get(cls, None)
         if sub_registry is None:
-            for k, v in Registrable._registry.items():
+            for k, v in RegistrableMixin._registry.items():
                 if issubclass(cls, k):
                     sub_registry = v
                     break
@@ -126,7 +126,7 @@ If your registered class comes from custom code, you'll need to import the\
     @classmethod
     def list_available(cls) -> List[str]:
         # pylint: disable=protected-access
-        keys = list(Registrable._registry[cls].keys())
+        keys = list(RegistrableMixin._registry[cls].keys())
         return keys
 
     @classmethod
@@ -134,7 +134,9 @@ If your registered class comes from custom code, you'll need to import the\
     def registered_name(cls) -> str:
         for (
             names
-        ) in Registrable._registered_names.values():  # pylint: disable=protected-access
+        ) in (
+            RegistrableMixin._registered_names.values()
+        ):  # pylint: disable=protected-access
             name = names.get(cls)
             if name is not None:
                 return name
