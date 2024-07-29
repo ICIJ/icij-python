@@ -4,6 +4,7 @@ from typing import List, Optional
 import sys
 from pydantic.fields import FieldInfo
 
+import icij_worker
 from icij_common.logging_utils import (
     DATE_FMT,
     STREAM_HANDLER_FMT,
@@ -16,7 +17,9 @@ from icij_common.pydantic_utils import get_field_default_value
 class LogWithWorkerIDMixin:
     def setup_loggers(self, worker_id: Optional[str] = None):
         # Ugly work around the Pydantic V1 limitations...
-        loggers = self.loggers
+        all_loggers = list(self.loggers)
+        all_loggers.append(icij_worker.__name__)
+        loggers = sorted(set(all_loggers))
         if isinstance(loggers, FieldInfo):
             loggers = get_field_default_value(loggers)
         log_level = self.log_level
