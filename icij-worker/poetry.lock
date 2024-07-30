@@ -326,7 +326,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.3.3"
+version = "0.4.0"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -528,13 +528,13 @@ files = [
 
 [[package]]
 name = "neo4j"
-version = "5.22.0"
+version = "5.23.0"
 description = "Neo4j Bolt driver for Python"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "neo4j-5.22.0-py3-none-any.whl", hash = "sha256:8146755ac93d33cee594975172c15cffb68ab158e3358bb7a73b5e0b83367006"},
-    {file = "neo4j-5.22.0.tar.gz", hash = "sha256:199677239ce11fcecabce9962af515df271c1313ba110e737dd7d668fccd0c04"},
+    {file = "neo4j-5.23.0-py3-none-any.whl", hash = "sha256:5d8d2f45227c12d6ba564720cbc3e2f57aac472e4fa14fe69270e4f952791020"},
+    {file = "neo4j-5.23.0.tar.gz", hash = "sha256:26b06dac3a4b93d882a61714c5ca8d06fe68f697cbdfe113ab840d651a2d46a2"},
 ]
 
 [package.dependencies]
@@ -1059,4 +1059,4 @@ neo4j = ["neo4j"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "0ef55614dd632ae273bf15e7b463544474b331792f5dc48812f551f0cc98517b"
+content-hash = "1a68bcde95fbcfb158041d10a1af45cf98507434522c070a01d1d4a54336bda2"
