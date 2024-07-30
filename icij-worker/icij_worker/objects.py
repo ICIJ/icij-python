@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import traceback
-import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum, unique
@@ -380,8 +379,6 @@ class StacktraceItem(LowerCamelCaseModel):
 
 @Message.register("TaskError")
 class TaskError(Message, LowerCamelCaseModel):
-    # This helps to know if an error has already been processed or not
-    id: str
     # Follow the "problem detail" spec: https://datatracker.ietf.org/doc/html/rfc9457,
     # the type is omitted for now since we gave no URI to resolve errors yet
     name: str
@@ -393,7 +390,6 @@ class TaskError(Message, LowerCamelCaseModel):
     def from_exception(cls, exception: BaseException) -> TaskError:
         name = exception.__class__.__name__
         message = str(exception)
-        error_id = f"{_id_title(name)}-{uuid.uuid4().hex}"
         stacktrace = traceback.StackSummary.extract(
             traceback.walk_tb(exception.__traceback__)
         )
@@ -404,9 +400,7 @@ class TaskError(Message, LowerCamelCaseModel):
         cause = exception.__cause__
         if cause is not None:
             cause = str(cause)
-        error = cls(
-            id=error_id, name=name, message=message, cause=cause, stacktrace=stacktrace
-        )
+        error = cls(name=name, message=message, cause=cause, stacktrace=stacktrace)
         return error
 
 

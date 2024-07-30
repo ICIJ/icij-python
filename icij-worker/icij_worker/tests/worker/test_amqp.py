@@ -364,7 +364,6 @@ _CREATED_AT = datetime.now()
                 task_id="some-id",
                 retries_left=4,
                 error=TaskError(
-                    id="error-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -377,7 +376,7 @@ _CREATED_AT = datetime.now()
             ),
             '{"taskId": "some-id", '
             f'"createdAt": "{_CREATED_AT.isoformat()}", "retriesLeft": 4, '
-            '"error": {"id": "error-id", '
+            '"error": {'
             '"name": "some-error", "message": "some message", "stacktrace": [{"name": '
             '"SomeError", "file": "some details", "lineno": 666}],'
             ' "@type": "TaskError"}, "@type": "ErrorEvent"}',
@@ -423,7 +422,6 @@ async def test_publish_error(
     broker_url = rabbit_mq
     task = populate_tasks[0]
     error = TaskError(
-        id="error-id",
         name="someErrorTitle",
         message="with_details",
         stacktrace=[StacktraceItem(name="someErrorTitle", file="somefile", lineno=666)],
@@ -445,7 +443,6 @@ async def test_publish_error(
             "@type": "ErrorEvent",
             "error": {
                 "@type": "TaskError",
-                "id": "error-id",
                 "message": "with_details",
                 "name": "someErrorTitle",
                 "stacktrace": [

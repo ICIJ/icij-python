@@ -133,7 +133,6 @@ async def test_save_result(fs_storage: TestableFSKeyValueStorage):
 async def test_save_error(fs_storage: TestableFSKeyValueStorage):
     # Give
     error = TaskError(
-        id="some-id",
         name="error",
         message="with details",
         stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],
@@ -221,7 +220,6 @@ async def test_get_error(fs_storage: TestableFSKeyValueStorage):
     err = ErrorEvent(
         task_id="task-0",
         error=TaskError(
-            id="error-id",
             name="some-error",
             message="some message",
             stacktrace=[

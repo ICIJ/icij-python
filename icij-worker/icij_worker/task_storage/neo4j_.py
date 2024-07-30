@@ -16,7 +16,7 @@ from icij_common.neo4j.constants import (
     TASK_COMPLETED_AT,
     TASK_CREATED_AT,
     TASK_ERROR_DETAIL_DEPRECATED,
-    TASK_ERROR_ID,
+    TASK_ERROR_ID_DEPRECATED,
     TASK_ERROR_MESSAGE,
     TASK_ERROR_NAME,
     TASK_ERROR_NODE,
@@ -250,18 +250,15 @@ async def _save_error_tx(
     created_at: datetime,
 ):
     query = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
-MERGE (error:{TASK_ERROR_NODE} {{ {TASK_ERROR_ID}: $errorId }} )-[
-    rel:{TASK_ERROR_OCCURRED_TYPE}]->(task)
+CREATE (error:{TASK_ERROR_NODE})-[rel:{TASK_ERROR_OCCURRED_TYPE}]->(task)
 SET error += $errorProps,
     rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} = $occurredAt,
     rel.{TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT} = $retriesLeft  
 RETURN task, error"""
-    error_id = error_props.pop(TASK_ERROR_ID)
     res = await tx.run(
         query,
         taskId=task_id,
         errorProps=error_props,
-        errorId=error_id,
         retriesLeft=retries_left,
         occurredAt=created_at,
     )
@@ -291,7 +288,7 @@ ON (task.{TASK_ERROR_OCCURRED_AT_DEPRECATED})"""
     await tx.run(error_timestamp_query)
     error_id_query = f"""CREATE CONSTRAINT constraint_task_error_unique_id IF NOT EXISTS
 FOR (task:{TASK_ERROR_NODE})
-REQUIRE (task.{TASK_ERROR_ID}) IS UNIQUE"""
+REQUIRE (task.{TASK_ERROR_ID_DEPRECATED}) IS UNIQUE"""
     await tx.run(error_id_query)
     task_lock_task_id_query = f"""CREATE CONSTRAINT constraint_task_lock_unique_task_id
 IF NOT EXISTS
@@ -473,7 +470,7 @@ ON (event.{TASK_CANCEL_EVENT_CANCELLED_AT})"""
     await tx.run(worker_event_query)
 
 
-async def migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
+async def migrate_task_retries_and_error_v0_tx(
     tx: neo4j.AsyncTransaction,
 ):
     query = f"""MATCH (error:{TASK_ERROR_NODE})-[rel:{TASK_ERROR_OCCURRED_TYPE}]-(task)
@@ -481,7 +478,7 @@ WHERE rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} IS NULL
 SET rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} 
     = error.{TASK_ERROR_OCCURRED_AT_DEPRECATED},
     rel.{TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT} = 3
-REMOVE error.{TASK_ERROR_OCCURRED_AT_DEPRECATED}
+REMOVE error.{TASK_ERROR_OCCURRED_AT_DEPRECATED}, error.{TASK_ERROR_ID_DEPRECATED}
 RETURN error
 """
     await tx.run(query)
@@ -506,5 +503,5 @@ MIGRATIONS = [
     migrate_task_type_to_name_v0,
     migrate_task_progress_v0_tx,
     migrate_index_event_dates_v0_tx,
-    migrate_task_retries_and_error_retries_and_occurred_at_v0_tx,
+    migrate_task_retries_and_error_v0_tx,
 ]
