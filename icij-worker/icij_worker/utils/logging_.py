@@ -17,11 +17,11 @@ from icij_common.pydantic_utils import get_field_default_value
 class LogWithWorkerIDMixin:
     def setup_loggers(self, worker_id: Optional[str] = None):
         # Ugly work around the Pydantic V1 limitations...
-        all_loggers = list(self.loggers)
+        all_loggers = self.loggers
+        if isinstance(all_loggers, FieldInfo):
+            all_loggers = get_field_default_value(all_loggers)
         all_loggers.append(icij_worker.__name__)
         loggers = sorted(set(all_loggers))
-        if isinstance(loggers, FieldInfo):
-            loggers = get_field_default_value(loggers)
         log_level = self.log_level
         if isinstance(log_level, FieldInfo):
             log_level = get_field_default_value(log_level)
