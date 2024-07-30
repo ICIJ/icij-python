@@ -36,7 +36,6 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
             task_id="task-0",
             retries_left=2,
             error=TaskError(
-                id="error-id",
                 name="some-error",
                 message="some message",
                 stacktrace=[
@@ -49,7 +48,6 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
             task_id="task-0",
             retries_left=1,
             error=TaskError(
-                id="error-id",
                 name="some-error",
                 message="some message",
                 stacktrace=[

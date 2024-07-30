@@ -39,7 +39,6 @@ async def _populate_errors(
     task_with_error = populate_tasks[1]
     query_0 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
-    id: 'error-0',
     name: 'error',
     stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
     message: "with details",
@@ -56,7 +55,6 @@ RETURN error, rel, task"""
     e_0 = ErrorEvent.from_neo4j(recs_0[0])
     query_1 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
-    id: 'error-1',
     name: 'error',
     stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
     message: 'same error again',
@@ -377,7 +375,6 @@ async def test_task_manager_get_tasks(
                 ErrorEvent(
                     task_id="task-1",
                     error=TaskError(
-                        id="error-1",
                         name="error",
                         message="same error again",
                         stacktrace=[
@@ -393,7 +390,6 @@ async def test_task_manager_get_tasks(
                 ErrorEvent(
                     task_id="task-1",
                     error=TaskError(
-                        id="error-0",
                         name="error",
                         message="with details",
                         stacktrace=[
@@ -639,7 +635,6 @@ async def test_task_manager_save_error(
     task = hello_world_task
     await neo4j_task_manager.save_task(task, namespace=None)
     error = TaskError(
-        id="some-error_id",
         name="error",
         message="with details",
         stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],

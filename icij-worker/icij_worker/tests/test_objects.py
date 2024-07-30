@@ -117,7 +117,6 @@ def test_precedence_sanity_check():
                 task_id="task-id",
                 retries_left=3,
                 error=TaskError(
-                    id="error-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -151,7 +150,6 @@ def test_precedence_sanity_check():
                 task_id="task-id",
                 retries_left=0,
                 error=TaskError(
-                    id="error-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -184,7 +182,6 @@ def test_precedence_sanity_check():
                 task_id="task-id",
                 retries_left=0,
                 error=TaskError(
-                    id="error-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -303,7 +300,6 @@ def test_precedence_sanity_check():
                 task_id="task-id",
                 retries_left=4,
                 error=TaskError(
-                    id="error-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -407,7 +403,6 @@ def test_error_event_ser():
         task_id="task-id",
         retries_left=4,
         error=TaskError(
-            id="error-id",
             name="some-error",
             message="some message",
             stacktrace=[
@@ -423,7 +418,6 @@ def test_error_event_ser():
         "@type": "ErrorEvent",
         "error": {
             "@type": "TaskError",
-            "id": "error-id",
             "message": "some message",
             "name": "some-error",
             "stacktrace": [

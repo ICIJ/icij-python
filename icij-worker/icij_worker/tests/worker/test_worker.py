@@ -271,9 +271,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
             ErrorEvent(
                 task_id="some-id",
                 retries_left=2,
-                error=TaskError(
-                    id="", name="Recoverable", message="i can recover from this"
-                ),
+                error=TaskError(name="Recoverable", message="i can recover from this"),
                 created_at=datetime.now(),
             ),
             ProgressEvent(task_id="some-id", progress=0.0, created_at=datetime.now()),
@@ -359,7 +357,7 @@ async def test_task_wrapper_should_handle_fatal_error(mock_failing_worker: MockW
             ProgressEvent(task_id="some-id", progress=0.1, created_at=datetime.now()),
             ErrorEvent(
                 task_id="some-id",
-                error=TaskError(id="", name="ValueError", message="this is fatal"),
+                error=TaskError(name="ValueError", message="this is fatal"),
                 created_at=datetime.now(),
                 retries_left=0,
             ),
@@ -434,7 +432,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
             ProgressEvent(task_id="some-id", progress=0.0, created_at=datetime.now()),
             ErrorEvent(
                 task_id="some-id",
-                error=TaskError(id="error-id", name="UnregisteredTask", message=""),
+                error=TaskError(name="UnregisteredTask", message=""),
                 created_at=datetime.now(),
                 retries_left=0,
             ),

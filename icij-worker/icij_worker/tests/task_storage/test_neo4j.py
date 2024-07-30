@@ -20,7 +20,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
     migrate_task_progress_v0_tx,
-    migrate_task_retries_and_error_retries_and_occurred_at_v0_tx,
+    migrate_task_retries_and_error_v0_tx,
     migrate_task_type_to_name_v0,
 )
 
@@ -431,7 +431,7 @@ async def test_migrate_index_event_dates_v0_tx(neo4j_test_driver: neo4j.AsyncDri
         assert "index_canceled_events_created_at" in existing_indexes
 
 
-async def test_migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
+async def test_migrate_task_retries_and_error_v0_tx(
     neo4j_task_manager: Neo4JTaskManager,
     populate_tasks_legacy_v3,  # pylint: disable=unused-argument
     populate_errors_legacy_v1,  # pylint: disable=unused-argument
@@ -441,9 +441,7 @@ async def test_migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
     driver = task_manager.driver
     # When
     async with driver.session() as session:
-        await session.execute_write(
-            migrate_task_retries_and_error_retries_and_occurred_at_v0_tx
-        )
+        await session.execute_write(migrate_task_retries_and_error_v0_tx)
 
     # Then / When
     expected_tasks = [
@@ -483,7 +481,6 @@ async def test_migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
         ErrorEvent(
             task_id="task-1",
             error=TaskError(
-                id="error-1",
                 name="error",
                 message="same error again",
                 cause="some cause",
@@ -497,7 +494,6 @@ async def test_migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
         ErrorEvent(
             task_id="task-1",
             error=TaskError(
-                id="error-0",
                 name="error",
                 message="with details",
                 cause="some cause",

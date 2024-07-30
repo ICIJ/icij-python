@@ -74,7 +74,6 @@ async def test_task_manager_should_consume_error_events(
     )
     await task_manager.save_task(task, namespace=None)
     error = TaskError(
-        id="error-id",
         name="error",
         message="with details",
         stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],
