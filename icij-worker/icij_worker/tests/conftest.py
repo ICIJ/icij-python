@@ -52,6 +52,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
     migrate_task_progress_v0_tx,
+    migrate_task_retries_and_error_retries_and_occurred_at_v0_tx,
     migrate_task_type_to_name_v0,
 )
 from icij_worker.typing_ import PercentProgress
@@ -133,6 +134,11 @@ TEST_MIGRATIONS = [
         label="index events by dates",
         migration_fn=migrate_index_event_dates_v0_tx,
     ),
+    Migration(
+        version="0.9.0",
+        label="task retries and error occurred_at",
+        migration_fn=migrate_task_retries_and_error_retries_and_occurred_at_v0_tx,
+    ),
 ]
 
 
@@ -177,7 +183,7 @@ RETURN task"""
     name: 'hello_world',
     progress: 0.66,
     createdAt: $now,
-    retries: 1,
+    retriesLeft: 1,
     arguments: '{"greeted": "1"}'
  }) 
 RETURN task"""

@@ -44,6 +44,7 @@ class AMQPMixin:
     _namespacing: Namespacing
     _task_x: AbstractExchange
     max_task_queue_size: Optional[int]
+    _always_include = {"createdAt", "retriesLeft"}
 
     def __init__(
         self,
@@ -51,7 +52,7 @@ class AMQPMixin:
         *,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
-        inactive_after_s: Optional[float] = None,
+        inactive_after_s: float = None,
     ):
         self._broker_url = broker_url
         self._reconnection_wait_s = reconnection_wait_s

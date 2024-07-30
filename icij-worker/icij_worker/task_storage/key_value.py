@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Type
 
 from icij_worker import Namespacing, Task, TaskError, ResultEvent
 from icij_worker.exceptions import UnknownTask
-from icij_worker.objects import TaskUpdate
+from icij_worker.objects import ErrorEvent, TaskUpdate
 from icij_worker.task_storage import TaskStorage
 
 
@@ -19,7 +19,7 @@ class KeyValueStorage(TaskStorage, ABC):
             namespacing = Namespacing()
         self._namespacing = namespacing
 
-    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
+    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
         """When possible override this to be transactional"""
         key = self._key(task.id, obj_cls=ResultEvent)
         new_task = False
@@ -37,7 +37,7 @@ class KeyValueStorage(TaskStorage, ABC):
                     f" save task namespace: {namespace}"
                 )
                 raise ValueError(msg)
-            update = TaskUpdate.from_task(task).dict(exclude_none=True, by_alias=True)
+            update = TaskUpdate.from_task(task).dict(exclude_none=True)
             await self._update(self._tasks_db_name, update, key=key)
         return new_task
 
@@ -45,8 +45,8 @@ class KeyValueStorage(TaskStorage, ABC):
         res_key = self._key(result.task_id, obj_cls=ResultEvent)
         await self._insert(self._results_db_name, result.dict(), key=res_key)
 
-    async def save_error(self, error: TaskError):
-        key = self._key(error.task_id, obj_cls=TaskError)
+    async def save_error(self, error: ErrorEvent):
+        key = self._key(error.task_id, obj_cls=ErrorEvent)
         await self._add_to_array(self._errors_db_name, error.dict(), key=key)
 
     async def get_task(self, task_id: str) -> Task:
@@ -67,7 +67,7 @@ class KeyValueStorage(TaskStorage, ABC):
         namespace = task.get("namespace")
         return namespace
 
-    async def get_task_errors(self, task_id: str) -> List[TaskError]:
+    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
         key = self._key(task_id, obj_cls=TaskError)
         try:
             errors = await self._read_key(self._errors_db_name, key=key)

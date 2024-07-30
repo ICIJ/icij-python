@@ -10,7 +10,7 @@ from sqlitedict import SqliteDict
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import ResultEvent, Task, TaskError
-from icij_worker.objects import StacktraceItem, TaskState
+from icij_worker.objects import ErrorEvent, StacktraceItem, TaskState
 from icij_worker.tests.conftest import TestableFSKeyValueStorage
 
 
@@ -67,7 +67,7 @@ async def test_save_task(fs_storage: TestableFSKeyValueStorage, hello_world_task
     task = hello_world_task
     db = _make_db(fs_storage.db_path, table_name="tasks")
     # When
-    is_new = await fs_storage.save_task(task, None)
+    is_new = await fs_storage.save_task_(task, None)
     # Then
     with db:
         db_task = db.get(task.id)
@@ -83,13 +83,13 @@ async def test_save_task_with_different_ns_should_fail(
 ):
     # Given
     task = hello_world_task
-    await fs_storage.save_task(task, None)
+    await fs_storage.save_task_(task, None)
     # When
     msg = re.escape(
         "DB task namespace (None) differs from save task namespace: some-namespace"
     )
     with pytest.raises(ValueError, match=msg):
-        await fs_storage.save_task(task, "some-namespace")
+        await fs_storage.save_task_(task, "some-namespace")
 
 
 async def test_save_task_should_not_update_non_updatable_field(
@@ -97,7 +97,7 @@ async def test_save_task_should_not_update_non_updatable_field(
 ):
     # Given
     task = hello_world_task
-    await fs_storage.save_task(task, None)
+    await fs_storage.save_task_(task, None)
     updates = {
         "name": "another-type",
         "created_at": datetime.now(),
@@ -105,7 +105,7 @@ async def test_save_task_should_not_update_non_updatable_field(
     }
     updated = safe_copy(task, update=updates)
     # When
-    is_new = await fs_storage.save_task(updated, None)
+    is_new = await fs_storage.save_task_(updated, None)
     assert not is_new
     stored = await fs_storage.get_task(task.id)
     # Then
@@ -115,9 +115,9 @@ async def test_save_task_should_not_update_non_updatable_field(
 async def test_save_result(fs_storage: TestableFSKeyValueStorage):
     # Given
     task = task_1()
-    await fs_storage.save_task(task, None)
+    await fs_storage.save_task_(task, None)
     result = ResultEvent(
-        task_id="task-1", result="some_result", completed_at=datetime.now()
+        task_id="task-1", result="some_result", created_at=datetime.now()
     )
     result_db = _make_db(fs_storage.db_path, table_name="results")
     # When
@@ -134,23 +134,25 @@ async def test_save_error(fs_storage: TestableFSKeyValueStorage):
     # Give
     error = TaskError(
         id="some-id",
-        task_id="some-task-id",
         name="error",
         message="with details",
-        occurred_at=datetime.now(),
         stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],
         cause="some cause",
+    )
+    created_at = datetime.now()
+    error_event = ErrorEvent(
+        task_id="some-id", error=error, retries_left=3, created_at=created_at
     )
 
     db = _make_db(fs_storage.db_path, table_name="errors")
     # When
-    await fs_storage.save_error(error)
+    await fs_storage.save_error(error_event)
     # Then
     with db:
-        db_errors = db.get(error.task_id)
+        db_errors = db.get(error_event.task_id)
     assert db_errors is not None
-    db_errors = [TaskError.parse_obj(err) for err in db_errors]
-    assert db_errors == [error]
+    db_errors = [ErrorEvent.parse_obj(err) for err in db_errors]
+    assert db_errors == [error_event]
 
 
 @pytest.mark.parametrize(
@@ -201,7 +203,7 @@ async def test_get_result(fs_storage: TestableFSKeyValueStorage):
     storage = fs_storage
     db = _make_db(fs_storage.db_path, table_name="results")
     res = ResultEvent(
-        task_id="some-id", result="Hello world !", completed_at=datetime.now()
+        task_id="some-id", result="Hello world !", created_at=datetime.now()
     )
     with db:
         db["task-0"] = res.dict()
@@ -216,13 +218,18 @@ async def test_get_error(fs_storage: TestableFSKeyValueStorage):
     # Given
     store = fs_storage
     db = _make_db(fs_storage.db_path, table_name="errors")
-    err = TaskError(
-        id="error-id",
+    err = ErrorEvent(
         task_id="task-0",
-        name="some-error",
-        message="some message",
-        stacktrace=[StacktraceItem(name="SomeError", file="some details", lineno=666)],
-        occurred_at=datetime.now(),
+        error=TaskError(
+            id="error-id",
+            name="some-error",
+            message="some message",
+            stacktrace=[
+                StacktraceItem(name="SomeError", file="some details", lineno=666)
+            ],
+        ),
+        retries_left=3,
+        created_at=datetime.now(),
     )
     with db:
         db["task-0"] = [err.dict()]

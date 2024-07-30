@@ -1,9 +1,8 @@
 # pylint: disable=redefined-outer-name
-import itertools
 from datetime import datetime
 from functools import partial
-from typing import Optional
 
+import itertools
 import pytest
 
 from icij_common.pydantic_utils import safe_copy
@@ -36,7 +35,7 @@ async def test_consume_progress_event(
         progress=0.0,
     )
     await task_manager.save_task(task, namespace=None)
-    event = ProgressEvent(task_id=task.id, progress=0.99)
+    event = ProgressEvent(task_id=task.id, progress=0.99, created_at=datetime.now())
     # When
     await worker.publish_event(event)
     # Then
@@ -56,18 +55,17 @@ async def test_consume_progress_event(
 
 
 @pytest.mark.parametrize(
-    "retries,mock_worker",
+    "retries_left,mock_worker",
     list(zip((0, 1), itertools.repeat(None))),
     indirect=["mock_worker"],
 )
 async def test_task_manager_should_consume_error_events(
-    mock_manager: MockManager, mock_worker: MockWorker, retries: Optional[int]
+    mock_manager: MockManager, mock_worker: MockWorker, retries_left
 ):
     # Given
     task_manager = mock_manager
     worker = mock_worker
     task_name = "sleep_for"
-    max_retries = task_manager.app.registry[task_name].max_retries
     task = Task(
         id="some-id",
         name=task_name,
@@ -77,15 +75,13 @@ async def test_task_manager_should_consume_error_events(
     await task_manager.save_task(task, namespace=None)
     error = TaskError(
         id="error-id",
-        task_id=task.id,
         name="error",
         message="with details",
-        occurred_at=datetime.now(),
         stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],
         cause="some cause",
     )
     # When
-    await worker.publish_error_event(error, task, retries)
+    await worker.publish_error_event(error, task, retries_left)
     # Then
     async with task_manager:
         consume_timeout = 20.0
@@ -95,19 +91,27 @@ async def test_task_manager_should_consume_error_events(
             saved = await task_manager.get_task(task_id=task.id)
             return saved.state is state
 
-        if retries == max_retries:
+        if not retries_left:
             expected = partial(_assert_has_state, TaskState.ERROR)
-            update = {"state": TaskState.ERROR, "retries": retries}
+            update = {"state": TaskState.ERROR, "retries_left": retries_left}
             expected_task = safe_copy(task, update=update)
         else:
             expected = partial(_assert_has_state, TaskState.QUEUED)
-            update = {"state": TaskState.QUEUED, "retries": retries, "progress": 0.0}
+            update = {
+                "state": TaskState.QUEUED,
+                "retries_left": retries_left,
+                "progress": 0.0,
+            }
             expected_task = safe_copy(task, update=update)
         assert await async_true_after(expected, after_s=consume_timeout), msg
         db_task = await task_manager.get_task(task_id=task.id)
         assert db_task == expected_task
-        errors = await task_manager.get_task_errors(task.id)
-        assert errors == [error]
+        db_errors = await task_manager.get_task_errors(task.id)
+        assert len(db_errors) == 1
+        db_error = db_errors[0]
+        assert db_error.task_id == task.id
+        assert db_error.retries_left == retries_left
+        assert db_error.error == error
 
 
 @pytest.mark.parametrize(
@@ -159,8 +163,8 @@ async def test_consume_cancelled_event(
         assert await async_true_after(expected, after_s=consume_timeout), msg
         db_task = await task_manager.get_task(task_id=task.id)
         assert isinstance(db_task.cancelled_at, expected_cancelled_at_type)
-        db_task = db_task.dict(exclude_unset=True, exclude_none=True)
-        expected_task = expected_task.dict(exclude_unset=True, exclude_none=True)
+        db_task = db_task.dict()
+        expected_task = expected_task.dict()
         db_task.pop("cancelled_at", None)
         expected_task.pop("cancelled_at", None)
         assert db_task == expected_task

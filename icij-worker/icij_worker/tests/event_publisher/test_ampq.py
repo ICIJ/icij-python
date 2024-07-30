@@ -39,7 +39,9 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     publisher = TestableAMQPPublisher(
         broker_url=broker_url, connection_timeout_s=2, reconnection_wait_s=1
     )
-    event = ProgressEvent(task_id=task.id, progress=0.0)
+    from datetime import datetime
+
+    event = ProgressEvent(task_id=task.id, progress=0.0, created_at=datetime.now())
 
     # When
     async with publisher:

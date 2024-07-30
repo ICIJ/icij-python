@@ -20,8 +20,10 @@ from icij_common.neo4j.constants import (
     TASK_ERROR_MESSAGE,
     TASK_ERROR_NAME,
     TASK_ERROR_NODE,
-    TASK_ERROR_OCCURRED_AT,
+    TASK_ERROR_OCCURRED_AT_DEPRECATED,
     TASK_ERROR_OCCURRED_TYPE,
+    TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT,
+    TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT,
     TASK_ERROR_STACKTRACE,
     TASK_ERROR_TITLE_DEPRECATED,
     TASK_HAS_RESULT_TYPE,
@@ -38,14 +40,16 @@ from icij_common.neo4j.constants import (
     TASK_PROGRESS,
     TASK_RESULT_NODE,
     TASK_RESULT_RESULT,
+    TASK_RETRIES_DEPRECATED,
+    TASK_RETRIES_LEFT,
     TASK_TYPE_DEPRECATED,
 )
 from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_common.pydantic_utils import jsonable_encoder
-from icij_worker import ResultEvent, Task, TaskError, TaskState
+from icij_worker import ResultEvent, Task, TaskState
 from icij_worker.exceptions import MissingTaskResult, UnknownTask
-from icij_worker.objects import TaskUpdate
+from icij_worker.objects import ErrorEvent, TaskUpdate
 from icij_worker.task_storage import TaskStorage
 
 
@@ -59,10 +63,10 @@ class Neo4jStorage(TaskStorage):
         async with self._task_session(task_id) as sess:
             return await sess.execute_read(_get_task_tx, task_id=task_id)
 
-    async def get_task_errors(self, task_id: str) -> List[TaskError]:
+    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
         async with self._task_session(task_id) as sess:
             recs = await sess.execute_read(_get_task_errors_tx, task_id=task_id)
-        errors = [TaskError.from_neo4j(rec, task_id=task_id) for rec in recs]
+        errors = [ErrorEvent.from_neo4j(rec) for rec in recs]
         return errors
 
     async def get_task_result(self, task_id: str) -> ResultEvent:
@@ -93,7 +97,7 @@ class Neo4jStorage(TaskStorage):
         except KeyError as e:
             raise UnknownTask(task_id) from e
 
-    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
+    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
         db = self._namespacing.neo4j_db(namespace)
         async with self._db_session(db) as sess:
             task_props = task.dict(by_alias=True, exclude_unset=True)
@@ -114,18 +118,22 @@ class Neo4jStorage(TaskStorage):
                 _save_result_tx,
                 task_id=result.task_id,
                 result=res_str,
-                completed_at=result.completed_at,
+                completed_at=result.created_at,
             )
 
-    async def save_error(self, error: TaskError):
+    async def save_error(self, error: ErrorEvent):
         async with self._task_session(error.task_id) as sess:
-            error_props = error.dict(by_alias=True)
+            error_props = error.error.dict(by_alias=True)
             error_props.pop("@type")
             error_props["stacktrace"] = [
                 json.dumps(item) for item in error_props["stacktrace"]
             ]
             await sess.execute_write(
-                _save_error_tx, task_id=error.task_id, error_props=error_props
+                _save_error_tx,
+                task_id=error.task_id,
+                error_props=error_props,
+                retries_left=error.retries_left,
+                created_at=error.created_at,
             )
 
     @asynccontextmanager
@@ -234,15 +242,29 @@ RETURN task, result"""
 
 
 async def _save_error_tx(
-    tx: neo4j.AsyncTransaction, task_id: str, *, error_props: Dict
+    tx: neo4j.AsyncTransaction,
+    task_id: str,
+    *,
+    error_props: Dict,
+    retries_left: int,
+    created_at: datetime,
 ):
     query = f"""MATCH (task:{TASK_NODE} {{{TASK_ID}: $taskId }})
 MERGE (error:{TASK_ERROR_NODE} {{ {TASK_ERROR_ID}: $errorId }} )-[
-    :{TASK_ERROR_OCCURRED_TYPE}]->(task)
-SET error += $errorProps
+    rel:{TASK_ERROR_OCCURRED_TYPE}]->(task)
+SET error += $errorProps,
+    rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} = $occurredAt,
+    rel.{TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT} = $retriesLeft  
 RETURN task, error"""
     error_id = error_props.pop(TASK_ERROR_ID)
-    res = await tx.run(query, taskId=task_id, errorProps=error_props, errorId=error_id)
+    res = await tx.run(
+        query,
+        taskId=task_id,
+        errorProps=error_props,
+        errorId=error_id,
+        retriesLeft=retries_left,
+        occurredAt=created_at,
+    )
     try:
         await res.single(strict=True)
     except ResultNotSingleError as e:
@@ -265,7 +287,7 @@ ON (task.{TASK_NAME})"""
     await tx.run(type_query)
     error_timestamp_query = f"""CREATE INDEX index_task_error_timestamp IF NOT EXISTS
 FOR (task:{TASK_ERROR_NODE})
-ON (task.{TASK_ERROR_OCCURRED_AT})"""
+ON (task.{TASK_ERROR_OCCURRED_AT_DEPRECATED})"""
     await tx.run(error_timestamp_query)
     error_id_query = f"""CREATE CONSTRAINT constraint_task_error_unique_id IF NOT EXISTS
 FOR (task:{TASK_ERROR_NODE})
@@ -348,9 +370,9 @@ async def _get_task_errors_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str
 ) -> List[neo4j.Record]:
     query = f"""MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
-MATCH (error:{TASK_ERROR_NODE})-[:{TASK_ERROR_OCCURRED_TYPE}]->(task)
-RETURN error
-ORDER BY error.{TASK_ERROR_OCCURRED_AT} DESC
+MATCH (error:{TASK_ERROR_NODE})-[rel:{TASK_ERROR_OCCURRED_TYPE}]->(task)
+RETURN error, rel, task
+ORDER BY rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} DESC
 """
     res = await tx.run(query, taskId=task_id)
     errors = [err async for err in res]
@@ -451,6 +473,29 @@ ON (event.{TASK_CANCEL_EVENT_CANCELLED_AT})"""
     await tx.run(worker_event_query)
 
 
+async def migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
+    tx: neo4j.AsyncTransaction,
+):
+    query = f"""MATCH (error:{TASK_ERROR_NODE})-[rel:{TASK_ERROR_OCCURRED_TYPE}]-(task)
+WHERE rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} IS NULL 
+SET rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} 
+    = error.{TASK_ERROR_OCCURRED_AT_DEPRECATED},
+    rel.{TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT} = 3
+REMOVE error.{TASK_ERROR_OCCURRED_AT_DEPRECATED}
+RETURN error
+"""
+    await tx.run(query)
+    # Sadly, without the max retries save in DB, we can't compute the retries left, so
+    # we just delete this attribute
+    query = f"""MATCH (task:{TASK_NODE})
+WHERE task.{TASK_RETRIES_DEPRECATED} IS NOT NULL
+SET task.{TASK_RETRIES_LEFT} = 3 - task.{TASK_RETRIES_DEPRECATED} 
+REMOVE task.{TASK_RETRIES_DEPRECATED}
+RETURN task
+"""
+    await tx.run(query)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = [
     add_support_for_async_task_tx,
@@ -461,4 +506,5 @@ MIGRATIONS = [
     migrate_task_type_to_name_v0,
     migrate_task_progress_v0_tx,
     migrate_index_event_dates_v0_tx,
+    migrate_task_retries_and_error_retries_and_occurred_at_v0_tx,
 ]

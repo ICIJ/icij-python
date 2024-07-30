@@ -4,6 +4,7 @@ from typing import List
 
 import neo4j
 import pytest
+from neo4j import AsyncDriver
 
 from icij_common.neo4j.constants import (
     TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
@@ -11,6 +12,7 @@ from icij_common.neo4j.constants import (
 )
 from icij_worker import AsyncApp, Neo4JTaskManager, Task, TaskError, TaskState
 from icij_worker.app import AsyncAppConfig
+from icij_worker.objects import ErrorEvent, StacktraceItem
 from icij_worker.task_storage.neo4j_ import (
     migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
@@ -18,6 +20,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
     migrate_task_progress_v0_tx,
+    migrate_task_retries_and_error_retries_and_occurred_at_v0_tx,
     migrate_task_type_to_name_v0,
 )
 
@@ -50,7 +53,7 @@ RETURN task"""
     name: 'hello_world',
     progress: 0.66,
     createdAt: $now,
-    retries: 1,
+    retriesLeft: 1,
     inputs: '{"greeted": "1"}'
  }) 
 RETURN task"""
@@ -75,7 +78,7 @@ RETURN task"""
     type: 'hello_world',
     progress: 0.66,
     createdAt: $now,
-    retries: 1,
+    retriesLeft: 1,
     arguments: '{"greeted": "1"}'
  }) 
 RETURN task"""
@@ -100,7 +103,7 @@ RETURN task"""
     name: 'hello_world',
     progress: 66.6,
     createdAt: $now,
-    retries: 1,
+    retriesLeft: 1,
     arguments: '{"greeted": "1"}'
  }) 
 RETURN task"""
@@ -108,7 +111,32 @@ RETURN task"""
 
 
 @pytest.fixture(scope="function")
-async def _populate_errors_legacy(
+async def populate_tasks_legacy_v3(neo4j_async_app_driver: neo4j.AsyncDriver, request):
+    namespace = getattr(request, "param", None)
+    query_0 = """CREATE (task:_Task:QUEUED {
+    namespace: $namespace,
+    id: 'task-0', 
+    name: 'hello_world',
+    createdAt: $now,
+    arguments: '{"greeted": "0"}'
+ }) 
+RETURN task"""
+    await neo4j_async_app_driver.execute_query(query_0, now=_NOW, namespace=namespace)
+    query_1 = """CREATE (task:_Task:RUNNING {
+    id: 'task-1', 
+    namespace: $namespace,
+    name: 'hello_world',
+    progress: 0.66,
+    createdAt: $now,
+    retries: 1,
+    arguments: '{"greeted": "1"}'
+ }) 
+RETURN task"""
+    await neo4j_async_app_driver.execute_query(query_1, now=_NOW, namespace=namespace)
+
+
+@pytest.fixture(scope="function")
+async def populate_errors_legacy_v0(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
 ) -> neo4j.AsyncDriver:
     task_with_error = populate_tasks[1]
@@ -139,47 +167,57 @@ RETURN error"""
     return neo4j_async_app_driver
 
 
-async def test_migrate_task_errors_v0_tx(
-    _populate_errors_legacy: neo4j.AsyncDriver,  # pylint: disable=invalid-name
-    neo4j_task_manager: Neo4JTaskManager,
-):
+@pytest.fixture(scope="function")
+async def populate_errors_legacy_v1(
+    neo4j_async_app_driver: neo4j.AsyncDriver,
+) -> neo4j.AsyncDriver:
+    query_0 = """MATCH (task:_Task { id: $taskId })
+CREATE  (error:_TaskError {
+    id: 'error-0',
+    name: 'error',
+    stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
+    message: "with details",
+    cause: "some cause",
+    occurredAt: $now 
+})-[:_OCCURRED_DURING]->(task)
+RETURN error"""
+    await neo4j_async_app_driver.execute_query(
+        query_0, taskId="task-1", now=datetime.now()
+    )
+    query_1 = """MATCH (task:_Task { id: $taskId })
+CREATE  (error:_TaskError {
+    id: 'error-1',
+    name: 'error',
+    stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
+    message: 'same error again',
+    cause: "some cause",
+    occurredAt: $now 
+})-[:_OCCURRED_DURING]->(task)
+RETURN error"""
+    await neo4j_async_app_driver.execute_query(
+        query_1, taskId="task-1", now=datetime.now()
+    )
+    return neo4j_async_app_driver
+
+
+async def test_migrate_task_errors_v0_tx(populate_errors_legacy_v0: AsyncDriver):
     # Given
-    task_id = "task-1"
-    driver = _populate_errors_legacy
-    task_manager = neo4j_task_manager
+    driver = populate_errors_legacy_v0
     # When
     async with driver.session() as session:
         await session.execute_write(migrate_task_errors_v0_tx)
 
     # Then / When
-    retrieved_errors = await task_manager.get_task_errors(task_id=task_id)
-    expected_errors = [
-        TaskError(
-            id="error-1",
-            task_id="task-1",
-            name="error",
-            message="same error again",
-            cause=None,
-            stacktrace=[],
-            occurred_at=datetime.now(),
-        ),
-        TaskError(
-            id="error-0",
-            task_id="task-1",
-            name="error",
-            message="with details",
-            cause=None,
-            stacktrace=[],
-            occurred_at=datetime.now(),
-        ),
-    ]
-    expected_errors = [e.dict() for e in expected_errors]
-    for e in expected_errors:
-        e.pop("occurred_at")
-    retrieved_errors = [e.dict() for e in retrieved_errors]
-    for e in retrieved_errors:
-        e.pop("occurred_at")
-    assert retrieved_errors == expected_errors
+    query = "MATCH (error:_TaskError) RETURN error ORDER BY error.occurredAt DESC"
+    recs, _, _ = await driver.execute_query(query)
+    errors = [rec["error"] for rec in recs]
+    ids = [err["id"] for err in errors]
+    assert ids == ["error-1", "error-0"]
+    assert all("name" in err for err in errors)
+    assert all("message" in err for err in errors)
+    assert all("stacktrace" in err for err in errors)
+    assert not any("title" in err for err in errors)
+    assert not any("detail" in err for err in errors)
 
 
 async def test_migrate_cancelled_event_created_at_v0_tx(
@@ -258,7 +296,7 @@ async def test_migrate_task_inputs_to_arguments_v0_tx(
             state=TaskState.RUNNING,
             progress=0.66,
             created_at=datetime.now(),
-            retries=1,
+            retries_left=1,
         ),
     ]
     expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
@@ -311,7 +349,7 @@ ON (task.{TASK_TYPE_DEPRECATED})"""
                 state=TaskState.RUNNING,
                 progress=0.66,
                 created_at=datetime.now(),
-                retries=1,
+                retries_left=1,
             ),
         ]
         expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
@@ -355,7 +393,7 @@ async def test_migrate_task_progress_v0_tx(
             state=TaskState.RUNNING,
             progress=66.6 / 100,
             created_at=datetime.now(),
-            retries=1,
+            retries_left=1,
         ),
     ]
     expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
@@ -391,3 +429,86 @@ async def test_migrate_index_event_dates_v0_tx(neo4j_test_driver: neo4j.AsyncDri
             existing_indexes.add(rec["name"])
         assert "index_manager_events_created_at" in existing_indexes
         assert "index_canceled_events_created_at" in existing_indexes
+
+
+async def test_migrate_task_retries_and_error_retries_and_occurred_at_v0_tx(
+    neo4j_task_manager: Neo4JTaskManager,
+    populate_tasks_legacy_v3,  # pylint: disable=unused-argument
+    populate_errors_legacy_v1,  # pylint: disable=unused-argument
+):
+
+    task_manager = neo4j_task_manager
+    driver = task_manager.driver
+    # When
+    async with driver.session() as session:
+        await session.execute_write(
+            migrate_task_retries_and_error_retries_and_occurred_at_v0_tx
+        )
+
+    # Then / When
+    expected_tasks = [
+        Task(
+            id="task-0",
+            name="hello_world",
+            arguments={"greeted": "0"},
+            state=TaskState.QUEUED,
+            created_at=datetime.now(),
+            retries_left=3,
+            max_retries=3,
+        ),
+        Task(
+            id="task-1",
+            name="hello_world",
+            arguments={"greeted": "1"},
+            state=TaskState.RUNNING,
+            progress=0.66,
+            created_at=datetime.now(),
+            retries_left=2,
+            max_retries=3,
+        ),
+    ]
+    expected_tasks = [t.dict(by_alias=True) for t in expected_tasks]
+    for t in expected_tasks:
+        t.pop("createdAt")
+    expected_tasks = sorted(expected_tasks, key=lambda x: x["id"])
+    retrieved_tasks = await task_manager.get_tasks(namespace=None)
+    retrieved_tasks = [t.dict(by_alias=True) for t in retrieved_tasks]
+    for t in retrieved_tasks:
+        t.pop("createdAt")
+    retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
+    assert retrieved_tasks == expected_tasks
+
+    retrieved_errors = await task_manager.get_task_errors(task_id="task-1")
+    expected_errors = [
+        ErrorEvent(
+            task_id="task-1",
+            error=TaskError(
+                id="error-1",
+                name="error",
+                message="same error again",
+                cause="some cause",
+                stacktrace=[
+                    StacktraceItem(name="SomeError", file="somefile", lineno=666)
+                ],
+            ),
+            created_at=datetime.now(),
+            retries_left=3,
+        ),
+        ErrorEvent(
+            task_id="task-1",
+            error=TaskError(
+                id="error-0",
+                name="error",
+                message="with details",
+                cause="some cause",
+                stacktrace=[
+                    StacktraceItem(name="SomeError", file="somefile", lineno=666)
+                ],
+            ),
+            created_at=datetime.now(),
+            retries_left=3,
+        ),
+    ]
+    expected_errors = [e.dict(exclude={"created_at"}) for e in expected_errors]
+    retrieved_errors = [e.dict(exclude={"created_at"}) for e in retrieved_errors]
+    assert retrieved_errors == expected_errors
