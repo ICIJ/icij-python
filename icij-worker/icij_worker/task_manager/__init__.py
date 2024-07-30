@@ -76,6 +76,13 @@ class TaskManager(TaskStorage, ABC):
         await self._requeue(updated)
         logger.info("Task(id=%s) requeued", updated.id)
 
+    @final
+    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
+        if task.max_retries is None:
+            max_retries = self._app.registry[task.name].max_retries
+            task = safe_copy(task, update={"max_retries": max_retries})
+        return await self.save_task_(task, namespace)
+
     async def _save_cancelled_event(self, event: CancelledEvent):
         task = await self.get_task(event.task_id)
         task = task.as_resolved(event)
@@ -115,13 +122,8 @@ class TaskManager(TaskStorage, ABC):
     async def _save_error_event(self, error: ErrorEvent):
         # Update the task retries count
         task = await self.get_task(error.task_id)
-        if task.name not in self._app.registry:
-            # The task is unknown
-            max_retries = None
-        else:
-            max_retries = self._app.registry[task.name].max_retries
-        task = task.as_resolved(error, max_retries=max_retries)
-        await self.save_error(error.error)
+        task = task.as_resolved(error)
+        await self.save_error(error)
         if task.state is TaskState.QUEUED:
             await self.requeue(task)
         namespace = await self.get_task_namespace(task.id)

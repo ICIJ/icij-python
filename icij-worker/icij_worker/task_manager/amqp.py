@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from functools import cached_property
 from typing import Dict, List, Optional, TypeVar, Union, cast
 
@@ -14,10 +15,10 @@ from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
 from icij_worker.objects import (
     CancelEvent,
+    ErrorEvent,
     ManagerEvent,
     Message,
     ResultEvent,
-    TaskError,
     TaskState,
 )
 from icij_worker.task_storage import TaskStorage
@@ -36,8 +37,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         task_store: TaskStorage,
         *,
         broker_url: str,
-        connection_timeout_s: Optional[float] = None,
-        reconnection_wait_s: Optional[float] = None,
+        connection_timeout_s: float = 1.0,
+        reconnection_wait_s: float = 5.0,
         inactive_after_s: Optional[float] = None,
     ):
         super().__init__(app)
@@ -83,7 +84,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def get_task_namespace(self, task_id: str) -> Optional[str]:
         return await self._storage.get_task_namespace(task_id)
 
-    async def get_task_errors(self, task_id: str) -> List[TaskError]:
+    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
         return await self._storage.get_task_errors(task_id)
 
     async def get_task_result(self, task_id: str) -> ResultEvent:
@@ -101,13 +102,13 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             namespace, task_name=task_name, state=state
         )
 
-    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
-        return await self._storage.save_task(task, namespace)
+    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
+        return await self._storage.save_task_(task, namespace)
 
     async def save_result(self, result: ResultEvent):
         await self._storage.save_result(result)
 
-    async def save_error(self, error: TaskError):
+    async def save_error(self, error: ErrorEvent):
         await self._storage.save_error(error)
 
     async def _consume(self) -> ManagerEvent:
@@ -144,7 +145,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             raise TaskQueueIsFull(self.max_task_queue_size) from e
 
     async def cancel(self, task_id: str, *, requeue: bool):
-        cancel_event = CancelEvent(task_id=task_id, requeue=requeue)
+        cancel_event = CancelEvent(
+            task_id=task_id, requeue=requeue, created_at=datetime.now()
+        )
         # TODO: for now cancellation is not namespaced, workers from other namespace
         #  are responsible to ignoring the broadcast. That could be easily implemented
         #  in the future but will need sync with Java

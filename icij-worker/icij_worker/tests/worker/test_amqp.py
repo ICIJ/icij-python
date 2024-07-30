@@ -3,9 +3,9 @@ import asyncio
 import functools
 import json
 from datetime import datetime
-from itertools import product
 from typing import ClassVar, Dict, List, Optional, Type
 
+import itertools
 import pytest
 from aio_pika import Message as AMQPMessage, RobustConnection, connect_robust
 from pydantic import Field
@@ -16,9 +16,9 @@ from icij_worker import (
     AMQPTaskManager,
     AsyncApp,
     Message,
+    ResultEvent,
     Task,
     TaskError,
-    ResultEvent,
     TaskState,
     Worker,
     WorkerConfig,
@@ -27,9 +27,9 @@ from icij_worker.namespacing import Namespacing
 from icij_worker.objects import (
     CancelEvent,
     ErrorEvent,
+    ManagerEvent,
     ProgressEvent,
     StacktraceItem,
-    ManagerEvent,
     TaskUpdate,
 )
 from icij_worker.tests.conftest import (
@@ -203,7 +203,7 @@ async def test_worker_work_forever(
                 pytest.fail(f"Failed to receive result in less than {receive_timeout}")
         task = populate_tasks[0]
         expected_result = ResultEvent(
-            task_id=task.id, result="Hello world !", completed_at=msg.completed_at
+            task_id=task.id, result="Hello world !", created_at=msg.created_at
         )
         assert msg == expected_result
 
@@ -255,13 +255,15 @@ async def test_should_not_consume_task_from_other_namespace(
             pytest.fail("namespaced task was consumed!")
 
 
-@pytest.mark.parametrize("requeue,retries", list(product((True, False), (None, 0, 1))))
+@pytest.mark.parametrize(
+    "requeue,retries_left", list(itertools.product((True, False), (0, 1)))
+)
 async def test_worker_consume_cancel_events(
     test_amqp_task_manager: AMQPTaskManager,
     amqp_worker: TestableAMQPWorker,
     rabbit_mq: str,
-    requeue: bool,
-    retries: Optional[int],
+    requeue,
+    retries_left: int,
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
@@ -275,7 +277,7 @@ async def test_worker_consume_cancel_events(
         created_at=created_at,
         state=TaskState.CREATED,
         arguments={"duration": duration},
-        retries=retries,
+        retries_left=retries_left,
     )
     await task_manager.save_task(task, None)
     after_s = 2
@@ -303,14 +305,18 @@ async def test_worker_consume_cancel_events(
         assert await async_true_after(_received_event, after_s=after_s), failure
         assert len(amqp_worker.worker_events) == 1
         received_event = amqp_worker.worker_events[CancelEvent].pop("some-id")
-        expected_event = CancelEvent(task_id="some-id", requeue=requeue).dict()
+        expected_event = CancelEvent(
+            task_id="some-id", requeue=requeue, created_at=datetime.now()
+        ).dict(exclude={"created_at"})
         received_event = received_event.dict()
+        created_at = received_event.pop("created_at")
+        assert isinstance(created_at, datetime)
         assert received_event == expected_event
 
 
 @pytest.mark.parametrize(
     "requeue,amqp_worker",
-    list(product([True, False], ({"app": "test_async_app_late"},))),
+    list(itertools.product([True, False], ({"app": "test_async_app_late"},))),
     indirect=["amqp_worker"],
 )
 async def test_worker_negatively_acknowledge(
@@ -342,23 +348,23 @@ async def test_worker_negatively_acknowledge(
         assert await async_true_after(expected, after_s=timeout), failure
 
 
-_ERROR_OCCURRED_AT = datetime.now()
+_CREATED_AT = datetime.now()
 
 
 @pytest.mark.parametrize(
     "event,expected_json",
     [
         (
-            ProgressEvent(task_id="some-id", progress=0.5),
-            '{"taskId": "some-id", "progress": 0.5, "@type": "ProgressEvent"}',
+            ProgressEvent(task_id="some-id", progress=0.5, created_at=_CREATED_AT),
+            f'{{"taskId": "some-id", "createdAt": "{_CREATED_AT.isoformat()}",'
+            ' "progress": 0.5, "@type": "ProgressEvent"}',
         ),
         (
             ErrorEvent(
                 task_id="some-id",
-                retries=4,
+                retries_left=4,
                 error=TaskError(
                     id="error-id",
-                    task_id="task-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -366,14 +372,15 @@ _ERROR_OCCURRED_AT = datetime.now()
                             name="SomeError", file="some details", lineno=666
                         )
                     ],
-                    occurred_at=_ERROR_OCCURRED_AT,
                 ),
+                created_at=_CREATED_AT,
             ),
-            '{"taskId": "some-id", "error": {"id": "error-id", "taskId": "task-id", '
+            '{"taskId": "some-id", '
+            f'"createdAt": "{_CREATED_AT.isoformat()}", "retriesLeft": 4, '
+            '"error": {"id": "error-id", '
             '"name": "some-error", "message": "some message", "stacktrace": [{"name": '
-            '"SomeError", "file": "some details", "lineno": 666}], "occurredAt": '
-            f'"{_ERROR_OCCURRED_AT.isoformat()}", "@type": "TaskError"}}, "retries": 4,'
-            ' "@type": "ErrorEvent"}',
+            '"SomeError", "file": "some details", "lineno": 666}],'
+            ' "@type": "TaskError"}, "@type": "ErrorEvent"}',
         ),
     ],
 )
@@ -404,30 +411,27 @@ async def test_publish_event(
         assert Message.parse_obj(json.loads(received_event_json)) == event
 
 
-@pytest.mark.parametrize("retries", [0, 1])
+@pytest.mark.parametrize("retries_left", [0, 1])
 async def test_publish_error(
     populate_tasks: List[Task],
     amqp_worker: TestableAMQPWorker,
     rabbit_mq: str,
-    retries: bool,
+    retries_left: int,
 ):
     # pylint: disable=unused-argument
     # Given
     broker_url = rabbit_mq
     task = populate_tasks[0]
-    occurred_at = datetime.now()
     error = TaskError(
         id="error-id",
-        task_id=task.id,
         name="someErrorTitle",
         message="with_details",
         stacktrace=[StacktraceItem(name="someErrorTitle", file="somefile", lineno=666)],
-        occurred_at=occurred_at,
     )
 
     # When
     async with amqp_worker:
-        await amqp_worker.publish_error_event(error, task, retries=retries)
+        await amqp_worker.publish_error_event(error, task, retries=retries_left)
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
@@ -444,18 +448,16 @@ async def test_publish_error(
                 "id": "error-id",
                 "message": "with_details",
                 "name": "someErrorTitle",
-                "occurredAt": occurred_at.isoformat(),
                 "stacktrace": [
                     {"file": "somefile", "lineno": 666, "name": "someErrorTitle"}
                 ],
-                "taskId": "task-0",
             },
-            "retries": retries,
+            "retriesLeft": retries_left,
             "taskId": "task-0",
         }
+        received_created_at = received_event.pop("createdAt")
+        assert isinstance(datetime.fromisoformat(received_created_at), datetime)
         assert received_event == expected_json
-        expected_event = ErrorEvent.from_error(error, retries=retries)
-        assert ErrorEvent.parse_obj(expected_json) == expected_event
 
 
 async def test_publish_result_event(
@@ -473,7 +475,7 @@ async def test_publish_result_event(
 
     # When
     async with amqp_worker:
-        await amqp_worker.publish_result_event("hello world !", task)
+        await amqp_worker.publish_result_event(result, task)
         # Then
         connection = await connect_robust(url=broker_url)
         channel = await connection.channel()
@@ -486,14 +488,11 @@ async def test_publish_result_event(
         expected_json = {
             "@type": "ResultEvent",
             "result": "hello world !",
-            "completedAt": completed_at.isoformat(),
             "taskId": "task-0",
         }
+        created_at = received_result.pop("createdAt")
+        assert isinstance(datetime.fromisoformat(created_at), datetime)
         assert received_result == expected_json
-        expected = ResultEvent(
-            task_id=task.id, result=result, completed_at=completed_at
-        )
-        assert ResultEvent.parse_obj(expected_json) == expected
 
 
 async def test_amqp_config_uri():

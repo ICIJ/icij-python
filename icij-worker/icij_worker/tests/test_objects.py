@@ -8,6 +8,7 @@ import pytest
 from icij_worker.objects import (
     CancelledEvent,
     ErrorEvent,
+    ManagerEvent,
     PRECEDENCE,
     ProgressEvent,
     READY_STATES,
@@ -15,7 +16,6 @@ from icij_worker.objects import (
     StacktraceItem,
     Task,
     TaskError,
-    ManagerEvent,
     TaskState,
     TaskUpdate,
 )
@@ -30,7 +30,7 @@ def test_precedence_sanity_check():
 
 
 @pytest.mark.parametrize(
-    "task,event,max_retries,expected_task",
+    "task,event,expected_task",
     [
         # ProgresEvent
         (
@@ -40,8 +40,7 @@ def test_precedence_sanity_check():
                 state=TaskState.CREATED,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=0.0),
-            None,
+            ProgressEvent(task_id="task-id", progress=0.0, created_at=datetime.now()),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -58,8 +57,7 @@ def test_precedence_sanity_check():
                 state=TaskState.QUEUED,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=0.5),
-            None,
+            ProgressEvent(task_id="task-id", progress=0.5, created_at=datetime.now()),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -75,8 +73,7 @@ def test_precedence_sanity_check():
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=1.0),
-            None,
+            ProgressEvent(task_id="task-id", progress=1.0, created_at=datetime.now()),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -95,9 +92,8 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ResultEvent(
-                task_id="task-id", result="some-result", completed_at=_ANOTHER_TIME
+                task_id="task-id", result="some-result", created_at=_ANOTHER_TIME
             ),
-            None,
             Task(
                 id="task-id",
                 name="hello_world",
@@ -114,13 +110,14 @@ def test_precedence_sanity_check():
                 name="hello_world",
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
+                max_retries=5,
+                retries_left=4,
             ),
             ErrorEvent(
                 task_id="task-id",
-                retries=4,
+                retries_left=3,
                 error=TaskError(
                     id="error-id",
-                    task_id="task-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -128,16 +125,16 @@ def test_precedence_sanity_check():
                             name="SomeError", file="some details", lineno=666
                         )
                     ],
-                    occurred_at=_ERROR_OCCURRED_AT,
                 ),
+                created_at=_ERROR_OCCURRED_AT,
             ),
-            5,
             Task(
                 id="task-id",
                 name="hello_world",
                 state=TaskState.QUEUED,
                 created_at=_CREATED_AT,
-                retries=4,
+                max_retries=5,
+                retries_left=3,
             ),
         ),
         # Error event can't retry
@@ -147,13 +144,14 @@ def test_precedence_sanity_check():
                 name="hello_world",
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
+                max_retries=3,
+                retries_left=1,
             ),
             ErrorEvent(
                 task_id="task-id",
-                retries=1,
+                retries_left=0,
                 error=TaskError(
                     id="error-id",
-                    task_id="task-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -161,16 +159,16 @@ def test_precedence_sanity_check():
                             name="SomeError", file="some details", lineno=666
                         )
                     ],
-                    occurred_at=_ERROR_OCCURRED_AT,
                 ),
+                created_at=_ERROR_OCCURRED_AT,
             ),
-            None,
             Task(
                 id="task-id",
                 name="hello_world",
                 state=TaskState.ERROR,
                 created_at=_CREATED_AT,
-                retries=1,
+                max_retries=3,
+                retries_left=0,
             ),
         ),
         (
@@ -179,13 +177,14 @@ def test_precedence_sanity_check():
                 name="hello_world",
                 state=TaskState.RUNNING,
                 created_at=_CREATED_AT,
+                max_retries=5,
+                retries_left=1,
             ),
             ErrorEvent(
                 task_id="task-id",
-                retries=5,
+                retries_left=0,
                 error=TaskError(
                     id="error-id",
-                    task_id="task-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -193,16 +192,16 @@ def test_precedence_sanity_check():
                             name="SomeError", file="some details", lineno=666
                         )
                     ],
-                    occurred_at=_ERROR_OCCURRED_AT,
                 ),
+                created_at=_ERROR_OCCURRED_AT,
             ),
-            5,
             Task(
                 id="task-id",
                 name="hello_world",
                 state=TaskState.ERROR,
                 created_at=_CREATED_AT,
-                retries=5,
+                max_retries=5,
+                retries_left=0,
             ),
         ),
         # CancelledEvent, requeue
@@ -213,8 +212,7 @@ def test_precedence_sanity_check():
                 state=TaskState.QUEUED,
                 created_at=_CREATED_AT,
             ),
-            CancelledEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
-            None,
+            CancelledEvent(task_id="task-id", requeue=True, created_at=_ANOTHER_TIME),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -231,8 +229,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
                 progress=0.5,
             ),
-            CancelledEvent(task_id="task-id", requeue=True, cancelled_at=_ANOTHER_TIME),
-            None,
+            CancelledEvent(task_id="task-id", requeue=True, created_at=_ANOTHER_TIME),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -249,10 +246,7 @@ def test_precedence_sanity_check():
                 state=TaskState.QUEUED,
                 created_at=_CREATED_AT,
             ),
-            CancelledEvent(
-                task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME
-            ),
-            None,
+            CancelledEvent(task_id="task-id", requeue=False, created_at=_ANOTHER_TIME),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -269,10 +263,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
                 progress=0.5,
             ),
-            CancelledEvent(
-                task_id="task-id", requeue=False, cancelled_at=_ANOTHER_TIME
-            ),
-            None,
+            CancelledEvent(task_id="task-id", requeue=False, created_at=_ANOTHER_TIME),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -291,8 +282,7 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
                 completed_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=1.0),
-            None,
+            ProgressEvent(task_id="task-id", progress=1.0, created_at=datetime.now()),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -311,10 +301,9 @@ def test_precedence_sanity_check():
             ),
             ErrorEvent(
                 task_id="task-id",
-                retries=4,
+                retries_left=4,
                 error=TaskError(
                     id="error-id",
-                    task_id="task-id",
                     name="some-error",
                     message="some message",
                     stacktrace=[
@@ -322,10 +311,9 @@ def test_precedence_sanity_check():
                             name="SomeError", file="some details", lineno=666
                         )
                     ],
-                    occurred_at=_ERROR_OCCURRED_AT,
                 ),
+                created_at=_ERROR_OCCURRED_AT,
             ),
-            None,
             Task(
                 id="task-id",
                 name="hello_world",
@@ -340,8 +328,7 @@ def test_precedence_sanity_check():
                 state=TaskState.ERROR,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=1.0),
-            None,
+            ProgressEvent(task_id="task-id", progress=1.0, created_at=datetime.now()),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -356,8 +343,7 @@ def test_precedence_sanity_check():
                 state=TaskState.CANCELLED,
                 created_at=_CREATED_AT,
             ),
-            ProgressEvent(task_id="task-id", progress=0.5),
-            None,
+            ProgressEvent(task_id="task-id", progress=0.5, created_at=datetime.now()),
             Task(
                 id="task-id",
                 name="hello_world",
@@ -368,13 +354,10 @@ def test_precedence_sanity_check():
     ],
 )
 def test_as_resolve_event(
-    task: Task,
-    event: ManagerEvent,
-    max_retries: Optional[int],
-    expected_task: Optional[Task],
+    task: Task, event: ManagerEvent, expected_task: Optional[Task]
 ):
     # When
-    updated = task.as_resolved(event, max_retries=max_retries)
+    updated = task.as_resolved(event)
     # Then
     assert updated == expected_task
 
@@ -418,51 +401,20 @@ def test_resolve_update_state(
     assert resolved == expected_resolved
 
 
-@pytest.mark.parametrize(
-    "task_retries,event_retries,expected",
-    [
-        # Delayed queued event
-        (None, None, TaskState.RUNNING),
-        (1, None, TaskState.RUNNING),
-        (2, 1, TaskState.RUNNING),
-        # The event is signaling a retry
-        (None, 1, TaskState.QUEUED),
-        (1, 2, TaskState.QUEUED),
-    ],
-)
-def test_resolve_running_queued_state(
-    task_retries: Optional[int], event_retries: Optional[int], expected: TaskState
-):
-    # Given
-    task = Task(
-        id="some_id",
-        state=TaskState.RUNNING,
-        name="some-type",
-        created_at=datetime.now(),
-        retries=task_retries,
-    )
-    updated = TaskUpdate(state=TaskState.QUEUED, retries=event_retries)
-    # When
-    resolved = TaskState.resolve_update_state(task, updated)
-    # Then
-    assert resolved == expected
-
-
 def test_error_event_ser():
     # Given
     event = ErrorEvent(
         task_id="task-id",
-        retries=4,
+        retries_left=4,
         error=TaskError(
             id="error-id",
-            task_id="task-id",
             name="some-error",
             message="some message",
             stacktrace=[
                 StacktraceItem(name="SomeError", file="some details", lineno=666)
             ],
-            occurred_at=_ERROR_OCCURRED_AT,
         ),
+        created_at=_ERROR_OCCURRED_AT,
     )
     # When
     ser = event.dict(exclude_unset=True, by_alias=True)
@@ -474,13 +426,12 @@ def test_error_event_ser():
             "id": "error-id",
             "message": "some message",
             "name": "some-error",
-            "occurredAt": _ERROR_OCCURRED_AT,
             "stacktrace": [
                 {"file": "some details", "lineno": 666, "name": "SomeError"}
             ],
-            "taskId": "task-id",
         },
-        "retries": 4,
+        "retriesLeft": 4,
         "taskId": "task-id",
+        "createdAt": _ERROR_OCCURRED_AT,
     }
     assert ser == expected

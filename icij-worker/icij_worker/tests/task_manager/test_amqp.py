@@ -135,7 +135,9 @@ async def test_task_manager_requeue(
     # Given
     task_manager = test_amqp_task_manager
     task = hello_world_task
-    task = hello_world_task.as_resolved(ProgressEvent(task_id=task.id, progress=0.5))
+    task = hello_world_task.as_resolved(
+        ProgressEvent(task_id=task.id, progress=0.5, created_at=datetime.now())
+    )
 
     # When
     await task_manager.save_task(task, None)
@@ -176,7 +178,9 @@ async def test_task_manager_should_consume(
 ):
     # Given
     task_manager = test_amqp_task_manager
-    event = ProgressEvent(task_id="some-task-id", progress=1.0)
+    event = ProgressEvent(
+        task_id="some-task-id", progress=1.0, created_at=datetime.now()
+    )
     message = event.json().encode()
     channel = task_manager.channel
     # When
@@ -216,5 +220,7 @@ async def test_task_manager_cancel(
                 break
         except asyncio.TimeoutError:
             pytest.fail(f"Failed to receive result in less than {receive_timeout}")
+    created_at = cancel_evt_json.pop("createdAt")
+    assert isinstance(datetime.fromisoformat(created_at), datetime)
     expected_json = {"@type": "CancelEvent", "requeue": requeue, "taskId": "some-id"}
     assert cancel_evt_json == expected_json

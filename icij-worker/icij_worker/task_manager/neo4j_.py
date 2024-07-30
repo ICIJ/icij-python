@@ -20,7 +20,7 @@ from icij_common.neo4j.constants import (
     TASK_MANAGER_EVENT_NODE_CREATED_AT,
     TASK_NODE,
     TASK_PROGRESS,
-    TASK_RETRIES,
+    TASK_RETRIES_LEFT,
 )
 from icij_worker import AsyncApp, Task, TaskState
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
@@ -63,7 +63,7 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin, Neo4jStorage):
             return await sess.execute_write(
                 _requeue_task_tx,
                 task_id=task.id,
-                retries=task.retries,
+                retries_left=task.retries_left,
                 max_queue_size=self.max_task_queue_size,
             )
 
@@ -135,7 +135,7 @@ LIMIT 1
 
 
 async def _requeue_task_tx(
-    tx: neo4j.AsyncTransaction, *, task_id: str, retries: int, max_queue_size: int
+    tx: neo4j.AsyncTransaction, *, task_id: str, retries_left: int, max_queue_size: int
 ):
     count_query = f"""MATCH (task:{TASK_NODE}:`{TaskState.QUEUED.value}`)
 RETURN count(task.id) AS nQueued
@@ -146,13 +146,13 @@ RETURN count(task.id) AS nQueued
     if max_queue_size is not None and n_queued >= max_queue_size:
         raise TaskQueueIsFull(max_queue_size)
     query = f"""MATCH (t:{TASK_NODE} {{ {TASK_ID}: $taskId}})
-SET t.{TASK_RETRIES} = $retries, t.{TASK_PROGRESS} = 0.0
+SET t.{TASK_RETRIES_LEFT} = $retriesLeft, t.{TASK_PROGRESS} = 0.0
 WITH t
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 RETURN task
 """
     labels = [TASK_NODE, TaskState.QUEUED.value]
-    res = await tx.run(query, taskId=task_id, retries=retries, labels=labels)
+    res = await tx.run(query, taskId=task_id, retriesLeft=retries_left, labels=labels)
     try:
         await res.single(strict=True)
     except ResultNotSingleError as e:

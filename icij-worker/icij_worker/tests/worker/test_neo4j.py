@@ -1,10 +1,10 @@
 # pylint: disable=redefined-outer-name
 import asyncio
-import itertools
 import json
 from datetime import datetime
 from typing import Callable, List
 
+import itertools
 import neo4j
 import pytest
 from neo4j.exceptions import ClientError
@@ -177,8 +177,11 @@ _EVENTS = (
     ProgressEvent.from_task(
         safe_copy(_TASK, update={"progress": 0.66, "state": TaskState.RUNNING})
     ),
-    ErrorEvent.from_error(
-        TaskError.from_exception(ValueError("there's an error here"), _TASK), retries=3
+    ErrorEvent.from_task(
+        task=_TASK,
+        error=TaskError.from_exception(ValueError("there's an error here")),
+        retries_left=3,
+        created_at=datetime.now(),
     ),
     ResultEvent.from_task(
         safe_copy(_TASK, update={"completed_at": datetime.now()}), "some-result"

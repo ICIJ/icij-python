@@ -31,34 +31,32 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
 @pytest.mark.parametrize(
     "event",
     [
-        ProgressEvent(task_id="task-0", progress=0.66),
+        ProgressEvent(task_id="task-0", progress=0.66, created_at=datetime.now()),
         ErrorEvent(
             task_id="task-0",
-            retries=2,
+            retries_left=2,
             error=TaskError(
                 id="error-id",
-                task_id="task-0",
                 name="some-error",
                 message="some message",
                 stacktrace=[
                     StacktraceItem(name="SomeError", file="some details", lineno=666)
                 ],
-                occurred_at=datetime.now(),
             ),
+            created_at=datetime.now(),
         ),
         ErrorEvent(
             task_id="task-0",
-            retries=1,
+            retries_left=1,
             error=TaskError(
                 id="error-id",
-                task_id="task-0",
                 name="some-error",
                 message="some message",
                 stacktrace=[
                     StacktraceItem(name="SomeError", file="some details", lineno=666)
                 ],
-                occurred_at=datetime.now(),
             ),
+            created_at=datetime.now(),
         ),
     ],
 )
@@ -70,7 +68,6 @@ async def test_worker_publish_event(
     task = populate_tasks[0]
     assert task.state == TaskState.QUEUED
     assert task.progress is None
-    assert task.retries is None
     assert task.completed_at is None
 
     # When
@@ -103,7 +100,9 @@ async def test_worker_publish_done_task_event_should_not_update_task(
         res = await sess.run(query, now=datetime.now())
         completed = await res.single()
     completed = Task.from_neo4j(completed)
-    event = ProgressEvent(task_id=completed.id, progress=0.99)
+    event = ProgressEvent(
+        task_id=completed.id, progress=0.99, created_at=datetime.now()
+    )
 
     # When
     await publisher.publish_event(event)
@@ -132,7 +131,7 @@ async def test_worker_publish_event_for_unknown_task(
         created_at=created_at,
         state=TaskState.QUEUED,
     )
-    event = ProgressEvent(task_id=task_id, progress=0.0)
+    event = ProgressEvent(task_id=task_id, progress=0.0, created_at=datetime.now())
 
     # When
     await publisher.publish_event(event)
@@ -161,7 +160,7 @@ RETURN task"""
     task = await task_manager.get_task(task_id=task_id)
     assert task.state is TaskState.DONE
 
-    event = ProgressEvent(task_id=task.id, progress=0.0)
+    event = ProgressEvent(task_id=task.id, progress=0.0, created_at=datetime.now())
 
     # When
     await publisher.publish_event(event)

@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
-from icij_worker import AsyncApp, ResultEvent, Task, TaskError, TaskState
+from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.namespacing import Namespacing
-from icij_worker.objects import ProgressEvent
+from icij_worker.objects import ErrorEvent, ProgressEvent
 
 
 class TaskStorage(ABC):
@@ -14,7 +14,7 @@ class TaskStorage(ABC):
     async def get_task(self, task_id: str) -> Task: ...
 
     @abstractmethod
-    async def get_task_errors(self, task_id: str) -> List[TaskError]: ...
+    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]: ...
 
     @abstractmethod
     async def get_task_result(self, task_id: str) -> ResultEvent: ...
@@ -38,12 +38,13 @@ class TaskStorage(ABC):
         task = await self.get_task(event.task_id)
         task = task.as_resolved(event)
         namespace = await self.get_task_namespace(event.task_id)
-        await self.save_task(task, namespace=namespace)
+        await self.save_task_(task, namespace=namespace)
 
     @abstractmethod
-    async def save_task(self, task: Task, namespace: Optional[str]) -> bool: ...
+    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool: ...
+
     @abstractmethod
     async def save_result(self, result: ResultEvent): ...
 
     @abstractmethod
-    async def save_error(self, error: TaskError): ...
+    async def save_error(self, error: ErrorEvent): ...

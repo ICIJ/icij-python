@@ -140,7 +140,7 @@ If your registered class comes from custom code, you'll need to import the\
             name = names.get(cls)
             if name is not None:
                 return name
-        raise ValueError("registration inconsistancy")
+        raise ValueError("registration inconsistency")
 
 
 class RegistrableConfig(ICIJSettings, RegistrableMixin):

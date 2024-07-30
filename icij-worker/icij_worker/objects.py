@@ -14,9 +14,14 @@ from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
+from icij_common import neo4j
 from icij_common.neo4j.constants import (
+    TASK_CANCEL_EVENT_CANCELLED_AT,
     TASK_CANCEL_EVENT_REQUEUE,
     TASK_COMPLETED_AT,
+    TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT,
+    TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT,
+    TASK_ERROR_STACKTRACE,
     TASK_ID,
     TASK_NODE,
     TASK_RESULT_RESULT,
@@ -71,10 +76,6 @@ class TaskState(str, Enum):
                 ):
                     return update.state
                 return stored.state
-            if update.retries is None:
-                return stored.state
-            if stored.retries is None or update.retries > stored.retries:
-                return update.state
             return stored.state
         # Otherwise the true state is the most advanced on in the state machine
         return max(stored.state, update.state)
@@ -206,7 +207,8 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     created_at: datetime
     completed_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
-    retries: Optional[int] = None
+    retries_left: Optional[int] = None
+    max_retries: int = 3
 
     _non_inherited_from_event = [
         "requeue",
@@ -216,7 +218,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         "task_name",
         "result",
         "task_id",
-        "retries",
+        "retries_left",
     ]
 
     @validator("arguments", pre=True, always=True)
@@ -224,6 +226,15 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         # pylint: disable=no-self-argument
         if v is None:
             v = dict()
+        return v
+
+    @validator("retries_left", pre=True, always=True)
+    def retries_left_should_default_to_max_retries_when_missing(
+        cls, v: Optional[int], values: Dict[str, Any]
+    ) -> int:
+        # pylint: disable=no-self-argument
+        if v is None:
+            v = values.get("max_retries", cls.__fields__["max_retries"].default)
         return v
 
     @classmethod
@@ -286,25 +297,21 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return cls(**node)
 
     @final
-    def resolve_event(
-        self, event: TaskEvent, max_retries: Optional[int] = None
-    ) -> Optional[TaskUpdate]:
+    def resolve_event(self, event: TaskEvent) -> Optional[TaskUpdate]:
         if self.state in READY_STATES:
             return None
         updated = event.dict(exclude_unset=True, by_alias=False)
         for k in self._non_inherited_from_event:
             updated.pop(k, None)
-        if self.completed_at is not None:
-            updated.pop("completed_at", None)
         updated.pop(event.registry_key.default, None)
         base_update = TaskUpdate(**updated)
         # Update the state to make it consistent in case of race condition
         if isinstance(event, ProgressEvent):
             return self._progress_update(base_update)
         if isinstance(event, ErrorEvent):
-            return self._error_update(base_update, event, max_retries)
+            return self._error_update(base_update, event)
         if isinstance(event, CancelledEvent):
-            return self._cancel_update(base_update, event)
+            return self._cancelled_update(base_update, event)
         if isinstance(event, ResultEvent):
             return self._result_update(base_update, event)
         raise TypeError(f"Unexpected event type {event.__class__}")
@@ -313,10 +320,10 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         update = dict()
         update["progress"] = 1.0
         update["state"] = TaskState.DONE
-        update["completed_at"] = event.completed_at
+        update["completed_at"] = event.created_at
         return safe_copy(base_update, update=update)
 
-    def _cancel_update(
+    def _cancelled_update(
         self, base_update: TaskUpdate, event: CancelledEvent
     ) -> TaskUpdate:
         update = dict()
@@ -325,24 +332,17 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         if event.requeue:
             update["cancelled_at"] = None
             update["progress"] = 0.0
+        else:
+            update["cancelled_at"] = event.created_at
         updated = safe_copy(base_update, update=update)
         return updated
 
-    def _error_update(
-        self, base_update: TaskUpdate, event: ErrorEvent, max_retries: Optional[int]
-    ):
+    def _error_update(self, base_update: TaskUpdate, event: ErrorEvent):
         update = dict()
-        can_retry = (
-            event.retries is not None
-            and max_retries is not None
-            and event.retries < max_retries
-        )
-        if can_retry:
-            state_update = TaskUpdate(state=TaskState.QUEUED, retries=event.retries)
-        else:
-            state_update = TaskUpdate(state=TaskState.ERROR, retries=event.retries)
-        update["state"] = TaskState.resolve_update_state(self, state_update)
-        update["retries"] = event.retries
+        retries_left = min(self.retries_left, event.retries_left)
+        can_retry = self.max_retries is not None and retries_left > 0
+        update["state"] = TaskState.QUEUED if can_retry else TaskState.ERROR
+        update["retries_left"] = retries_left
         updated = safe_copy(base_update, update=update)
         return updated
 
@@ -355,8 +355,8 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             update["progress"] = 0.0
         return safe_copy(updated, update=update)
 
-    def as_resolved(self, event: TaskEvent, max_retries: Optional[int] = None) -> Task:
-        update = self.resolve_event(event, max_retries=max_retries)
+    def as_resolved(self, event: TaskEvent) -> Task:
+        update = self.resolve_event(event)
         if update is None:
             return self
         return safe_copy(self, update=update.dict(exclude_unset=True))
@@ -379,20 +379,18 @@ class StacktraceItem(LowerCamelCaseModel):
 
 
 @Message.register("TaskError")
-class TaskError(Message, LowerCamelCaseModel, FromTask):
+class TaskError(Message, LowerCamelCaseModel):
     # This helps to know if an error has already been processed or not
     id: str
-    task_id: str
     # Follow the "problem detail" spec: https://datatracker.ietf.org/doc/html/rfc9457,
     # the type is omitted for now since we gave no URI to resolve errors yet
     name: str
     message: str
     cause: Optional[str] = None
     stacktrace: List[StacktraceItem] = Field(default_factory=list)
-    occurred_at: datetime
 
     @classmethod
-    def from_exception(cls, exception: BaseException, task: Task) -> TaskError:
+    def from_exception(cls, exception: BaseException) -> TaskError:
         name = exception.__class__.__name__
         message = str(exception)
         error_id = f"{_id_title(name)}-{uuid.uuid4().hex}"
@@ -406,50 +404,22 @@ class TaskError(Message, LowerCamelCaseModel, FromTask):
         cause = exception.__cause__
         if cause is not None:
             cause = str(cause)
-        error = cls.from_task(
-            task,
-            id=error_id,
-            name=name,
-            message=message,
-            cause=cause,
-            stacktrace=stacktrace,
-            occurred_at=datetime.now(),
+        error = cls(
+            id=error_id, name=name, message=message, cause=cause, stacktrace=stacktrace
         )
         return error
-
-    @classmethod
-    def from_task(cls, task: Task, **kwargs) -> TaskError:
-        return cls(task_id=task.id, **kwargs)
-
-    @classmethod
-    def from_neo4j(
-        cls, record: "neo4j.Record", *, task_id: str, key: str = "error"
-    ) -> TaskError:
-        error = dict(record.value(key))
-        error.update({"taskId": task_id})
-        if "occurredAt" in error:
-            error["occurredAt"] = error["occurredAt"].to_native()
-        if "stacktrace" in error:
-            stacktrace = [
-                StacktraceItem(**json.loads(item)) for item in error["stacktrace"]
-            ]
-            error["stacktrace"] = stacktrace
-        return TaskError(**error)
-
-    def trace(self) -> str:
-        # TODO: fix this using Pydantic v2 computed_fields + cached property
-        frames = [
-            traceback.FrameSummary(filename=i.file, lineno=i.lineno, name=i.name)
-            for i in self.stacktrace
-        ]
-        trace = "\n".join(traceback.StackSummary(frames).format())
-        return trace
 
 
 class TaskEvent(
     Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, FromTask, ABC
 ):
     task_id: str
+    created_at: datetime
+    retries_left: int = 3
+
+    @validator("created_at", pre=True)
+    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
 
 
 class WorkerEvent(TaskEvent, ABC):
@@ -474,7 +444,10 @@ class ProgressEvent(ManagerEvent):
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> ProgressEvent:
-        event = cls(task_id=task.id, progress=task.progress, **kwargs)
+        created_at = datetime.now()
+        event = cls(
+            task_id=task.id, progress=task.progress, created_at=created_at, **kwargs
+        )
         return event
 
 
@@ -490,28 +463,24 @@ class CancelEvent(WorkerEvent):
         event = record.get(event_key)
         task_id = task[TASK_ID]
         requeue = event[TASK_CANCEL_EVENT_REQUEUE]
-        return cls(task_id=task_id, requeue=requeue)
+        created_at = event[TASK_CANCEL_EVENT_CANCELLED_AT]
+        return cls(task_id=task_id, requeue=requeue, created_at=created_at)
 
     @classmethod
     def from_task(cls, task: Task, *, requeue: bool, **kwargs) -> CancelEvent:
         # pylint: disable=arguments-differ
-        return cls(task_id=task.id, requeue=requeue)
+        return cls(task_id=task.id, requeue=requeue, created_at=datetime.now())
 
 
 @Message.register("CancelledEvent")
 class CancelledEvent(ManagerEvent):
     requeue: bool
-    cancelled_at: datetime
-
-    @validator("cancelled_at", pre=True)
-    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
 
     @classmethod
     def from_task(cls, task: Task, *, requeue: bool, **kwargs) -> CancelledEvent:
         # pylint: disable=arguments-differ
-        cancelled_at = task.cancelled_at or datetime.now()
-        event = cls(task_id=task.id, cancelled_at=cancelled_at, requeue=requeue)
+        created_at = datetime.now()
+        event = cls(task_id=task.id, created_at=created_at, requeue=requeue)
         return event
 
 
@@ -519,11 +488,6 @@ class CancelledEvent(ManagerEvent):
 class ResultEvent(ManagerEvent):
     task_id: str
     result: object
-    completed_at: datetime
-
-    @validator("completed_at", pre=True)
-    def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
 
     @classmethod
     def from_neo4j(
@@ -538,40 +502,73 @@ class ResultEvent(ManagerEvent):
             result = json.loads(result[TASK_RESULT_RESULT])
         task_id = record[task_key][TASK_ID]
         completed_at = record[task_key][TASK_COMPLETED_AT]
-        as_dict = {"result": result, "task_id": task_id, "completed_at": completed_at}
+        as_dict = {"result": result, "task_id": task_id, "created_at": completed_at}
         return ResultEvent(**as_dict)
 
     @classmethod
     def from_task(cls, task: Task, result: object, **kwargs) -> ResultEvent:
         # pylint: disable=arguments-differ
-        return cls(
-            task_id=task.id, result=result, completed_at=task.completed_at, **kwargs
-        )
+        return cls(task_id=task.id, result=result, created_at=datetime.now(), **kwargs)
 
 
 @Message.register("ErrorEvent")
 class ErrorEvent(ManagerEvent):
     error: TaskError
-    retries: Optional[int]
 
     @classmethod
-    def from_error(cls, error: TaskError, retries: Optional[int]) -> ErrorEvent:
-        event = cls(task_id=error.task_id, error=error, retries=retries)
-        return event
+    def from_task(
+        cls,
+        task: Task,
+        error: TaskError,
+        retries_left: int,
+        created_at: datetime,
+        **kwargs,
+    ) -> ErrorEvent:
+        # pylint: disable=arguments-differ
+        return cls(
+            task_id=task.id,
+            error=error,
+            retries_left=retries_left,
+            created_at=created_at,
+        )
 
     @classmethod
-    def from_task(cls, task: Task, **kwargs) -> FromTask:
-        raise NotImplementedError()
+    def from_neo4j(
+        cls,
+        record: "neo4j.Record",
+        *,
+        task_key: str = "task",
+        error_key: str = "error",
+        rel_key: str = "rel",
+    ) -> ErrorEvent:
+        error = dict(record.value(error_key))
+        if TASK_ERROR_STACKTRACE in error:
+            stacktrace = [
+                StacktraceItem(**json.loads(item))
+                for item in error[TASK_ERROR_STACKTRACE]
+            ]
+            error[TASK_ERROR_STACKTRACE] = stacktrace
+        error = TaskError(**error)
+        rel = dict(record.value(rel_key))
+        task_id = record[task_key][TASK_ID]
+        retries_left = rel[TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT]
+        created_at = rel[TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT]
+        return ErrorEvent(
+            task_id=task_id,
+            error=error,
+            created_at=created_at,
+            retries_left=retries_left,
+        )
 
 
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
     state: Optional[TaskState] = None
     progress: Optional[float] = None
-    retries: Optional[int] = None
+    retries_left: Optional[int] = None
     completed_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
 
-    _from_task = ["state", "progress", "retries", "completed_at", "cancelled_at"]
+    _from_task = ["state", "progress", "retries_left", "completed_at", "cancelled_at"]
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> TaskUpdate:

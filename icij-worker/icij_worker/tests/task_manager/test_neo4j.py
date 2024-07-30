@@ -35,7 +35,7 @@ from icij_worker.tests.conftest import TestableNeo4JTaskManager
 @pytest_asyncio.fixture(scope="function")
 async def _populate_errors(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver
-) -> List[Tuple[Task, List[TaskError]]]:
+) -> List[Tuple[Task, List[ErrorEvent]]]:
     task_with_error = populate_tasks[1]
     query_0 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
@@ -43,30 +43,34 @@ CREATE  (error:_TaskError {
     name: 'error',
     stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
     message: "with details",
-    cause: "some cause",
-    occurredAt: $now 
-})-[:_OCCURRED_DURING]->(task)
-RETURN error"""
+    cause: "some cause"
+})-[rel:_OCCURRED_DURING]->(task)
+SET rel.occurredAt = $now, rel.retriesLeft = $retriesLeft
+RETURN error, rel, task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, taskId=task_with_error.id, now=datetime.now()
+        query_0,
+        taskId=task_with_error.id,
+        now=datetime.now(),
+        retriesLeft=3,
     )
-    e_0 = TaskError.from_neo4j(recs_0[0], task_id=task_with_error.id)
+    e_0 = ErrorEvent.from_neo4j(recs_0[0])
     query_1 = """MATCH (task:_Task { id: $taskId })
 CREATE  (error:_TaskError {
     id: 'error-1',
     name: 'error',
     stacktrace: ['{"name": "SomeError", "file": "somefile", "lineno": 666}'],
     message: 'same error again',
-    cause: "some cause",
-    occurredAt: $now 
-})-[:_OCCURRED_DURING]->(task)
-RETURN error"""
+    cause: "some cause"
+})-[rel:_OCCURRED_DURING]->(task)
+SET rel.occurredAt = $now, rel.retriesLeft = $retriesLeft 
+RETURN error, rel, task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
         query_1,
         taskId=task_with_error.id,
         now=datetime.now(),
+        retriesLeft=2,
     )
-    e_1 = TaskError.from_neo4j(recs_1[0], task_id=task_with_error.id)
+    e_1 = ErrorEvent.from_neo4j(recs_1[0])
     return list(zip(populate_tasks, [[], [e_0, e_1]]))
 
 
@@ -110,12 +114,12 @@ RETURN task, result"""
                 arguments={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
-                retries=1,
+                retries_left=1,
             ),
             {
                 "id": "task-3",
                 "arguments": '{"greeted": "3"}',
-                "retries": 1,
+                "retriesLeft": 1,
                 "state": "CREATED",
                 "name": "hello_world",
                 "createdAt": datetime.now(),
@@ -132,12 +136,12 @@ RETURN task, result"""
                 arguments={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
-                retries=1,
+                retries_left=1,
             ),
             {
                 "id": "task-3",
                 "arguments": '{"greeted": "3"}',
-                "retries": 1,
+                "retriesLeft": 1,
                 "state": "CREATED",
                 "name": "hello_world",
                 "createdAt": datetime.now(),
@@ -156,13 +160,13 @@ RETURN task, result"""
                 state=TaskState.RUNNING,
                 progress=0.8,
                 created_at=_NOW,
-                retries=0,
+                retries_left=0,
             ),
             {
                 "id": "task-1",
                 "arguments": '{"greeted": "1"}',
                 "progress": 0.8,
-                "retries": 0,
+                "retriesLeft": 0,
                 "state": "RUNNING",
                 "createdAt": datetime.now(),
                 "name": "hello_world",
@@ -180,13 +184,13 @@ RETURN task, result"""
                 state=TaskState.RUNNING,
                 progress=0.8,
                 created_at=_NOW,
-                retries=0,
+                retries_left=0,
             ),
             {
                 "id": "task-1",
                 "arguments": '{"greeted": "1"}',
                 "progress": 0.80,
-                "retries": 0,
+                "retriesLeft": 0,
                 "state": "RUNNING",
                 "name": "hello_world",
                 "namespace": "some-namespace",
@@ -204,12 +208,13 @@ RETURN task, result"""
                 arguments={"updated": "input"},
                 state=TaskState.RUNNING,
                 created_at=_NOW,
+                retries_left=1,
             ),
             {
                 "id": "task-1",
                 "arguments": '{"greeted": "1"}',
                 "progress": 0.66,
-                "retries": 1,
+                "retriesLeft": 1,
                 "state": "RUNNING",
                 "name": "hello_world",
                 "createdAt": datetime.now(),
@@ -259,7 +264,7 @@ async def test_save_task_with_different_ns_should_fail(
         state=TaskState.RUNNING,
         progress=0.8,
         created_at=_NOW,
-        retries=0,
+        retries_left=0,
     )
     # When/Then
     msg = re.escape(
@@ -304,7 +309,7 @@ async def test_task_manager_get_task(
         state=TaskState.RUNNING,
         progress=0.66,
         created_at=datetime.now(),
-        retries=1,
+        retries_left=1,
     )
     expected_task = expected_task.dict(by_alias=True)
     expected_task.pop("createdAt")
@@ -369,27 +374,37 @@ async def test_task_manager_get_tasks(
         (
             "task-1",
             [
-                TaskError(
-                    id="error-0",
+                ErrorEvent(
                     task_id="task-1",
-                    name="error",
-                    message="with details",
-                    occurred_at=datetime.now(),
-                    stacktrace=[
-                        StacktraceItem(name="SomeError", file="somefile", lineno=666)
-                    ],
-                    cause="some cause",
+                    error=TaskError(
+                        id="error-1",
+                        name="error",
+                        message="same error again",
+                        stacktrace=[
+                            StacktraceItem(
+                                name="SomeError", file="somefile", lineno=666
+                            )
+                        ],
+                        cause="some cause",
+                    ),
+                    created_at=datetime.now(),
+                    retries_left=2,
                 ),
-                TaskError(
-                    id="error-1",
+                ErrorEvent(
                     task_id="task-1",
-                    name="error",
-                    message="same error again",
-                    stacktrace=[
-                        StacktraceItem(name="SomeError", file="somefile", lineno=666)
-                    ],
-                    cause="some cause",
-                    occurred_at=datetime.now(),
+                    error=TaskError(
+                        id="error-0",
+                        name="error",
+                        message="with details",
+                        stacktrace=[
+                            StacktraceItem(
+                                name="SomeError", file="somefile", lineno=666
+                            )
+                        ],
+                        cause="some cause",
+                    ),
+                    created_at=datetime.now(),
+                    retries_left=3,
                 ),
             ],
         ),
@@ -399,20 +414,18 @@ async def test_get_task_errors(
     neo4j_task_manager: TestableNeo4JTaskManager,
     _populate_errors: List[Tuple[Task, List[TaskError]]],
     task_id: str,
-    expected_errors: List[TaskError],
+    expected_errors: List[ErrorEvent],
 ):
     # pylint: disable=invalid-name
     # When
     retrieved_errors = await neo4j_task_manager.get_task_errors(task_id=task_id)
 
     # Then
-    retrieved_errors = [e.dict(by_alias=True) for e in retrieved_errors]
-    assert all(e["occurredAt"] for e in retrieved_errors)
-    for e in retrieved_errors:
-        e.pop("occurredAt")
-    expected_errors = [e.dict(by_alias=True) for e in expected_errors[::-1]]
-    for e in expected_errors:
-        e.pop("occurredAt")
+    retries_left = [e.retries_left for e in retrieved_errors]
+    expected_retries_left = [e.retries_left for e in expected_errors]
+    assert retries_left == expected_retries_left
+    retrieved_errors = [e.error for e in retrieved_errors]
+    expected_errors = [e.error for e in expected_errors]
     assert retrieved_errors == expected_errors
 
 
@@ -423,7 +436,7 @@ async def test_get_task_errors(
         ("task-1", None),
         (
             "task-2",
-            ResultEvent(task_id="task-2", result="Hello 2", completed_at=_AFTER),
+            ResultEvent(task_id="task-2", result="Hello 2", created_at=_AFTER),
         ),
     ],
 )
@@ -531,8 +544,11 @@ _EVENTS = (
     ProgressEvent.from_task(
         safe_copy(_TASK, update={"progress": 0.66, "state": TaskState.RUNNING})
     ),
-    ErrorEvent.from_error(
-        TaskError.from_exception(ValueError("there's an error here"), _TASK), retries=3
+    ErrorEvent.from_task(
+        _TASK,
+        TaskError.from_exception(ValueError("there's an error here")),
+        retries_left=3,
+        created_at=datetime.now(),
     ),
     ResultEvent.from_task(
         safe_copy(_TASK, update={"completed_at": datetime.now()}), "some-result"
@@ -623,19 +639,20 @@ async def test_task_manager_save_error(
     task = hello_world_task
     await neo4j_task_manager.save_task(task, namespace=None)
     error = TaskError(
-        id="some-id",
-        task_id=task.id,
+        id="some-error_id",
         name="error",
         message="with details",
-        occurred_at=datetime.now(),
         stacktrace=[StacktraceItem(name="SomeError", file="somefile", lineno=666)],
         cause="some cause",
     )
+    error_event = ErrorEvent(
+        task_id="some-id", error=error, retries_left=4, created_at=datetime.now()
+    )
     # When
-    await neo4j_task_manager.save_error(error)
+    await neo4j_task_manager.save_error(error_event)
     db_errors = await neo4j_task_manager.get_task_errors(task.id)
     # Then
-    assert db_errors == [error]
+    assert db_errors == [error_event]
 
 
 async def test_task_manager_save_result(
@@ -645,7 +662,7 @@ async def test_task_manager_save_result(
     task = hello_world_task
     await neo4j_task_manager.save_task(task, namespace=None)
     result = ResultEvent(
-        task_id=task.id, result="some result", completed_at=datetime.now()
+        task_id=task.id, result="some result", created_at=datetime.now()
     )
     # When
     await neo4j_task_manager.save_result(result)

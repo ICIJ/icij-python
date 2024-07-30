@@ -51,10 +51,8 @@ from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
 from icij_worker.objects import (
     CancelEvent,
-    CancelledEvent,
     ErrorEvent,
     Message,
-    ProgressEvent,
     TaskUpdate,
     WorkerEvent,
 )
@@ -143,7 +141,7 @@ if _has_pytest:
             db[self._result_collection][task_key] = result
             self._write(db)
 
-        async def save_error(self, error: TaskError):
+        async def save_error(self, error: ErrorEvent):
             db = self._get_task_db_name(task_id=error.task_id)
             task_key = self._task_key(task_id=error.task_id, db=db)
             db = self._read()
@@ -152,7 +150,7 @@ if _has_pytest:
             db[self._error_collection][task_key] = errors
             self._write(db)
 
-        async def save_task(self, task: Task, namespace: Optional[str]):
+        async def save_task_(self, task: Task, namespace: Optional[str]):
             new_task = False
             ns = None
             try:
@@ -187,7 +185,7 @@ if _has_pytest:
         @staticmethod
         def _order_events(events: List[Dict]) -> float:
             events = [
-                datetime.fromisoformat(evt["timestamp"]).timestamp() for evt in events
+                datetime.fromisoformat(evt["createdAt"]).timestamp() for evt in events
             ]
             return -min(events)
 
@@ -378,13 +376,13 @@ if _has_pytest:
             task.pop("namespace")
             return Task.parse_obj(task)
 
-        async def get_task_errors(self, task_id: str) -> List[TaskError]:
+        async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
             db = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db)
             db = self._read()
             errors = db[self._error_collection]
             errors = errors.get(key, [])
-            errors = [TaskError.parse_obj(err) for err in errors]
+            errors = [ErrorEvent.parse_obj(err) for err in errors]
             return errors
 
         async def get_task_result(self, task_id: str) -> ResultEvent:
@@ -427,7 +425,7 @@ if _has_pytest:
             )
             events = sorted(
                 events,
-                key=lambda e: datetime.fromisoformat(e["timestamp"]).timestamp(),
+                key=lambda e: datetime.fromisoformat(e["createdAt"]).timestamp(),
             )
             event = events[0]
             db = self._read()
@@ -436,11 +434,12 @@ if _has_pytest:
             key = self._task_key(task_id=task_id, db=db_name)
             db[self._manager_event_collection][key] = events[1:]
             self._write(db)
-            event.pop("timestamp")
             return cast(ManagerEvent, Message.parse_obj(event))
 
         async def cancel(self, task_id: str, *, requeue: bool):
-            cancel_event = CancelEvent(task_id=task_id, requeue=requeue)
+            cancel_event = CancelEvent(
+                task_id=task_id, requeue=requeue, created_at=datetime.now()
+            )
             db_name = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db_name)
             db = self._read()
@@ -448,7 +447,6 @@ if _has_pytest:
             if key not in events:
                 events[key] = []
             event_dict = cancel_event.dict(exclude_unset=True, by_alias=True)
-            event_dict["timestamp"] = datetime.now()
             events[key].append(event_dict)
             self._write(db)
 
@@ -462,27 +460,10 @@ if _has_pytest:
             self.published_events = []
 
         async def _publish_event(self, event: ManagerEvent):
-            if isinstance(event, ProgressEvent):
-                timestamp = datetime.now()
-            elif isinstance(event, ErrorEvent):
-                timestamp = event.error.occurred_at
-            elif isinstance(event, ResultEvent):
-                timestamp = event.completed_at
-            elif isinstance(event, CancelledEvent):
-                timestamp = event.cancelled_at
-            else:
-                raise TypeError(f"unexpected event type: {event}")
-            # Let's simulate that we have an event handler which will reflect some event
-            # into the DB, we could not do it. In this case tests should not expect that
-            # events are reflected in the DB. They would only be registered inside
-            # published_events (which could be enough).
-            # Here we choose to reflect the change in the DB since its closer to what
-            # will happen IRL and test integration further
             db_name = self._get_task_db_name(event.task_id)
             key = self._task_key(task_id=event.task_id, db=db_name)
             db = self._read()
             event_dict = event.dict(exclude_unset=True, by_alias=True)
-            event_dict["timestamp"] = timestamp
             if key not in db[self._manager_event_collection]:
                 db[self._manager_event_collection][key] = []
             db[self._manager_event_collection][key].append(event_dict)
@@ -643,10 +624,9 @@ if _has_pytest:
             )
             events = sorted(
                 events,
-                key=lambda e: datetime.fromisoformat(e["timestamp"]).timestamp(),
+                key=lambda e: datetime.fromisoformat(e["createdAt"]).timestamp(),
             )
             event = events[0]
-            event.pop("timestamp")
             event = cast(WorkerEvent, Message.parse_obj(event))
             db = self._read()
             db_name = self._get_task_db_name(event.task_id)

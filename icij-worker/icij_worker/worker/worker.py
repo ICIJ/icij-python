@@ -280,18 +280,15 @@ class Worker(
         if isinstance(error, RecoverableError):
             error = error.args[0]
         exceeded_max_retries = isinstance(error, MaxRetriesExceeded)
-        retries = None
-        if not fatal:
-            retries = task.retries or 0
-            retries += 1
+        retries_left = self._current.retries_left - 1 if not fatal else 0
         if exceeded_max_retries:
             self.exception('Task(id="%s") exceeded max retries', task.id)
         elif fatal:
             self.exception('Task(id="%s") fatal error during execution', task.id)
         else:
             self.exception('Task(id="%s") encountered error', task.id)
-        task_error = TaskError.from_exception(error, task)
-        await self.publish_error_event(task_error, self._current, retries)
+        task_error = TaskError.from_exception(error)
+        await self.publish_error_event(task_error, self._current, retries_left)
         if self._late_ack:
             if fatal:
                 await self._negatively_acknowledge_(self._current)
@@ -385,11 +382,11 @@ class Worker(
         await self.publish_event(result_event)
 
     @final
-    async def publish_error_event(
-        self, error: TaskError, task: Task, retries: Optional[int]
-    ):
+    async def publish_error_event(self, error: TaskError, task: Task, retries: int):
         self.debug('Task(id="%s") publish error event', task.id)
-        error_event = ErrorEvent.from_error(error, retries=retries)
+        error_event = ErrorEvent.from_task(
+            task, error, retries_left=retries, created_at=datetime.now()
+        )
         await self.publish_event(error_event)
 
     @final
@@ -451,16 +448,17 @@ class Worker(
             raise e
 
     @final
-    def check_retries(self, retries: int, task: Task, original_exc: Exception):
-        max_retries = self._app.registry[task.name].max_retries
-        if max_retries is None:
-            return
+    def check_retries(self, task: Task, original_exc: Exception):
         self.info(
-            '%sTask(id="%s"): try %s/%s', task.name, task.id, retries, max_retries
+            '%sTask(id="%s"): try %s/%s',
+            task.name,
+            task.id,
+            task.retries_left,
+            task.max_retries,
         )
-        if retries is not None and retries > max_retries:
+        if task.retries_left <= 0:
             raise MaxRetriesExceeded(
-                f"{task.name}(id={task.id}): max retries exceeded > {max_retries}"
+                f"{task.name}(id={task.id}): max retries exceeded > {task.max_retries}"
             ) from original_exc
 
     @final
@@ -565,8 +563,8 @@ async def _retry_task(
     task_args: Dict,
     recoverable_errors: Tuple[Type[Exception], ...],
 ) -> Task:
-    retries = task.retries or 0
-    if retries:
+    retries = task.retries_left
+    if retries != task.max_retries:
         # In the case of the retry, let's reset the progress
         event = ProgressEvent.from_task(task=task)
         await worker.publish_event(event)
@@ -576,7 +574,7 @@ async def _retry_task(
             task_res = await task_res
     except recoverable_errors as e:
         # This will throw a MaxRetriesExceeded when necessary
-        worker.check_retries(retries, task, e)
+        worker.check_retries(task, e)
         raise RecoverableError(e) from e
     update = TaskUpdate.done(datetime.now())
     task = safe_copy(task, update=update.dict(exclude_unset=True))
