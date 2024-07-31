@@ -8,6 +8,7 @@ import pytest
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after
 from icij_worker import Task, TaskError, TaskState
+from icij_worker.exceptions import UnregisteredTask
 from icij_worker.objects import CancelEvent, ProgressEvent, StacktraceItem
 from icij_worker.utils.tests import MockManager, MockWorker
 
@@ -34,7 +35,7 @@ async def test_consume_progress_event(
         state=TaskState.RUNNING,
         progress=0.0,
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
     event = ProgressEvent(task_id=task.id, progress=0.99, created_at=datetime.now())
     # When
     await worker.publish_event(event)
@@ -44,10 +45,15 @@ async def test_consume_progress_event(
         msg = f"Failed to consume error event in less than {consume_timeout}"
 
         async def _received_progress() -> bool:
-            task = await task_manager.get_task(event.task_id)
-            return task.progress > 0.0
+            t = await task_manager.get_task(event.task_id)
+            return t.progress > 0.0
 
-        update = {"state": TaskState.RUNNING, "progress": 0.99}
+        update = {
+            "state": TaskState.RUNNING,
+            "progress": 0.99,
+            "max_retries": 1,
+            "retries_left": 1,
+        }
         expected_task = safe_copy(task, update=update)
         assert await async_true_after(_received_progress, after_s=consume_timeout), msg
         db_task = await task_manager.get_task(task_id=task.id)
@@ -72,7 +78,7 @@ async def test_task_manager_should_consume_error_events(
         created_at=datetime.now(),
         state=TaskState.RUNNING,
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
     error = TaskError(
         name="error",
         message="with details",
@@ -92,7 +98,11 @@ async def test_task_manager_should_consume_error_events(
 
         if not retries_left:
             expected = partial(_assert_has_state, TaskState.ERROR)
-            update = {"state": TaskState.ERROR, "retries_left": retries_left}
+            update = {
+                "state": TaskState.ERROR,
+                "retries_left": retries_left,
+                "max_retries": 1,
+            }
             expected_task = safe_copy(task, update=update)
         else:
             expected = partial(_assert_has_state, TaskState.QUEUED)
@@ -100,6 +110,7 @@ async def test_task_manager_should_consume_error_events(
                 "state": TaskState.QUEUED,
                 "retries_left": retries_left,
                 "progress": 0.0,
+                "max_retries": 1,
             }
             expected_task = safe_copy(task, update=update)
         assert await async_true_after(expected, after_s=consume_timeout), msg
@@ -128,11 +139,11 @@ async def test_consume_cancelled_event(
     task_manager = mock_manager
     worker = mock_worker
     task = hello_world_task
-    await task_manager.save_task(task, None)
+    await task_manager.save_task(task)
     await task_manager.enqueue(task)
     await mock_worker.consume()
     worker.current = task
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     cancel_event = CancelEvent.from_task(task, requeue=requeue)
@@ -167,3 +178,59 @@ async def test_consume_cancelled_event(
         db_task.pop("cancelled_at", None)
         expected_task.pop("cancelled_at", None)
         assert db_task == expected_task
+
+
+async def test_save_task(mock_manager: MockManager):
+    # Given
+    task_manager = mock_manager
+    task = Task(
+        id="some-id",
+        name="often_retriable",
+        arguments=dict(),
+        created_at=datetime.now(),
+        state=TaskState.CREATED,
+    )
+
+    # When
+    await task_manager.save_task(task)
+    db_task = await task_manager.get_task(task_id=task.id)
+
+    # Then
+    expected_task = safe_copy(task, update={"max_retries": 666, "retries_left": 666})
+    assert db_task == expected_task
+
+
+async def test_save_task_to_namespace(
+    mock_manager: MockManager, namespaced_hello_world_task: Task
+):
+    # Given
+    task_manager = mock_manager
+    task = namespaced_hello_world_task
+
+    # When
+    await task_manager.save_task(task)
+    db_task = await task_manager.get_task(task_id=task.id)
+
+    # Then
+    expected_task = safe_copy(task, update={"max_retries": 3, "retries_left": 3})
+    assert db_task == expected_task
+    ns = await task_manager.get_task_namespace(task.id)
+    assert ns == "hello"
+
+
+async def test_save_unknown_task_should_raise_unregistered_task_error(
+    mock_manager: MockManager,
+):
+    # Given
+    task_manager = mock_manager
+
+    task = Task(
+        id="some-id",
+        name="i_dont_exist",
+        arguments=dict(),
+        created_at=datetime.now(),
+        state=TaskState.CREATED,
+    )
+    # When/Then
+    with pytest.raises(UnregisteredTask):
+        await task_manager.save_task(task)

@@ -165,22 +165,25 @@ async def populate_tasks(
     neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[Task]:
     namespace = getattr(request, "param", None)
+    task_name = "hello_world"
+    if namespace is not None:
+        task_name = f"namespaced_{task_name}"
     query_0 = """CREATE (task:_Task:QUEUED {
     namespace: $namespace,
     id: 'task-0', 
-    name: 'hello_world',
+    name: $taskName,
     createdAt: $now,
     arguments: '{"greeted": "0"}'
  }) 
 RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=_NOW, namespace=namespace
+        query_0, now=_NOW, taskName=task_name, namespace=namespace
     )
     t_0 = Task.from_neo4j(recs_0[0])
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
     namespace: $namespace,
-    name: 'hello_world',
+    name: $taskName,
     progress: 0.66,
     createdAt: $now,
     retriesLeft: 1,
@@ -188,7 +191,7 @@ RETURN task"""
  }) 
 RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
-        query_1, now=_NOW, namespace=namespace
+        query_1, now=_NOW, taskName=task_name, namespace=namespace
     )
     t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
@@ -405,6 +408,18 @@ def hello_world_task() -> Task:
     task = Task(
         id="some-id",
         name="hello_world",
+        arguments={"greeted": "world"},
+        state=TaskState.CREATED,
+        created_at=datetime.now(),
+    )
+    return task
+
+
+@pytest.fixture(scope="session")
+def namespaced_hello_world_task() -> Task:
+    task = Task(
+        id="some-id",
+        name="namespaced_hello_world",
         arguments={"greeted": "world"},
         state=TaskState.CREATED,
         created_at=datetime.now(),

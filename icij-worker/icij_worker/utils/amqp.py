@@ -60,7 +60,6 @@ class AMQPMixin:
         self._inactive_after_s = inactive_after_s
         self._connection_: Optional[AbstractRobustConnection] = None
         self._exit_stack = AsyncExitStack()
-        self._task_queues = set()
 
     async def _publish_message(
         self,
@@ -71,7 +70,9 @@ class AMQPMixin:
         routing_key: Optional[str],
         mandatory: bool,
     ) -> Optional[ConfirmationFrameType]:
-        message = message.json(exclude_unset=True, by_alias=True).encode()
+        message = message.json(
+            exclude_unset=True, by_alias=True, exclude_none=True
+        ).encode()
         message = AioPikaMessage(
             message, delivery_mode=delivery_mode, app_id=self._app_id
         )
@@ -147,25 +148,6 @@ class AMQPMixin:
             routing_key=AMQP_WORKER_EVENTS_ROUTING_KEY,
             queue_name=AMQP_WORKER_EVENTS_QUEUE,
         )
-
-    async def _ensure_task_queue(self, namespace: Optional[str]):
-        if namespace not in self._task_queues:
-            self._task_queues.add(namespace)
-            routing = self._namespacing.amqp_task_routing(namespace)
-            task_routing = self.default_task_routing()
-            dlx_name = task_routing.dead_letter_routing.exchange.name
-            dl_routing_key = task_routing.dead_letter_routing.routing_key
-            arguments = {
-                "x-dead-letter-exchange": dlx_name,
-                "x-dead-letter-routing-key": dl_routing_key,
-            }
-            if self.max_task_queue_size is not None:
-                arguments["x-max-length"] = self.max_task_queue_size
-                arguments["x-overflow"] = "reject-publish"
-            queue = await self._channel.declare_queue(
-                routing.queue_name, durable=True, arguments=arguments
-            )
-            await queue.bind(routing.exchange.name, routing.routing_key)
 
     async def _get_queue_iterator(
         self,

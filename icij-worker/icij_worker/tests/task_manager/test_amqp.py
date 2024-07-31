@@ -1,5 +1,6 @@
 import asyncio
 import json
+from copy import deepcopy
 from datetime import datetime
 
 import pytest
@@ -25,7 +26,7 @@ async def test_task_manager_enqueue(
     # Given
     task_manager = test_amqp_task_manager
     task = hello_world_task
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     queued = await task_manager.enqueue(task)
@@ -59,13 +60,13 @@ async def test_task_manager_enqueue(
 
 
 async def test_task_manager_enqueue_with_namespace(
-    hello_world_task: Task, test_amqp_task_manager: TestableAMQPTaskManager
+    namespaced_hello_world_task: Task, test_amqp_task_manager: TestableAMQPTaskManager
 ):
     # Given
-    namespace = "some-namespace"
+    namespace = "hello"
     task_manager = test_amqp_task_manager
-    task = hello_world_task
-    await task_manager.save_task(task, namespace=namespace)
+    task = namespaced_hello_world_task
+    await task_manager.save_task(task)
 
     # When
     queued = await task_manager.enqueue(task)
@@ -89,13 +90,16 @@ async def test_task_manager_enqueue_with_namespace(
         "@type": "Task",
         "id": "some-id",
         "state": "CREATED",
-        "name": "hello_world",
+        "name": "namespaced_hello_world",
         "arguments": {"greeted": "world"},
+        "retriesLeft": 3,
+        "maxRetries": 3,
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
+    expected_json["createdAt"] = created_at
     amqp_task = Task.parse_obj(task_json)
-    assert amqp_task == task
+    assert amqp_task == task.parse_obj(expected_json)
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
@@ -104,7 +108,7 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     # Given
     task = hello_world_task
     task_manager = test_amqp_task_manager
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
     await task_manager.enqueue(task)
 
     # When/Then
@@ -113,15 +117,21 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
 
 
 async def test_task_manager_enqueue_should_raise_when_queue_full(
-    fs_storage: TestableFSKeyValueStorage, rabbit_mq: str, hello_world_task: Task
+    fs_storage: TestableFSKeyValueStorage,
+    rabbit_mq: str,
+    hello_world_task: Task,
+    test_async_app: AsyncApp,
 ):
     # Given
     app = AsyncApp("test-app", config=AsyncAppConfig(max_task_queue_size=1))
+    app._registry = deepcopy(  # pylint: disable=protected-access
+        test_async_app.registry
+    )
     task_manager = TestableAMQPTaskManager(app, fs_storage, broker_url=rabbit_mq)
     task = hello_world_task
     other_task = safe_copy(task, update={"id": "some-other-id"})
-    await task_manager.save_task(task, namespace=None)
-    await task_manager.save_task(other_task, namespace=None)
+    await task_manager.save_task(task)
+    await task_manager.save_task(other_task)
     async with task_manager:
         await task_manager.enqueue(task)
         # When/Then
@@ -140,7 +150,7 @@ async def test_task_manager_requeue(
     )
 
     # When
-    await task_manager.save_task(task, None)
+    await task_manager.save_task(task)
     await task_manager.requeue(task)
 
     # Then
@@ -163,7 +173,6 @@ async def test_task_manager_requeue(
         "id": "some-id",
         "name": "hello_world",
         "progress": 0.0,
-        "cancelledAt": None,
         "state": "QUEUED",
     }
     assert task_json == expected_json
@@ -204,7 +213,7 @@ async def test_task_manager_cancel(
     # Given
     task_manager = test_amqp_task_manager
     task = hello_world_task
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     await task_manager.cancel(task_id=task.id, requeue=requeue)

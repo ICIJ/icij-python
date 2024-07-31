@@ -158,6 +158,7 @@ if _has_pytest:
             except UnknownTask:
                 new_task = True
                 if namespace is not None:
+                    ns = namespace
                     db_name = self._namespacing.test_db(namespace)
                 else:
                     db_name = TEST_DB
@@ -270,8 +271,7 @@ if _has_pytest:
 
     APP = AsyncApp(name="test-app", dependencies=mocked_app_deps)
 
-    @APP.task
-    async def hello_world(
+    async def _hello_world(
         greeted: str, progress: Optional[PercentProgress] = None
     ) -> str:
         if progress is not None:
@@ -280,6 +280,18 @@ if _has_pytest:
         if progress is not None:
             await progress(0.99)
         return greeting
+
+    @APP.task
+    async def hello_world(
+        greeted: str, progress: Optional[PercentProgress] = None
+    ) -> str:
+        return await _hello_world(greeted, progress)
+
+    @APP.task(namespace="hello")
+    async def namespaced_hello_world(
+        greeted: str, progress: Optional[PercentProgress] = None
+    ) -> str:
+        return await _hello_world(greeted, progress)
 
     @APP.task
     def hello_world_sync(greeted: str) -> str:
@@ -298,6 +310,10 @@ if _has_pytest:
             if progress is not None:
                 p = min(elapsed / duration, 1.0)
                 await progress(p)
+
+    @APP.task(max_retries=666)
+    async def often_retriable() -> str:
+        pass
 
     @pytest.fixture(scope="session")
     def test_async_app() -> AsyncApp:

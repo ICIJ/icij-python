@@ -207,7 +207,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     completed_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
     retries_left: Optional[int] = None
-    max_retries: int = 3
+    max_retries: Optional[int] = None
 
     _non_inherited_from_event = [
         "requeue",
@@ -227,14 +227,15 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             v = dict()
         return v
 
-    @validator("retries_left", pre=True, always=True)
+    @root_validator(pre=True)
     def retries_left_should_default_to_max_retries_when_missing(
-        cls, v: Optional[int], values: Dict[str, Any]
-    ) -> int:
+        cls, values: Dict[str, Any]
+    ) -> Dict[str, Any]:
         # pylint: disable=no-self-argument
-        if v is None:
-            v = values.get("max_retries", cls.__fields__["max_retries"].default)
-        return v
+        max_retries = values.get("max_retries")
+        if values.get("retries_left") is None and max_retries is not None:
+            values["retries_left"] = max_retries
+        return values
 
     @classmethod
     def create(cls, *, task_id: str, task_name: str, arguments: Dict[str, Any]) -> Task:
@@ -247,6 +248,11 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             created_at=created_at,
             state=state,
         )
+
+    def with_max_retries(self, max_retries: Optional[int]) -> Task:
+        as_dict = self.dict()
+        as_dict.pop("max_retries", None)
+        return Task(max_retries=max_retries, **as_dict)
 
     @validator("arguments", pre=True)
     def _validate_args(cls, value: Any):  # pylint: disable=no-self-argument
