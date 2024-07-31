@@ -27,11 +27,11 @@ class Namespacing:
     """Override this class to implement your own mapping between task namespace and
     DBs/amqp queues and so on..."""
 
-    def app_tasks_filter(self, *, task_key: str, app_namespace: str) -> bool:
+    def app_tasks_filter(self, *, task_namespace: str, app_namespace: str) -> bool:
         """Used to filter app task so that the app can be started with a restricted
         namespace. Useful when tasks from the same app must be run by different workers
         """
-        return task_key.startswith(app_namespace)
+        return task_namespace.startswith(app_namespace)
 
     @staticmethod
     @lru_cache

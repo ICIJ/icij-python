@@ -55,7 +55,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
 
     # When
     async with task_manager:
-        await task_manager.enqueue(task, namespace=None)
+        await task_manager.enqueue(task)
         await worker.work_once()
 
         # Then
@@ -132,7 +132,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
 
     # When
     async with task_manager:
-        await task_manager.enqueue(task, namespace=None)
+        await task_manager.enqueue(task)
         await worker.work_once()
 
         # Then
@@ -207,7 +207,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
     await task_manager.save_task(task, namespace=None)
 
     # When/Then
-    task = await task_manager.enqueue(task, namespace=None)
+    task = await task_manager.enqueue(task)
     async with task_manager:
         # Then
         async def _has_retried() -> bool:
@@ -321,7 +321,7 @@ async def test_task_wrapper_should_handle_fatal_error(mock_failing_worker: MockW
     await task_manager.save_task(task, namespace=None)
 
     # When
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     async with task_manager:
         await worker.work_once()
 
@@ -396,7 +396,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
     await task_manager.save_task(task, namespace=None)
 
     # When
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     async with task_manager:
         await worker.work_once()
 
@@ -478,7 +478,7 @@ async def test_work_once_should_not_run_already_cancelled_task(mock_worker: Mock
         w._current = updated  # pylint: disable=protected-access
         return updated
 
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     # We mock the fact the task is still received but cancelled right after
     with pytest.raises(TaskAlreadyCancelled):
         with patch.object(
@@ -509,7 +509,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         t = asyncio.create_task(worker.work_once())
         worker._work_once_task = t
 
-        await task_manager.enqueue(task, namespace=None)
+        await task_manager.enqueue(task)
         after_s = 2.0
 
         async def _has_state(state: TaskState) -> bool:
@@ -554,7 +554,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
     await task_manager.save_task(task, namespace=None)
 
     # When
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     asyncio_tasks = set()
     async with worker, task_manager:
         work_forever_task = asyncio.create_task(worker.work_forever_async())
@@ -635,7 +635,7 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
     await task_manager.save_task(task, namespace=None)
 
     # When/Then
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     with fail_if_exception("fatal_error_task"):
         await worker.work_once()
 
@@ -656,7 +656,7 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
     await task_manager.save_task(task, namespace=None)
 
     # When/Then
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     with patch.object(worker, "_consume") as mocked_consume:
 
         class _FatalError(Exception): ...

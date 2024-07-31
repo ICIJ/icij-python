@@ -129,7 +129,7 @@ async def test_consume_cancelled_event(
     worker = mock_worker
     task = hello_world_task
     await task_manager.save_task(task, None)
-    await task_manager.enqueue(task, None)
+    await task_manager.enqueue(task)
     await mock_worker.consume()
     worker.current = task
     await task_manager.save_task(task, namespace=None)
