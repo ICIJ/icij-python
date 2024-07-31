@@ -8,8 +8,8 @@ from icij_worker import AsyncApp, Namespacing
 
 class DummyNamespacing(Namespacing):
 
-    def app_tasks_filter(self, *, task_key: str, app_namespace: str) -> bool:
-        return task_key.endswith(app_namespace)
+    def app_tasks_filter(self, *, task_namespace: str, app_namespace: str) -> bool:
+        return task_namespace.endswith(app_namespace)
 
 
 @pytest.fixture()
@@ -20,7 +20,7 @@ def namespaced_app() -> AsyncApp:
     def i_m_a():
         return "I'm a"
 
-    @app.task(key="i_m_b")
+    @app.task(name="i_m_b")
     def im_b_task():
         return "I'm b"
 

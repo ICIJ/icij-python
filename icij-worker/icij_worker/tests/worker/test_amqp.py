@@ -287,7 +287,7 @@ async def test_worker_consume_cancel_events(
         return saved.state is state
 
     async with amqp_worker:
-        await task_manager.enqueue(task, None)
+        await task_manager.enqueue(task)
         t = asyncio.create_task(amqp_worker.work_once())
         amqp_worker._work_once_task = t
         failure = f"failed to consume task event in less than {after_s}s"

@@ -8,7 +8,7 @@ from typing import List, Optional, final
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
-from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask
+from icij_worker.exceptions import TaskAlreadyQueued
 from icij_worker.namespacing import Namespacing
 from icij_worker.objects import CancelledEvent, ErrorEvent, ManagerEvent, ProgressEvent
 from icij_worker.task_storage import TaskStorage
@@ -56,7 +56,7 @@ class TaskManager(TaskStorage, ABC):
         return self._app.name
 
     @final
-    async def enqueue(self, task: Task, namespace: Optional[str]) -> Task:
+    async def enqueue(self, task: Task) -> Task:
         if task.state is not TaskState.CREATED:
             msg = f"invalid state {task.state}, expected {TaskState.CREATED}"
             raise ValueError(msg)
@@ -65,6 +65,7 @@ class TaskManager(TaskStorage, ABC):
             raise TaskAlreadyQueued(task.id)
         await self._enqueue(task)
         queued = safe_copy(task, update={"state": TaskState.QUEUED})
+        namespace = await self.get_task_namespace(task.id)
         await self.save_task(queued, namespace)
         return queued
 

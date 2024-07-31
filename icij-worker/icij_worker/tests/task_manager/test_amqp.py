@@ -28,7 +28,7 @@ async def test_task_manager_enqueue(
     await task_manager.save_task(task, namespace=None)
 
     # When
-    queued = await task_manager.enqueue(task, namespace=None)
+    queued = await task_manager.enqueue(task)
 
     # Then
     assert queued.state is TaskState.QUEUED
@@ -68,7 +68,7 @@ async def test_task_manager_enqueue_with_namespace(
     await task_manager.save_task(task, namespace=namespace)
 
     # When
-    queued = await task_manager.enqueue(task, namespace=namespace)
+    queued = await task_manager.enqueue(task)
 
     # Then
     assert queued.state is TaskState.QUEUED
@@ -105,11 +105,11 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     task = hello_world_task
     task_manager = test_amqp_task_manager
     await task_manager.save_task(task, namespace=None)
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
 
     # When/Then
     with pytest.raises(TaskAlreadyQueued):
-        await task_manager.enqueue(task, namespace=None)
+        await task_manager.enqueue(task)
 
 
 async def test_task_manager_enqueue_should_raise_when_queue_full(
@@ -123,10 +123,10 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
     await task_manager.save_task(task, namespace=None)
     await task_manager.save_task(other_task, namespace=None)
     async with task_manager:
-        await task_manager.enqueue(task, namespace=None)
+        await task_manager.enqueue(task)
         # When/Then
         with pytest.raises(TaskQueueIsFull):
-            await task_manager.enqueue(other_task, namespace=None)
+            await task_manager.enqueue(other_task)
 
 
 async def test_task_manager_requeue(

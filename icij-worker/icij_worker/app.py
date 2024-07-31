@@ -26,6 +26,7 @@ class RegisteredTask(ICIJModel):
     task: Callable
     recover_from: Tuple[Type[Exception], ...] = tuple()
     max_retries: Optional[int]
+    namespace: Optional[str]
 
 
 class AsyncApp:
@@ -80,20 +81,25 @@ class AsyncApp:
 
     def task(
         self,
-        key: Optional[str] = None,
+        name: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
+        *,
+        namespace: Optional[str] = None,
     ) -> Callable:
-        if callable(key) and not recover_from and max_retries is None:
-            f = key
-            return functools.partial(self._register_task, name=f.__name__)(f)
+        if callable(name) and not recover_from and max_retries is None:
+            f = name
+            return functools.partial(
+                self._register_task, name=f.__name__, namespace=namespace
+            )(f)
         if max_retries is None:
             max_retries = 3
         return functools.partial(
             self._register_task,
-            name=key,
+            name=name,
             recover_from=recover_from,
             max_retries=max_retries,
+            namespace=namespace,
         )
 
     @final
@@ -110,6 +116,7 @@ class AsyncApp:
         name: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
+        namespace: Optional[str],
     ) -> Callable:
         if name is None:
             name = f.__name__
@@ -117,7 +124,10 @@ class AsyncApp:
         if registered is not None:
             raise ValueError(f'Task "{name}" is already registered: {registered}')
         self._registry[name] = RegisteredTask(
-            task=f, max_retries=max_retries, recover_from=recover_from
+            task=f,
+            max_retries=max_retries,
+            recover_from=recover_from,
+            namespace=namespace,
         )
 
         @functools.wraps(f)
@@ -138,7 +148,7 @@ class AsyncApp:
             task_name
             for task_name in self._registry
             if self._namespacing.app_tasks_filter(
-                task_key=task_name, app_namespace=namespace
+                task_namespace=task_name, app_namespace=namespace
             )
         }
         discarded = set(self._registry) - kept

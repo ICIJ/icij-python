@@ -463,7 +463,7 @@ async def test_task_manager_enqueue(
     await neo4j_task_manager.save_task(task, namespace=None)
 
     # When
-    queued = await neo4j_task_manager.enqueue(task, namespace=None)
+    queued = await neo4j_task_manager.enqueue(task)
 
     # Then
     update = {"state": TaskState.QUEUED}
@@ -481,7 +481,7 @@ async def test_task_manager_enqueue_with_namespace(
     await neo4j_task_manager.save_task(task, namespace=namespace)
 
     # When
-    await neo4j_task_manager.enqueue(task, namespace=namespace)
+    await neo4j_task_manager.enqueue(task)
     query = "MATCH (task:_Task) RETURN task"
     recs, _, _ = await driver.execute_query(query)
     assert len(recs) == 1
@@ -495,11 +495,11 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
     # Given
     task = hello_world_task
     await neo4j_task_manager.save_task(task, namespace=None)
-    await neo4j_task_manager.enqueue(task, namespace=None)
+    await neo4j_task_manager.enqueue(task)
 
     # When/Then
     with pytest.raises(TaskAlreadyQueued):
-        await neo4j_task_manager.enqueue(task, namespace=None)
+        await neo4j_task_manager.enqueue(task)
 
 
 @pytest.mark.parametrize(
@@ -600,7 +600,7 @@ async def test_task_manager_cancel(
     await neo4j_task_manager.save_task(task, namespace=None)
 
     # When
-    task = await neo4j_task_manager.enqueue(task, namespace=None)
+    task = await neo4j_task_manager.enqueue(task)
     await neo4j_task_manager.cancel(task_id=task.id, requeue=requeue)
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
@@ -623,9 +623,9 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
     await task_manager.save_task(_TASK, namespace=None)
 
     # When
-    await task_manager.enqueue(task, namespace=None)
+    await task_manager.enqueue(task)
     with pytest.raises(TaskQueueIsFull):
-        await task_manager.enqueue(_TASK, namespace=None)
+        await task_manager.enqueue(_TASK)
 
 
 async def test_task_manager_save_error(
