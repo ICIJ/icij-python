@@ -16,12 +16,12 @@ class DummyNamespacing(Namespacing):
 def namespaced_app() -> AsyncApp:
     app = AsyncApp("namespaced-app")
 
-    @app.task
+    @app.task(namespace="namespaced-a")
     def i_m_a():
         return "I'm a"
 
-    @app.task(name="i_m_b")
-    def im_b_task():
+    @app.task(namespace="namespaced-b")
+    def i_m_b():
         return "I'm b"
 
     return app

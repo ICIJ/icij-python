@@ -145,10 +145,10 @@ class AsyncApp:
 
     def filter_tasks(self, namespace: str) -> AsyncApp:
         kept = {
-            task_name
-            for task_name in self._registry
+            t_name
+            for t_name, t in self._registry.items()
             if self._namespacing.app_tasks_filter(
-                task_namespace=task_name, app_namespace=namespace
+                task_namespace=t.namespace, app_namespace=namespace
             )
         }
         discarded = set(self._registry) - kept
