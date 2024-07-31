@@ -172,7 +172,9 @@ async def test_worker_negatively_acknowledge(
     assert n_locks == 0
 
 
-_TASK = Task.create(task_id="some-id", task_name="some-task-name", arguments=dict())
+_TASK = Task.create(
+    task_id="some-id", task_name="sleep_for", arguments={"duration": 100}
+)
 _EVENTS = (
     ProgressEvent.from_task(
         safe_copy(_TASK, update={"progress": 0.66, "state": TaskState.RUNNING})
@@ -200,7 +202,7 @@ async def test_worker_publish_event(
 ):
     # When
     driver = worker.driver
-    await neo4j_task_manager.save_task(_TASK, None)
+    await neo4j_task_manager.save_task(_TASK)
     await worker.publish_event(event)
 
     # Then

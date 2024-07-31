@@ -4,11 +4,11 @@ import logging
 from abc import ABC, abstractmethod
 from asyncio import Future
 from functools import cached_property
-from typing import List, Optional, final
+from typing import List, final
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
-from icij_worker.exceptions import TaskAlreadyQueued
+from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
 from icij_worker.namespacing import Namespacing
 from icij_worker.objects import CancelledEvent, ErrorEvent, ManagerEvent, ProgressEvent
 from icij_worker.task_storage import TaskStorage
@@ -65,8 +65,7 @@ class TaskManager(TaskStorage, ABC):
             raise TaskAlreadyQueued(task.id)
         await self._enqueue(task)
         queued = safe_copy(task, update={"state": TaskState.QUEUED})
-        namespace = await self.get_task_namespace(task.id)
-        await self.save_task(queued, namespace)
+        await self.save_task(queued)
         return queued
 
     @final
@@ -78,19 +77,26 @@ class TaskManager(TaskStorage, ABC):
         logger.info("Task(id=%s) requeued", updated.id)
 
     @final
-    async def save_task(self, task: Task, namespace: Optional[str]) -> bool:
-        if task.max_retries is None:
-            max_retries = self._app.registry[task.name].max_retries
-            task = safe_copy(task, update={"max_retries": max_retries})
-        return await self.save_task_(task, namespace)
+    async def save_task(self, task: Task) -> bool:
+        max_retries = None
+        try:
+            ns = await self.get_task_namespace(task_id=task.id)
+        except UnknownTask as e:
+            try:
+                ns = self._app.registry[task.name].namespace
+                max_retries = self._app.registry[task.name].max_retries
+            except KeyError:
+                available_tasks = list(self._app.registry)
+                raise UnregisteredTask(task.name, available_tasks) from e
+        task = task.with_max_retries(max_retries)
+        return await self.save_task_(task, ns)
 
     async def _save_cancelled_event(self, event: CancelledEvent):
         task = await self.get_task(event.task_id)
         task = task.as_resolved(event)
-        namespace = await self.get_task_namespace(event.task_id)
         if event.requeue and not self.late_ack:
             await self.requeue(task)
-        await self.save_task(task, namespace=namespace)
+        await self.save_task(task)
 
     @final
     async def consume_events(self):
@@ -116,8 +122,7 @@ class TaskManager(TaskStorage, ABC):
         await self.save_result(result)
         task = await self.get_task(result.task_id)
         task = task.as_resolved(result)
-        namespace = await self.get_task_namespace(task.id)
-        await self.save_task(task, namespace)
+        await self.save_task(task)
 
     @final
     async def _save_error_event(self, error: ErrorEvent):
@@ -127,8 +132,7 @@ class TaskManager(TaskStorage, ABC):
         await self.save_error(error)
         if task.state is TaskState.QUEUED:
             await self.requeue(task)
-        namespace = await self.get_task_namespace(task.id)
-        await self.save_task(task, namespace)
+        await self.save_task(task)
 
     @abstractmethod
     async def cancel(self, task_id: str, *, requeue: bool): ...

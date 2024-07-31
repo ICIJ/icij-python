@@ -279,7 +279,7 @@ async def test_worker_consume_cancel_events(
         arguments={"duration": duration},
         retries_left=retries_left,
     )
-    await task_manager.save_task(task, None)
+    await task_manager.save_task(task)
     after_s = 2
 
     async def _assert_has_state(state: TaskState) -> bool:

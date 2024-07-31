@@ -1,5 +1,5 @@
 # pylint: disable=redefined-outer-scope
-import re
+from copy import deepcopy
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -100,11 +100,10 @@ RETURN task, result"""
 
 
 @pytest.mark.parametrize(
-    "populate_tasks,namespace,task,,expected_task,is_new",
+    "populate_tasks,task,expected_task,is_new",
     [
         # Insertion
         (
-            None,
             None,
             Task(
                 id="task-3",
@@ -126,11 +125,10 @@ RETURN task, result"""
         ),
         # Insertion with ns
         (
-            "some-namespace",
-            "some-namespace",
+            "hello",
             Task(
                 id="task-3",
-                name="hello_world",
+                name="namespaced_hello_world",
                 arguments={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
@@ -140,16 +138,16 @@ RETURN task, result"""
                 "id": "task-3",
                 "arguments": '{"greeted": "3"}',
                 "retriesLeft": 1,
+                "maxRetries": 3,
                 "state": "CREATED",
-                "name": "hello_world",
+                "name": "namespaced_hello_world",
                 "createdAt": datetime.now(),
-                "namespace": "some-namespace",
+                "namespace": "hello",
             },
             True,
         ),
         # Update
         (
-            None,
             None,
             Task(
                 id="task-1",
@@ -173,11 +171,10 @@ RETURN task, result"""
         ),
         # Update with ns
         (
-            "some-namespace",
-            "some-namespace",
+            "hello",
             Task(
                 id="task-1",
-                name="hello_world",
+                name="namespaced_hello_world",
                 arguments={"greeted": "1"},
                 state=TaskState.RUNNING,
                 progress=0.8,
@@ -190,15 +187,14 @@ RETURN task, result"""
                 "progress": 0.80,
                 "retriesLeft": 0,
                 "state": "RUNNING",
-                "name": "hello_world",
-                "namespace": "some-namespace",
+                "name": "namespaced_hello_world",
+                "namespace": "hello",
                 "createdAt": datetime.now(),
             },
             False,
         ),
         # Should not update non updatable fields
         (
-            None,
             None,
             Task(
                 id="task-1",
@@ -226,7 +222,6 @@ async def test_save_task(
     populate_tasks,
     neo4j_task_manager: TestableNeo4JTaskManager,
     task: Task,
-    namespace: Optional[str],
     expected_task: Dict,
     is_new: bool,
 ):
@@ -234,7 +229,7 @@ async def test_save_task(
     # Given
     driver = neo4j_task_manager.driver
     # When
-    saved = await neo4j_task_manager.save_task(task, namespace)
+    saved = await neo4j_task_manager.save_task(task)
     assert saved == is_new
     # Then
     query = "MATCH (task:_Task { id: $taskId }) RETURN task"
@@ -247,29 +242,6 @@ async def test_save_task(
     expected_state = expected_task.pop("state")
     assert recs[0]["task"].labels == set(("_Task", expected_state))
     assert db_task == expected_task
-
-
-async def test_save_task_with_different_ns_should_fail(
-    populate_tasks, neo4j_task_manager: TestableNeo4JTaskManager
-):
-    # pylint: disable=unused-argument
-    # Given
-    other_ns = "other-namespace"
-    task = Task(
-        id="task-1",
-        name="hello_world",
-        arguments={"greeted": "1"},
-        state=TaskState.RUNNING,
-        progress=0.8,
-        created_at=_NOW,
-        retries_left=0,
-    )
-    # When/Then
-    msg = re.escape(
-        "DB task namespace (None) differs from save task namespace: other-namespace"
-    )
-    with pytest.raises(ValueError, match=msg):
-        await neo4j_task_manager.save_task(task, other_ns)
 
 
 @pytest.mark.parametrize(
@@ -460,7 +432,7 @@ async def test_task_manager_enqueue(
 ):
     # Given
     task = hello_world_task
-    await neo4j_task_manager.save_task(task, namespace=None)
+    await neo4j_task_manager.save_task(task)
 
     # When
     queued = await neo4j_task_manager.enqueue(task)
@@ -472,13 +444,12 @@ async def test_task_manager_enqueue(
 
 
 async def test_task_manager_enqueue_with_namespace(
-    neo4j_task_manager: TestableNeo4JTaskManager, hello_world_task: Task
+    neo4j_task_manager: TestableNeo4JTaskManager, namespaced_hello_world_task: Task
 ):
     # Given
-    task = hello_world_task
+    task = namespaced_hello_world_task
     driver = neo4j_task_manager.driver
-    namespace = "some.namespace"
-    await neo4j_task_manager.save_task(task, namespace=namespace)
+    await neo4j_task_manager.save_task(task)
 
     # When
     await neo4j_task_manager.enqueue(task)
@@ -486,7 +457,7 @@ async def test_task_manager_enqueue_with_namespace(
     recs, _, _ = await driver.execute_query(query)
     assert len(recs) == 1
     task = recs[0]
-    assert task["task"]["namespace"] == namespace
+    assert task["task"]["namespace"] == "hello"
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
@@ -494,7 +465,7 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
 ):
     # Given
     task = hello_world_task
-    await neo4j_task_manager.save_task(task, namespace=None)
+    await neo4j_task_manager.save_task(task)
     await neo4j_task_manager.enqueue(task)
 
     # When/Then
@@ -519,10 +490,10 @@ async def test_task_manager_requeue(neo4j_task_manager: TestableNeo4JTaskManager
         state=TaskState.RUNNING,
         progress=0.66,
     )
-    await neo4j_task_manager.save_task(task, namespace=None)
+    await neo4j_task_manager.save_task(task)
 
     # When
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
     await task_manager.requeue(task)
 
     # Then
@@ -534,7 +505,7 @@ async def test_task_manager_requeue(neo4j_task_manager: TestableNeo4JTaskManager
 
 
 _TASK = Task.create(
-    task_id="some-task-id", task_name="some-task-name", arguments=dict()
+    task_id="some-task-id", task_name="sleep_for", arguments={"duration": 100}
 )
 _EVENTS = (
     ProgressEvent.from_task(
@@ -570,7 +541,7 @@ async def test_task_manager_consume(
         driver=driver,
         poll_interval_s=0.1,
     )
-    await task_manager.save_task(_TASK, None)
+    await task_manager.save_task(_TASK)
     await worker.publish_event(event)
     await worker.publish_event(_LATER_EVENT)
 
@@ -597,7 +568,7 @@ async def test_task_manager_cancel(
     # Given
     driver = neo4j_task_manager.driver
     task = hello_world_task
-    await neo4j_task_manager.save_task(task, namespace=None)
+    await neo4j_task_manager.save_task(task)
 
     # When
     task = await neo4j_task_manager.enqueue(task)
@@ -614,13 +585,18 @@ RETURN task, event"""
 
 
 async def test_task_manager_enqueue_should_raise_when_queue_full(
-    neo4j_async_app_driver: neo4j.AsyncDriver, hello_world_task: Task
+    neo4j_async_app_driver: neo4j.AsyncDriver,
+    hello_world_task: Task,
+    test_async_app: AsyncApp,
 ):
     app = AsyncApp("test-app", config=AsyncAppConfig(max_task_queue_size=1))
+    app._registry = deepcopy(  # pylint: disable=protected-access
+        test_async_app._registry  # pylint: disable=protected-access
+    )
     task_manager = Neo4JTaskManager(app, neo4j_async_app_driver)
     task = hello_world_task
-    await task_manager.save_task(task, namespace=None)
-    await task_manager.save_task(_TASK, namespace=None)
+    await task_manager.save_task(task)
+    await task_manager.save_task(_TASK)
 
     # When
     await task_manager.enqueue(task)
@@ -633,7 +609,7 @@ async def test_task_manager_save_error(
 ):
     # Given
     task = hello_world_task
-    await neo4j_task_manager.save_task(task, namespace=None)
+    await neo4j_task_manager.save_task(task)
     error = TaskError(
         name="error",
         message="with details",
@@ -655,7 +631,7 @@ async def test_task_manager_save_result(
 ):
     # Given
     task = hello_world_task
-    await neo4j_task_manager.save_task(task, namespace=None)
+    await neo4j_task_manager.save_task(task)
     result = ResultEvent(
         task_id=task.id, result="some result", created_at=datetime.now()
     )

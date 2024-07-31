@@ -63,6 +63,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
         await self._exit_stack.enter_async_context(self._storage)
         await self._connection_workflow()
+        await self._ensure_task_queues()
         self._manager_messages_it = (
             await self._get_queue_iterator(
                 self.manager_evt_routing(), declare_exchanges=False
@@ -118,7 +119,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def _enqueue(self, task: Task):
         namespace = await self._storage.get_task_namespace(task.id)
-        await self._ensure_task_queue(namespace)
+        await self._ensure_task_queues()
         routing = self._namespacing.amqp_task_routing(namespace)
         try:
             await self._publish_message(
@@ -132,7 +133,6 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def _requeue(self, task: Task):
         namespace = await self._storage.get_task_namespace(task.id)
-        await self._ensure_task_queue(namespace)
         routing = self._namespacing.amqp_task_routing(namespace)
         try:
             await self._publish_message(
@@ -217,3 +217,22 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         worker_events_routing = AMQPMixin.worker_evt_routing()
         manager_events_routing = AMQPMixin.manager_evt_routing()
         return [worker_events_routing, manager_events_routing]
+
+    async def _ensure_task_queues(self):
+        supported_ns = set(t.namespace for t in self._app.registry.values())
+        for namespace in supported_ns:
+            routing = self._namespacing.amqp_task_routing(namespace)
+            task_routing = self.default_task_routing()
+            dlx_name = task_routing.dead_letter_routing.exchange.name
+            dl_routing_key = task_routing.dead_letter_routing.routing_key
+            arguments = {
+                "x-dead-letter-exchange": dlx_name,
+                "x-dead-letter-routing-key": dl_routing_key,
+            }
+            if self.max_task_queue_size is not None:
+                arguments["x-max-length"] = self.max_task_queue_size
+                arguments["x-overflow"] = "reject-publish"
+            queue = await self._channel.declare_queue(
+                routing.queue_name, durable=True, arguments=arguments
+            )
+            await queue.bind(routing.exchange.name, routing.routing_key)

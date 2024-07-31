@@ -34,6 +34,7 @@ from icij_common.neo4j.constants import (
     TASK_LOCK_WORKER_ID,
     TASK_MANAGER_EVENT_NODE,
     TASK_MANAGER_EVENT_NODE_CREATED_AT,
+    TASK_MAX_RETRIES,
     TASK_NAME,
     TASK_NAMESPACE,
     TASK_NODE,
@@ -473,22 +474,23 @@ ON (event.{TASK_CANCEL_EVENT_CANCELLED_AT})"""
 async def migrate_task_retries_and_error_v0_tx(
     tx: neo4j.AsyncTransaction,
 ):
+    # Sadly, without the max retries save in DB, we can't compute the retries left, so
+    # we just delete this attribute
+    query = f"""MATCH (task:{TASK_NODE})
+WHERE task.{TASK_RETRIES_LEFT} IS NULL
+SET task.{TASK_MAX_RETRIES} = 3,
+    task.{TASK_RETRIES_LEFT} = 3 - coalesce(task.{TASK_RETRIES_DEPRECATED}, 0)  
+REMOVE task.{TASK_RETRIES_DEPRECATED}
+RETURN task
+"""
+    await tx.run(query)
     query = f"""MATCH (error:{TASK_ERROR_NODE})-[rel:{TASK_ERROR_OCCURRED_TYPE}]-(task)
-WHERE rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} IS NULL 
+WHERE rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} IS NULL
 SET rel.{TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT} 
     = error.{TASK_ERROR_OCCURRED_AT_DEPRECATED},
     rel.{TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT} = 3
 REMOVE error.{TASK_ERROR_OCCURRED_AT_DEPRECATED}, error.{TASK_ERROR_ID_DEPRECATED}
 RETURN error
-"""
-    await tx.run(query)
-    # Sadly, without the max retries save in DB, we can't compute the retries left, so
-    # we just delete this attribute
-    query = f"""MATCH (task:{TASK_NODE})
-WHERE task.{TASK_RETRIES_DEPRECATED} IS NOT NULL
-SET task.{TASK_RETRIES_LEFT} = 3 - task.{TASK_RETRIES_DEPRECATED} 
-REMOVE task.{TASK_RETRIES_DEPRECATED}
-RETURN task
 """
     await tx.run(query)
 

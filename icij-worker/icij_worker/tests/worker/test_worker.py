@@ -51,7 +51,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     async with task_manager:
@@ -128,7 +128,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     async with task_manager:
@@ -204,7 +204,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
         created_at=created_at,
         state=TaskState.CREATED,
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When/Then
     task = await task_manager.enqueue(task)
@@ -245,6 +245,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
             created_at=created_at,
             state=TaskState.DONE,
             retries_left=2,
+            max_retries=3,
         )
         completed_at = saved_task.completed_at
         assert isinstance(completed_at, datetime)
@@ -318,7 +319,7 @@ async def test_task_wrapper_should_handle_fatal_error(mock_failing_worker: MockW
         created_at=created_at,
         state=TaskState.CREATED,
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     await task_manager.enqueue(task)
@@ -345,6 +346,7 @@ async def test_task_wrapper_should_handle_fatal_error(mock_failing_worker: MockW
             created_at=created_at,
             state=TaskState.ERROR,
             retries_left=0,
+            max_retries=3,
         )
         assert saved_task == expected_task
 
@@ -392,8 +394,8 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
         name="i_dont_exist",
         created_at=created_at,
         state=TaskState.CREATED,
-    )
-    await task_manager.save_task(task, namespace=None)
+    ).with_max_retries(3)
+    await task_manager.save_task_(task, namespace=None)
 
     # When
     await task_manager.enqueue(task)
@@ -421,6 +423,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
             created_at=created_at,
             state=TaskState.ERROR,
             retries_left=0,
+            max_retries=3,
         )
         assert saved_task == expected_task
 
@@ -459,18 +462,14 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
         assert error_event == expected_error_event
 
 
-async def test_work_once_should_not_run_already_cancelled_task(mock_worker: MockWorker):
+async def test_work_once_should_not_run_already_cancelled_task(
+    mock_worker: MockWorker, hello_world_task: Task
+):
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.app, worker.db_path)
-    created_at = datetime.now()
-    task = Task(
-        id="some-id",
-        name="fatal_error_task",
-        created_at=created_at,
-        state=TaskState.CREATED,
-    )
-    await task_manager.save_task(task, namespace=None)
+    task = hello_world_task
+    await task_manager.save_task(task)
 
     # When
     def _cancel(w: MockWorker):
@@ -502,7 +501,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         state=TaskState.CREATED,
         arguments={"duration": duration},
     )
-    await task_manager.save_task(task, None)
+    await task_manager.save_task(task)
 
     # When
     async with worker, task_manager:
@@ -551,7 +550,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
         state=TaskState.CREATED,
         arguments={"duration": duration},
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When
     await task_manager.enqueue(task)
@@ -632,7 +631,7 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
         created_at=created_at,
         state=TaskState.CREATED,
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When/Then
     await task_manager.enqueue(task)
@@ -653,7 +652,7 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
         created_at=created_at,
         state=TaskState.CREATED,
     )
-    await task_manager.save_task(task, namespace=None)
+    await task_manager.save_task(task)
 
     # When/Then
     await task_manager.enqueue(task)
