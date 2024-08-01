@@ -55,7 +55,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_retries_and_error_v0_tx,
     migrate_task_type_to_name_v0,
 )
-from icij_worker.typing_ import PercentProgress
+from icij_worker.typing_ import RateProgress
 
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
@@ -242,7 +242,7 @@ def _make_app(config: Optional[AsyncAppConfig] = None) -> AsyncApp:
         raise Recoverable("i can recover from this")
 
     @app.task("fatal_error_task")
-    async def _fatal_error_task(progress: Optional[PercentProgress] = None):
+    async def _fatal_error_task(progress: Optional[RateProgress] = None):
         if progress is not None:
             await progress(0.1)
         raise ValueError("this is fatal")

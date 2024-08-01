@@ -57,7 +57,7 @@ from icij_worker.objects import (
     WorkerEvent,
 )
 from icij_worker.task_manager import TaskManager
-from icij_worker.typing_ import PercentProgress
+from icij_worker.typing_ import RateProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
 from icij_worker.utils.logging_ import LogWithWorkerIDMixin
 
@@ -272,7 +272,7 @@ if _has_pytest:
     APP = AsyncApp(name="test-app", dependencies=mocked_app_deps)
 
     async def _hello_world(
-        greeted: str, progress: Optional[PercentProgress] = None
+        greeted: str, progress: Optional[RateProgress] = None
     ) -> str:
         if progress is not None:
             await progress(0.1)
@@ -282,14 +282,12 @@ if _has_pytest:
         return greeting
 
     @APP.task
-    async def hello_world(
-        greeted: str, progress: Optional[PercentProgress] = None
-    ) -> str:
+    async def hello_world(greeted: str, progress: Optional[RateProgress] = None) -> str:
         return await _hello_world(greeted, progress)
 
     @APP.task(namespace="hello")
     async def namespaced_hello_world(
-        greeted: str, progress: Optional[PercentProgress] = None
+        greeted: str, progress: Optional[RateProgress] = None
     ) -> str:
         return await _hello_world(greeted, progress)
 
@@ -300,7 +298,7 @@ if _has_pytest:
 
     @APP.task(max_retries=1)
     async def sleep_for(
-        duration: float, s: float = 0.01, progress: Optional[PercentProgress] = None
+        duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
     ):
         start = datetime.now()
         elapsed = 0

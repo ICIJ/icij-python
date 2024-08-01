@@ -19,7 +19,9 @@ DependencyLabel = Optional[str]
 DependencySetup = Callable[..., None]
 DependencyAsyncSetup = Callable[..., Coroutine[None, None, None]]
 
-PercentProgress = Callable[[float], Awaitable[None]]
+RateProgress = Callable[[float], Awaitable[None]]
+# TODO: remove this when breaking API
+PercentProgress = RateProgress
 RawProgress = Callable[[int], Awaitable[None]]
 
 DictStrAny = Dict[str, Any]
