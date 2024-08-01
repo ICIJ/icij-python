@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import logging
 from contextlib import asynccontextmanager
+from inspect import iscoroutinefunction, signature
 from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
 from icij_common.pydantic_utils import ICIJModel, ICIJSettings
@@ -12,6 +13,8 @@ from icij_worker.utils import run_deps
 from icij_worker.utils.imports import import_variable
 
 logger = logging.getLogger(__name__)
+
+PROGRESS_HANDLER_ARG = "progress"
 
 
 class AsyncAppConfig(ICIJSettings):
@@ -118,6 +121,13 @@ class AsyncApp:
         max_retries: Optional[int] = None,
         namespace: Optional[str],
     ) -> Callable:
+        if not iscoroutinefunction(f) and supports_progress(f):
+            msg = (
+                f"{f} is not a coroutine, progress is not supported as progress"
+                f" reporting is inherently async, turn your function task into a"
+                f" coroutine if necessary and use `await progress(my_progress)`"
+            )
+            raise ValueError(msg)
         if name is None:
             name = f.__name__
         registered = self._registry.get(name)
@@ -159,3 +169,10 @@ class AsyncApp:
         )
         self._registry = {k: self._registry[k] for k in kept}
         return self
+
+
+def supports_progress(task_fn) -> bool:
+    return any(
+        param.name == PROGRESS_HANDLER_ARG
+        for param in signature(task_fn).parameters.values()
+    )

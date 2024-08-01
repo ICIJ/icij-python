@@ -12,7 +12,7 @@ from abc import abstractmethod
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
-from inspect import isawaitable, signature
+from inspect import isawaitable
 from typing import (
     Any,
     Callable,
@@ -26,7 +26,7 @@ from typing import (
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskError, TaskState
-from icij_worker.app import RegisteredTask
+from icij_worker.app import RegisteredTask, supports_progress
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import (
     MaxRetriesExceeded,
@@ -49,8 +49,6 @@ from icij_worker.utils import Registrable
 from icij_worker.worker.process import HandleSignalsMixin
 
 logger = logging.getLogger(__name__)
-
-PROGRESS_HANDLER_ARG = "progress"
 
 C = TypeVar("C", bound="WorkerConfig")
 WE = TypeVar("WE", bound=WorkerEvent)
@@ -396,6 +394,10 @@ class Worker(
         event = ProgressEvent.from_task(self._current)
         await self.publish_event(event)
 
+    @final
+    def _publish_progress_sync(self, progress: float, task: Task):
+        self._loop.call_soon(self._publish_progress, progress, task)
+
     async def _publish_cancelled_event(self, cancel_event: CancelEvent):
         update = {
             "state": TaskState.QUEUED if cancel_event.requeue else TaskState.CANCELLED
@@ -413,11 +415,7 @@ class Worker(
         registered = _retrieve_registered_task(task, self._app)
         recoverable = registered.recover_from
         task_fn = registered.task
-        supports_progress = any(
-            param.name == PROGRESS_HANDLER_ARG
-            for param in signature(task_fn).parameters.values()
-        )
-        if supports_progress:
+        if supports_progress(task_fn):
             publish_progress = functools.partial(self._publish_progress, task=task)
             task_fn = functools.partial(task_fn, progress=publish_progress)
         return task_fn, recoverable
