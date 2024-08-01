@@ -105,7 +105,6 @@ class AMQPWorker(Worker, AMQPMixin):
         self._connection_: Optional[AbstractRobustConnection] = None
         self._task_queue_: Optional[RobustQueue] = None
         self._task_queue_iterator: Optional[AbstractQueueIterator] = None
-        self._cancel_evt_queue_: Optional[RobustQueue] = None
         self._worker_evt_queue_iterator: Optional[AbstractQueueIterator] = None
         self._task_routing: Optional[Routing] = None
         self._delivered: Dict[str, AbstractIncomingMessage] = dict()
@@ -129,6 +128,13 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.enter_async_context(self._channel)
         await self._bind_task_queue()
         await self._bind_worker_event_queue()
+
+    async def _aexit__(self, exc_type, exc_val, exc_tb):
+        event_transient_queue = await self._channel.get_queue(
+            self._worker_evt_routing.queue_name
+        )
+        await event_transient_queue.delete(if_empty=False, if_unused=False)
+        await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _bind_task_queue(self):
         self._task_routing = self.task_routing(self._namespace)
@@ -160,9 +166,6 @@ class AMQPWorker(Worker, AMQPMixin):
             AbstractAsyncContextManager, self._worker_evt_queue_iterator
         )
         await self._exit_stack.enter_async_context(self._worker_evt_queue_iterator)
-
-    async def _aexit__(self, exc_type, exc_val, exc_tb):
-        await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _consume(self) -> Task:
         message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
