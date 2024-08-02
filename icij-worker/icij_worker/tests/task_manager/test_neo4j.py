@@ -1,6 +1,6 @@
 # pylint: disable=redefined-outer-scope
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 import neo4j
@@ -515,7 +515,7 @@ _EVENTS = (
         _TASK,
         TaskError.from_exception(ValueError("there's an error here")),
         retries_left=3,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
     ),
     ResultEvent.from_task(
         safe_copy(_TASK, update={"completed_at": datetime.now()}), "some-result"

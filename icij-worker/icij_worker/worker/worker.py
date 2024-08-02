@@ -11,7 +11,7 @@ import traceback
 from abc import abstractmethod
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from inspect import isawaitable
 from typing import (
     Any,
@@ -383,7 +383,7 @@ class Worker(
     async def publish_error_event(self, error: TaskError, task: Task, retries: int):
         self.debug('Task(id="%s") publish error event', task.id)
         error_event = ErrorEvent.from_task(
-            task, error, retries_left=retries, created_at=datetime.now()
+            task, error, retries_left=retries, created_at=datetime.now(timezone.utc)
         )
         await self.publish_event(error_event)
 
@@ -574,7 +574,7 @@ async def _retry_task(
         # This will throw a MaxRetriesExceeded when necessary
         worker.check_retries(task, e)
         raise RecoverableError(e) from e
-    update = TaskUpdate.done(datetime.now())
+    update = TaskUpdate.done(datetime.now(timezone.utc))
     task = safe_copy(task, update=update.dict(exclude_unset=True))
     worker.info('Task(id="%s") complete, saving result...', task.id)
     async with worker.cancel_lock:

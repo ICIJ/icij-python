@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, cast
 
 import neo4j
@@ -117,7 +117,9 @@ CREATE (task)-[
         {TASK_CANCEL_EVENT_REQUEUE}: $requeue
     }})
 """
-    await tx.run(query, taskId=task_id, requeue=requeue, cancelledAt=datetime.now())
+    await tx.run(
+        query, taskId=task_id, requeue=requeue, cancelledAt=datetime.now(timezone.utc)
+    )
 
 
 async def _consume_manager_events_tx(tx: neo4j.AsyncTransaction) -> Optional[str]:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import cached_property
 from typing import Dict, List, Optional, TypeVar, Union, cast
 
@@ -146,7 +146,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def cancel(self, task_id: str, *, requeue: bool):
         cancel_event = CancelEvent(
-            task_id=task_id, requeue=requeue, created_at=datetime.now()
+            task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
         )
         # TODO: for now cancellation is not namespaced, workers from other namespace
         #  are responsible to ignoring the broadcast. That could be easily implemented

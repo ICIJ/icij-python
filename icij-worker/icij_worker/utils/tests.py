@@ -9,7 +9,7 @@ import signal
 import tempfile
 from abc import ABC
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
     Any,
@@ -452,7 +452,7 @@ if _has_pytest:
 
         async def cancel(self, task_id: str, *, requeue: bool):
             cancel_event = CancelEvent(
-                task_id=task_id, requeue=requeue, created_at=datetime.now()
+                task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
             )
             db_name = self._get_task_db_name(task_id)
             key = self._task_key(task_id=task_id, db=db_name)

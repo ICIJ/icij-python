@@ -4,7 +4,7 @@ import json
 import logging
 import traceback
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, unique
 from functools import lru_cache
 from typing import Callable, ClassVar, Union, cast
@@ -239,7 +239,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
 
     @classmethod
     def create(cls, *, task_id: str, task_name: str, arguments: Dict[str, Any]) -> Task:
-        created_at = datetime.now()
+        created_at = datetime.now(timezone.utc)
         state = TaskState.CREATED
         return cls(
             id=task_id,
@@ -444,7 +444,7 @@ class ProgressEvent(ManagerEvent):
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> ProgressEvent:
-        created_at = datetime.now()
+        created_at = datetime.now(timezone.utc)
         event = cls(
             task_id=task.id, progress=task.progress, created_at=created_at, **kwargs
         )
@@ -469,7 +469,9 @@ class CancelEvent(WorkerEvent):
     @classmethod
     def from_task(cls, task: Task, *, requeue: bool, **kwargs) -> CancelEvent:
         # pylint: disable=arguments-differ
-        return cls(task_id=task.id, requeue=requeue, created_at=datetime.now())
+        return cls(
+            task_id=task.id, requeue=requeue, created_at=datetime.now(timezone.utc)
+        )
 
 
 @Message.register("CancelledEvent")
@@ -479,7 +481,7 @@ class CancelledEvent(ManagerEvent):
     @classmethod
     def from_task(cls, task: Task, *, requeue: bool, **kwargs) -> CancelledEvent:
         # pylint: disable=arguments-differ
-        created_at = datetime.now()
+        created_at = datetime.now(timezone.utc)
         event = cls(task_id=task.id, created_at=created_at, requeue=requeue)
         return event
 
@@ -508,7 +510,12 @@ class ResultEvent(ManagerEvent):
     @classmethod
     def from_task(cls, task: Task, result: object, **kwargs) -> ResultEvent:
         # pylint: disable=arguments-differ
-        return cls(task_id=task.id, result=result, created_at=datetime.now(), **kwargs)
+        return cls(
+            task_id=task.id,
+            result=result,
+            created_at=datetime.now(timezone.utc),
+            **kwargs,
+        )
 
 
 @Message.register("ErrorEvent")
