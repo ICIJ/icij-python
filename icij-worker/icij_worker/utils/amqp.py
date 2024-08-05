@@ -1,7 +1,7 @@
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import lru_cache
-from typing import Dict, Optional, Tuple, cast
+from typing import Optional, Tuple, cast
 
 from aio_pika import (
     DeliveryMode,
@@ -117,6 +117,11 @@ class AMQPMixin:
             exchange=Exchange(name=AMQP_TASKS_X, type=ExchangeType.DIRECT),
             routing_key=AMQP_TASKS_ROUTING_KEY,
             queue_name=AMQP_TASKS_QUEUE,
+            queue_args={
+                "x-overflow": "reject-publish",
+                "x-queue-type": "quorum",
+                "x-delivery-limit": 10,
+            },
             dead_letter_routing=Routing(
                 exchange=Exchange(name=AMQP_TASKS_DL_X, type=ExchangeType.DIRECT),
                 routing_key=AMQP_TASKS_DL_ROUTING_KEY,
@@ -156,7 +161,6 @@ class AMQPMixin:
         declare_exchanges: bool,
         declare_queues: bool = True,
         durable_queues: bool = True,
-        queue_args: Optional[Dict] = None,
     ) -> Tuple[AbstractQueueIterator, AbstractExchange, Optional[AbstractExchange]]:
         await self._exit_stack.enter_async_context(
             cast(AbstractAsyncContextManager, self._channel)
@@ -167,7 +171,6 @@ class AMQPMixin:
             declare_exchanges=declare_exchanges,
             declare_queues=declare_queues,
             durable_queues=durable_queues,
-            queue_args=queue_args,
         )
         ex = await self._channel.get_exchange(routing.exchange.name, ensure=True)
         queue = await self._channel.get_queue(routing.queue_name, ensure=True)
@@ -179,10 +182,10 @@ class AMQPMixin:
     async def _create_routing(
         self,
         routing: Routing,
+        *,
         declare_exchanges: bool = True,
         declare_queues: bool = True,
         durable_queues: bool = True,
-        queue_args: Optional[Dict] = None,
     ):
         if declare_exchanges:
             x = await self._channel.declare_exchange(
@@ -190,8 +193,9 @@ class AMQPMixin:
             )
         else:
             x = await self._channel.get_exchange(routing.exchange.name, ensure=True)
-        if queue_args is not None:
-            queue_args = deepcopy(queue_args)
+        queue_args = None
+        if routing.queue_args is not None:
+            queue_args = deepcopy(routing.queue_args)
         if routing.dead_letter_routing:
             await self._create_routing(
                 routing.dead_letter_routing,

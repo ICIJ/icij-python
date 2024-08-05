@@ -164,6 +164,9 @@ async def populate_tasks(rabbit_mq: str, request):
         arguments = {
             "x-dead-letter-exchange": dl_ex,
             "x-dead-letter-routing-key": dl_routing_key,
+            "x-overflow": "reject-publish",
+            "x-queue-type": "quorum",
+            "x-delivery-limit": 10,
         }
         task_queue = await channel.declare_queue(
             task_routing.queue_name, durable=True, arguments=arguments
@@ -234,6 +237,41 @@ async def test_worker_consume_task(
         )
         consumed = consume_task.result()
         assert consumed == expected_task
+
+
+async def test_worker_should_nack_queue_unregistered_task(
+    amqp_worker: TestableAMQPWorker,
+    test_amqp_task_manager: AMQPTaskManager,
+):
+    # Given
+    unknown = Task.create(task_id="some-id", task_name="im_unknown", arguments=dict())
+    task_manager = test_amqp_task_manager
+    task_routing = amqp_worker.default_task_routing()
+    await task_manager.save_task_(unknown, None)
+    async with amqp_worker:
+        # When
+        await task_manager.enqueue(unknown)
+
+        # Then
+        async def _assert_has_size(queue_name: str, n: int) -> bool:
+            size = await get_queue_size(queue_name)
+            return size == n
+
+        t = asyncio.create_task(amqp_worker.consume())
+        timeout = 10.0
+        expected = functools.partial(
+            _assert_has_size, queue_name=task_routing.queue_name, n=0
+        )
+        failure = f"Failed to definitely nack task in less than {timeout} seconds."
+        assert await async_true_after(expected, after_s=timeout), failure
+        expected = functools.partial(
+            _assert_has_size,
+            queue_name=task_routing.dead_letter_routing.queue_name,
+            n=1,
+        )
+        failure = f"Failed to DL-queue task in less than {timeout} seconds."
+        assert await async_true_after(expected, after_s=timeout), failure
+        t.cancel()
 
 
 @pytest.mark.parametrize(
