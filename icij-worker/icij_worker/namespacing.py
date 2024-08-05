@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
 from icij_common.test_utils import TEST_DB
@@ -17,6 +17,7 @@ try:
         exchange: Exchange
         routing_key: str
         queue_name: str
+        queue_args: Optional[Dict] = None
         dead_letter_routing: Optional[Routing] = None
 
 except ImportError:
@@ -53,6 +54,7 @@ class Namespacing:
             exchange=Exchange(name=exchange_name, type=ExchangeType.DIRECT),
             routing_key=routing_key,
             queue_name=queue_name,
+            queue_args=default_task_routing.queue_args,
             # TODO: route DLQ by namespace ???
             dead_letter_routing=default_task_routing.dead_letter_routing,
         )

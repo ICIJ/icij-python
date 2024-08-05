@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Dict, List, Optional, TypeVar, Union, cast
@@ -9,6 +10,7 @@ from aio_pika import connect_robust
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
 from aiormq import DeliveryError
 
+from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, Task, TaskManager
 from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
@@ -173,22 +175,19 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             publisher_confirms=True, on_return_raises=False
         )
         await self._exit_stack.enter_async_context(self._channel)
-        await self._channel.set_qos(prefetch_count=1, global_=True)
+        await self._channel.set_qos(prefetch_count=1, global_=False)
         logger.info("channel opened !")
         task_routing = self.default_task_routing()
-        logger.debug("(re)declaring routing %s...", task_routing)
-        task_queue_args = None
         if self.max_task_queue_size is not None:
-            task_queue_args = {
-                "x-overflow": "reject-publish",
-                "x-max-length": self.max_task_queue_size,
-            }
+            queue_args = deepcopy(task_routing.queue_args)
+            queue_args.update({"x-max-length": self.max_task_queue_size})
+            task_routing = safe_copy(task_routing, update={"queue_args": queue_args})
+        logger.debug("(re)declaring routing %s...", task_routing)
         await self._create_routing(
             task_routing,
             declare_exchanges=True,
             declare_queues=True,
             durable_queues=True,
-            queue_args=task_queue_args,
         )
         for routing in self._other_routings:
             logger.debug("(re)declaring routing %s...", routing)
@@ -222,17 +221,13 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         supported_ns = set(t.namespace for t in self._app.registry.values())
         for namespace in supported_ns:
             routing = self._namespacing.amqp_task_routing(namespace)
-            task_routing = self.default_task_routing()
-            dlx_name = task_routing.dead_letter_routing.exchange.name
-            dl_routing_key = task_routing.dead_letter_routing.routing_key
-            arguments = {
-                "x-dead-letter-exchange": dlx_name,
-                "x-dead-letter-routing-key": dl_routing_key,
-            }
             if self.max_task_queue_size is not None:
-                arguments["x-max-length"] = self.max_task_queue_size
-                arguments["x-overflow"] = "reject-publish"
-            queue = await self._channel.declare_queue(
-                routing.queue_name, durable=True, arguments=arguments
+                queue_args = deepcopy(routing.queue_args)
+                queue_args["x-max-length"] = self.max_task_queue_size
+                routing = safe_copy(routing, update={"queue_args": queue_args})
+            await self._create_routing(
+                routing,
+                declare_exchanges=True,
+                declare_queues=True,
+                durable_queues=True,
             )
-            await queue.bind(routing.exchange.name, routing.routing_key)

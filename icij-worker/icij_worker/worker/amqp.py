@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from copy import deepcopy
 from functools import lru_cache
 from typing import ClassVar, Dict, Optional, Type, cast
 
@@ -137,18 +138,16 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _bind_task_queue(self):
-        self._task_routing = self.task_routing(self._namespace)
-        arguments = None
+        task_routing = self.task_routing(self._namespace)
         if self._app.config.max_task_queue_size is not None:
-            arguments = {
-                "x-overflow": "reject-publish",
-                "x-max-length": self._app.config.max_task_queue_size,
-            }
+            queue_args = deepcopy(task_routing.queue_args)
+            queue_args["x-max-length"] = self._app.config.max_task_queue_size
+            task_routing = safe_copy(task_routing, update={"queue_args": queue_args})
+        self._task_routing = task_routing
         self._task_queue_iterator, _, _ = await self._get_queue_iterator(
             self._task_routing,
             declare_exchanges=self._declare_exchanges,
             declare_queues=self._declare_exchanges,
-            queue_args=arguments,
         )
         self._task_queue_iterator = cast(
             AbstractAsyncContextManager, self._task_queue_iterator
@@ -168,10 +167,16 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.enter_async_context(self._worker_evt_queue_iterator)
 
     async def _consume(self) -> Task:
-        message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
-        task = Task.parse_raw(message.body)
-        self._delivered[task.id] = message
-        return task
+        while "I'm waiting to get a known task":
+            message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
+            task = Task.parse_raw(message.body)
+            self._delivered[task.id] = message
+            # This behavior is not shared with other implems, it's AMQP specific and
+            # avoid a worker consuming in loops tasks which it can't handle.
+            # This also bypasses the normal/tested/share7 behavior of the Worker class
+            if not await self._ensure_can_consume(task):
+                continue
+            return task
 
     async def _consume_worker_events(self) -> WorkerEvent:
         message: AbstractIncomingMessage = await self._worker_events_it.__anext__()
@@ -243,3 +248,15 @@ class AMQPWorker(Worker, AMQPMixin):
         )
         worker.set_config(config)
         return worker
+
+    async def _ensure_can_consume(self, task: Task) -> bool:
+        if task.name not in self._app.registry:
+            msg = (
+                f'Task(id="%s") has unknown name "{task.name}" for worker. '
+                f"Nacking it with requeue."
+            )
+            self.error(msg)
+            task_msg = self._delivered[task.id]
+            await task_msg.nack(requeue=True)
+            return False
+        return True

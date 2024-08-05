@@ -130,13 +130,18 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
     task_manager = TestableAMQPTaskManager(app, fs_storage, broker_url=rabbit_mq)
     task = hello_world_task
     other_task = safe_copy(task, update={"id": "some-other-id"})
+    yet_another_task = safe_copy(task, update={"id": "yet-another-id"})
     await task_manager.save_task(task)
     await task_manager.save_task(other_task)
+    await task_manager.save_task(yet_another_task)
     async with task_manager:
         await task_manager.enqueue(task)
         # When/Then
         with pytest.raises(TaskQueueIsFull):
             await task_manager.enqueue(other_task)
+            # This one is needed for quorum queue which have an approximate definition
+            # of the limit
+            await task_manager.enqueue(yet_another_task)
 
 
 async def test_task_manager_requeue(
