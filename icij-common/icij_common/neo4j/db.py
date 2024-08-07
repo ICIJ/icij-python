@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from distutils.version import StrictVersion  # pylint: disable=deprecated-module
 from typing import AsyncGenerator, List, Optional, Tuple
+
+from packaging.version import parse, Version
 
 import neo4j
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 NEO4J_COMMUNITY_DB = "neo4j"
 _IS_ENTERPRISE: Optional[bool] = None
-_NEO4J_VERSION: Optional[StrictVersion] = None
+_NEO4J_VERSION: Optional[Version] = None
 _SUPPORTS_PARALLEL: Optional[bool] = None
 
 _COMPONENTS_QUERY = """CALL dbms.components() YIELD versions, edition
@@ -145,10 +146,10 @@ async def _get_components(neo4j_driver: neo4j.AsyncDriver):
     global _IS_ENTERPRISE
     global _NEO4J_VERSION
     _IS_ENTERPRISE = res["edition"] != "community"
-    _NEO4J_VERSION = StrictVersion(res["versions"][0])
+    _NEO4J_VERSION = parse(res["versions"][0])
 
 
-async def server_version(neo4j_driver: neo4j.AsyncDriver) -> StrictVersion:
+async def server_version(neo4j_driver: neo4j.AsyncDriver) -> Version:
     if _NEO4J_VERSION is None:
         await _get_components(neo4j_driver)
     return _NEO4J_VERSION
@@ -158,7 +159,7 @@ async def supports_parallel_runtime(neo4j_driver: neo4j.AsyncDriver) -> bool:
     global _SUPPORTS_PARALLEL
     if _SUPPORTS_PARALLEL is None:
         version = await server_version(neo4j_driver)
-        _SUPPORTS_PARALLEL = version >= StrictVersion("5.13")
+        _SUPPORTS_PARALLEL = version >= Version("5.13")
     return _SUPPORTS_PARALLEL
 
 
