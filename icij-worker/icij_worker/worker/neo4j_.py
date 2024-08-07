@@ -11,25 +11,18 @@ import neo4j
 from neo4j.exceptions import ConstraintError, ResultNotSingleError
 from pydantic import Field
 
-from icij_common.neo4j.constants import (
-    TASK_CANCELLED_BY_EVENT_REL,
-    TASK_CANCEL_EVENT_CANCELLED_AT,
-    TASK_CANCEL_EVENT_EFFECTIVE,
-    TASK_CANCEL_EVENT_NODE,
-    TASK_LOCK_NODE,
-    TASK_LOCK_TASK_ID,
-    TASK_LOCK_WORKER_ID,
-    TASK_NAMESPACE,
-    TASK_NODE,
+from constants import (
+    NEO4J_TASK_CANCELLED_BY_EVENT_REL,
+    NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
+    NEO4J_TASK_CANCEL_EVENT_EFFECTIVE,
+    NEO4J_TASK_CANCEL_EVENT_NODE,
+    NEO4J_TASK_LOCK_NODE,
+    NEO4J_TASK_LOCK_TASK_ID,
+    NEO4J_TASK_LOCK_WORKER_ID,
+    NEO4J_TASK_NAMESPACE,
+    NEO4J_TASK_NODE,
 )
-from icij_worker import (
-    AsyncApp,
-    Task,
-    TaskState,
-    Worker,
-    WorkerConfig,
-    WorkerType,
-)
+from icij_worker import AsyncApp, AsyncBackend, Task, TaskState, Worker, WorkerConfig
 from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
 from icij_worker.exceptions import TaskAlreadyReserved, UnknownTask
 from icij_worker.objects import CancelEvent, WorkerEvent
@@ -38,7 +31,7 @@ from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 @WorkerConfig.register()
 class Neo4jWorkerConfig(WorkerConfig):
-    type: ClassVar[str] = Field(const=True, default=WorkerType.neo4j.value)
+    type: ClassVar[str] = Field(const=True, default=AsyncBackend.neo4j.value)
 
     cancelled_tasks_refresh_interval_s: float = 0.1
     poll_interval_s: float = 0.1
@@ -75,7 +68,7 @@ def _no_filter(namespace: str) -> bool:
     return True
 
 
-@Worker.register(WorkerType.neo4j)
+@Worker.register(AsyncBackend.neo4j)
 class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
     def __init__(
@@ -106,7 +99,6 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
             cancelled_tasks_refresh_interval_s=tasks_refresh_interval_s,
             **extras,
         )
-        worker.set_config(config)
         return worker
 
     async def _consume(self) -> Task:
@@ -147,19 +139,19 @@ async def _consume_task_tx(
 ) -> Optional[neo4j.Record]:
     where_ns = ""
     if namespace is not None:
-        where_ns = f"WHERE t.{TASK_NAMESPACE} = $namespace"
-    query = f"""MATCH (t:{TASK_NODE}:`{TaskState.QUEUED.value}`)
+        where_ns = f"WHERE t.{NEO4J_TASK_NAMESPACE} = $namespace"
+    query = f"""MATCH (t:{NEO4J_TASK_NODE}:`{TaskState.QUEUED.value}`)
 {where_ns}
 WITH t
 LIMIT 1
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 WITH task
-CREATE (lock:{TASK_LOCK_NODE} {{
-    {TASK_LOCK_TASK_ID}: task.id,
-    {TASK_LOCK_WORKER_ID}: $workerId 
+CREATE (lock:{NEO4J_TASK_LOCK_NODE} {{
+    {NEO4J_TASK_LOCK_TASK_ID}: task.id,
+    {NEO4J_TASK_LOCK_WORKER_ID}: $workerId 
 }})
 RETURN task"""
-    labels = [TASK_NODE, TaskState.RUNNING.value]
+    labels = [NEO4J_TASK_NODE, TaskState.RUNNING.value]
     res = await tx.run(query, workerId=worker_id, labels=labels, namespace=namespace)
     try:
         task = await res.single(strict=True)
@@ -175,14 +167,14 @@ async def _consume_worker_events_tx(
 ) -> Optional[WorkerEvent]:
     where_ns = ""
     if namespace is not None:
-        where_ns = f"AND task.{TASK_NAMESPACE} = $namespace"
-    get_event_query = f"""MATCH (task:{TASK_NODE})-[
-    :{TASK_CANCELLED_BY_EVENT_REL}
-]->(event:{TASK_CANCEL_EVENT_NODE})
-WHERE NOT event.{TASK_CANCEL_EVENT_EFFECTIVE}{where_ns}
-SET event.{TASK_CANCEL_EVENT_EFFECTIVE} = true
+        where_ns = f"AND task.{NEO4J_TASK_NAMESPACE} = $namespace"
+    get_event_query = f"""MATCH (task:{NEO4J_TASK_NODE})-[
+    :{NEO4J_TASK_CANCELLED_BY_EVENT_REL}
+]->(event:{NEO4J_TASK_CANCEL_EVENT_NODE})
+WHERE NOT event.{NEO4J_TASK_CANCEL_EVENT_EFFECTIVE}{where_ns}
+SET event.{NEO4J_TASK_CANCEL_EVENT_EFFECTIVE} = true
 RETURN task, event
-ORDER BY event.{TASK_CANCEL_EVENT_CANCELLED_AT} ASC
+ORDER BY event.{NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT} ASC
 LIMIT 1
 """
     res = await tx.run(get_event_query, namespace=namespace)
@@ -196,8 +188,10 @@ LIMIT 1
 async def _acknowledge_task_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str, worker_id: str
 ):
-    query = f"""MATCH (lock:{TASK_LOCK_NODE} {{ {TASK_LOCK_TASK_ID}: $taskId }})
-WHERE lock.{TASK_LOCK_WORKER_ID} = $workerId
+    query = f"""MATCH (lock:{NEO4J_TASK_LOCK_NODE} {{
+    {NEO4J_TASK_LOCK_TASK_ID}: $taskId 
+}})
+WHERE lock.{NEO4J_TASK_LOCK_WORKER_ID} = $workerId
 DELETE lock
 RETURN lock"""
     res = await tx.run(query, taskId=task_id, workerId=worker_id)
@@ -208,8 +202,10 @@ RETURN lock"""
 
 
 async def _unlock_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str, worker_id: str):
-    query = f"""MATCH (lock:{TASK_LOCK_NODE} {{ {TASK_LOCK_TASK_ID}: $taskId }})
-WHERE lock.{TASK_LOCK_WORKER_ID} = $workerId
+    query = f"""MATCH (lock:{NEO4J_TASK_LOCK_NODE} {{
+     {NEO4J_TASK_LOCK_TASK_ID}: $taskId 
+ }})
+WHERE lock.{NEO4J_TASK_LOCK_WORKER_ID} = $workerId
 DELETE lock
 RETURN lock
 """

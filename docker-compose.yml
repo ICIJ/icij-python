@@ -13,8 +13,24 @@ services:
       retries: 10
       start_period: 20s
     ports:
-      - 7475:7474
-      - 7688:7687
+      - "7475:7474"
+      - "7688:7687"
+
+  icij-python-test-postgres:
+      image: postgres
+      container_name: test-postgres
+      restart: always
+      environment:
+        POSTGRES_PASSWORD: changeme
+      healthcheck:
+        test: pg_isready
+        interval: 2s
+        timeout: 2s
+        retries: 10
+        start_period: 5s
+      ports:
+        - "5555:5432"
+
 
   icij-python-test-rabbit-mq:
     container_name: test-rabbit-mq
@@ -27,7 +43,7 @@ services:
       interval: 2s
       timeout: 2s
       retries: 10
-      start_period: 20s
+      start_period: 5s
     ports:
-      - 5673:5672
-      - 15673:15672
+      - "5673:5672"
+      - "15673:15672"

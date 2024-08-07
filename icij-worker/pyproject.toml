@@ -12,6 +12,9 @@ packages = [
 ]
 exclude = ["icij_worker/tests"]
 
+[tool.setuptools.packages.find]
+where = ["icij_worker/task_storage/postgres/db/*.sql", "icij_worker/task_storage/postgres/db/migrations/*.sql"]
+
 [tool.black]
 line-length = 88
 target-version = ["py39"]
@@ -28,7 +31,7 @@ log_cli_date_format = "%H:%M:%S"
 icij-worker = "icij_worker.__main__:cli_app"
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 icij_common = "^0.4.0"
 typer = { extras = ["all"], version = "^0.12.3" }
 
@@ -39,10 +42,13 @@ sqlitedict = { version = "^2.1.0", optional = true }
 ujson = { version = "^5.10.0", optional = true }
 # neo4j
 neo4j = { version = "^5.0.0", optional = true }
+# postgres
+psycopg = { extras = ["binary"], version = "^3.2.1", optional = true }
 
 [tool.poetry.extras]
 amqp = ["aio-pika"]
 fs = ["sqlitedict", "ujson"]
+postgres = ["psycopg", "ujson"]
 neo4j = ["neo4j"]
 
 [tool.poetry.group.fs.dependencies]

@@ -45,7 +45,7 @@ from icij_worker.objects import (
     TaskUpdate,
     WorkerEvent,
 )
-from icij_worker.utils import Registrable
+from icij_worker.utils import RegistrableFromConfig
 from icij_worker.worker.process import HandleSignalsMixin
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,10 @@ WE = TypeVar("WE", bound=WorkerEvent)
 
 
 class Worker(
-    EventPublisher, Registrable, HandleSignalsMixin, AbstractAsyncContextManager
+    RegistrableFromConfig,
+    EventPublisher,
+    HandleSignalsMixin,
+    AbstractAsyncContextManager,
 ):
     def __init__(
         self,
@@ -87,17 +90,6 @@ class Worker(
         self._cancel_lock = asyncio.Lock()
         self._current_lock = asyncio.Lock()
         self._successful_exit = False
-
-    def set_config(self, config: C):
-        self._config = config
-
-    def _to_config(self) -> C:
-        if self._config is None:
-            raise ValueError(
-                "worker was initialized using a from_config, "
-                "but the config was not attached using .set_config"
-            )
-        return self._config
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -549,7 +541,7 @@ async def task_wrapper(worker: Worker, task: Task) -> Task:
         raise TaskAlreadyCancelled(task_id=task.id)
     # Parse task to retrieve recoverable errors and max retries
     task_fn, recoverable_errors = worker.parse_task(task)
-    task_inputs = add_missing_args(task_fn, task.arguments, config=worker.config)
+    task_inputs = add_missing_args(task_fn, task.arguments)
     # Retry task until success, fatal error or max retry exceeded
     return await _retry_task(worker, task, task_fn, task_inputs, recoverable_errors)
 

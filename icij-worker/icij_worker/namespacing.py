@@ -23,6 +23,8 @@ try:
 except ImportError:
     pass
 
+POSTGRES_DEFAULT = "postgres"
+
 
 class Namespacing:
     """Override this class to implement your own mapping between task namespace and
@@ -34,9 +36,9 @@ class Namespacing:
         """
         return task_namespace.startswith(app_namespace)
 
-    @staticmethod
+    @classmethod
     @lru_cache
-    def amqp_task_routing(task_namespace: Optional[str]) -> Routing:
+    def amqp_task_routing(cls, task_namespace: Optional[str]) -> Routing:
         """Used to route task with the right AMQP routing key based on the namespace"""
         # Overriding this default might require overriding AMQPTaskManager/AMQPWorker
         # so that they communicate correctly
@@ -59,8 +61,8 @@ class Namespacing:
             dead_letter_routing=default_task_routing.dead_letter_routing,
         )
 
-    @staticmethod
-    def db_filter_factory(worker_namespace: str) -> Callable[[str], bool]:
+    @classmethod
+    def db_filter_factory(cls, worker_namespace: str) -> Callable[[str], bool]:
         """Used during DB task polling to poll only from the DBs supported by the
         worker namespace.
 
@@ -71,15 +73,20 @@ class Namespacing:
         # By default, workers are allowed to listen to all DBs
         return lambda db_name: True
 
-    @staticmethod
-    def neo4j_db(namespace: str) -> str:
+    @classmethod
+    def neo4j_db(cls, namespace: Optional[str]) -> str:
         # pylint: disable=unused-argument
         # By default, task from all namespaces are saved in the default neo4j db
         from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
 
         return NEO4J_COMMUNITY_DB
 
-    @staticmethod
-    def test_db(namespace: str) -> str:
+    @classmethod
+    def postgres_db(cls, namespace: Optional[str]) -> str:
+        # pylint: disable=unused-argument
+        return POSTGRES_DEFAULT
+
+    @classmethod
+    def test_db(cls, namespace: Optional[str]) -> str:
         # pylint: disable=unused-argument
         return TEST_DB
