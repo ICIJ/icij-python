@@ -8,7 +8,11 @@ from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 import neo4j
 from neo4j.exceptions import ResultNotSingleError
 
-from constants import (
+from icij_common.neo4j.db import db_specific_session
+from icij_common.neo4j.migrate import retrieve_dbs
+from icij_common.pydantic_utils import jsonable_encoder
+
+from icij_worker.constants import (
     NEO4J_TASK_ARGUMENTS,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
@@ -45,12 +49,8 @@ from constants import (
     NEO4J_TASK_RETRIES_LEFT,
     NEO4J_TASK_TYPE_DEPRECATED,
 )
-from icij_common.neo4j.db import db_specific_session
-from icij_common.neo4j.migrate import retrieve_dbs
-from icij_common.pydantic_utils import jsonable_encoder
-from icij_worker import ResultEvent, Task, TaskState
 from icij_worker.exceptions import MissingTaskResult, UnknownTask
-from icij_worker.objects import ErrorEvent, TaskUpdate
+from icij_worker.objects import ErrorEvent, ResultEvent, Task, TaskState, TaskUpdate
 from icij_worker.task_storage import TaskStorage
 
 

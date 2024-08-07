@@ -28,7 +28,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.errors import DuplicateDatabase
 from psycopg.rows import dict_row
 
-from constants import (
+from icij_worker.constants import (
     POSTGRES_TASKS_TABLE,
     POSTGRES_TASK_DBS_TABLE,
     POSTGRES_TASK_DB_IS_LOCKED,
