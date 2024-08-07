@@ -6,7 +6,7 @@ import neo4j
 import pytest
 from neo4j import AsyncDriver
 
-from constants import (
+from icij_worker.constants import (
     NEO4J_TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     NEO4J_TASK_TYPE_DEPRECATED,
 )
