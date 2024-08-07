@@ -4,7 +4,9 @@ import logging
 from abc import ABC, abstractmethod
 from asyncio import Future
 from functools import cached_property
-from typing import List, final
+from typing import ClassVar, List, final
+
+from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
@@ -12,12 +14,20 @@ from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredT
 from icij_worker.namespacing import Namespacing
 from icij_worker.objects import CancelledEvent, ErrorEvent, ManagerEvent, ProgressEvent
 from icij_worker.task_storage import TaskStorage
+from icij_worker.utils import RegistrableConfig
 from icij_worker.utils.asyncio_ import stop_other_tasks_when_exc
+from icij_worker.utils.registrable import RegistrableFromConfig
 
 logger = logging.getLogger(__name__)
 
 
-class TaskManager(TaskStorage, ABC):
+class TaskManagerConfig(RegistrableConfig):
+    registry_key: ClassVar[str] = Field(const=True, default="backend")
+
+    app: str
+
+
+class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     def __init__(self, app: AsyncApp):
         self._app = app
         self._loop = asyncio.get_event_loop()

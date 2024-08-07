@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from distutils.version import StrictVersion
+from distutils.version import StrictVersion  # pylint: disable=deprecated-module
 from typing import AsyncGenerator, List, Optional, Tuple
 
 import neo4j
 
 from icij_common.neo4j.constants import (
-    MIGRATION_NODE,
-    MIGRATION_DB,
-    MIGRATION_VERSION,
     DATABASE_NAME,
     DATABASE_NODE,
     DATABASE_REGISTRY_DB,
+    MIGRATION_DB,
+    MIGRATION_NODE,
+    MIGRATION_VERSION,
 )
 from icij_common.pydantic_utils import ICIJModel
 

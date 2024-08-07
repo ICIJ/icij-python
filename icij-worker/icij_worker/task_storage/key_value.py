@@ -14,11 +14,6 @@ class KeyValueStorage(TaskStorage, ABC):
     _errors_db_name = "errors"
     _namespacing: Namespacing
 
-    def __init__(self, namespacing: Optional[Namespacing] = None):
-        if namespacing is None:
-            namespacing = Namespacing()
-        self._namespacing = namespacing
-
     async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
         """When possible override this to be transactional"""
         key = self._key(task.id, obj_cls=ResultEvent)

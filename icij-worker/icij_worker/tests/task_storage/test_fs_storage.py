@@ -171,7 +171,7 @@ async def test_get_task(
 
 
 @pytest.mark.parametrize(
-    "namespace,task_name,state,expected_task",
+    "namespace,task_name,state,expected_tasks",
     [
         (None, None, None, [task_0(), task_1()]),
         ("some-namespace", None, None, [task_0()]),
@@ -185,7 +185,7 @@ async def test_get_tasks(
     namespace: Optional[str],
     task_name: Optional[str],
     state: Optional[Union[List[TaskState], TaskState]],
-    expected_task: List[Task],
+    expected_tasks: List[Task],
 ):
     # Given
     storage = fs_storage
@@ -194,7 +194,7 @@ async def test_get_tasks(
         namespace=namespace, task_name=task_name, state=state
     )
     # Then
-    assert tasks == expected_task
+    assert tasks == expected_tasks
 
 
 async def test_get_result(fs_storage: TestableFSKeyValueStorage):

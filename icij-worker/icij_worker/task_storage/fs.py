@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import functools
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -6,13 +8,21 @@ from typing import Dict, List, Optional, Type, Union
 import ujson
 from sqlitedict import SqliteDict
 
+from icij_common.pydantic_utils import ICIJModel
 from icij_worker import Namespacing, Task, TaskState
 from icij_worker.exceptions import UnknownTask
+from icij_worker.task_storage import TaskStorageConfig
 from icij_worker.task_storage.key_value import KeyValueStorage
 
 
-class FSKeyValueStorage(KeyValueStorage):
+class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
+    db_path: Path
 
+    def to_storage(self, namespacing: Optional[Namespacing]) -> FSKeyValueStorage:
+        return FSKeyValueStorage(self.db_path, namespacing)
+
+
+class FSKeyValueStorage(KeyValueStorage):
     # Save each type in a different DB to speedup lookup
     _tasks_db_name = "tasks"
     _results_db_name = "results"
@@ -20,10 +30,14 @@ class FSKeyValueStorage(KeyValueStorage):
     # pylint: disable=c-extension-no-member
     _encode = functools.partial(ujson.encode, default=str)
     _decode = functools.partial(ujson.decode)
+
     # pylint: enable=c-extension-no-member
 
     def __init__(self, db_path: Path, namespacing: Optional[Namespacing] = None):
-        super().__init__(namespacing)
+        super().__init__()
+        if namespacing is None:
+            namespacing = Namespacing()
+        self._namespacing = namespacing
         self._db_path = str(db_path)
         self._exit_stack = AsyncExitStack()
         self._dbs = dict()

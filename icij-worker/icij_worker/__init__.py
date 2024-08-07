@@ -1,7 +1,15 @@
 from .app import AsyncApp
-from .objects import Task, TaskError, ManagerEvent, ResultEvent, TaskState, Message
+from .objects import (
+    Task,
+    TaskError,
+    ManagerEvent,
+    ResultEvent,
+    TaskState,
+    Message,
+    AsyncBackend,
+)
 from .task_manager import TaskManager
-from .worker import Worker, WorkerConfig, WorkerType
+from .worker import Worker, WorkerConfig
 from .namespacing import Namespacing
 
 try:
@@ -15,11 +23,21 @@ try:
     from icij_worker.worker.neo4j_ import Neo4jWorker, Neo4jWorkerConfig
     from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
     from icij_worker.task_manager.neo4j_ import Neo4JTaskManager
-except ImportError:
+except ImportError as e:
     pass
 
 try:
     from icij_worker.task_storage.fs import FSKeyValueStorage
+except ImportError:
+    pass
+
+try:
+    from icij_worker.task_storage.postgres import (
+        PostgresStorage,
+        PostgresStorageConfig,
+        PostgresConnectionInfo,
+        init_database as init_postgres_database,
+    )
 except ImportError:
     pass
 

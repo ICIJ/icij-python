@@ -1,36 +1,57 @@
 import json
 from datetime import datetime, timezone
-from typing import Optional, cast
+from typing import ClassVar, Optional, cast
 
 import neo4j
+from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ResultNotSingleError
+from pydantic import Field
 
-from icij_common.neo4j.constants import (
-    TASK_CANCELLED_BY_EVENT_REL,
-    TASK_CANCEL_EVENT_CANCELLED_AT,
-    TASK_CANCEL_EVENT_EFFECTIVE,
-    TASK_CANCEL_EVENT_NODE,
-    TASK_CANCEL_EVENT_REQUEUE,
+from constants import (
+    NEO4J_TASK_CANCELLED_BY_EVENT_REL,
+    NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
+    NEO4J_TASK_CANCEL_EVENT_EFFECTIVE,
+    NEO4J_TASK_CANCEL_EVENT_NODE,
+    NEO4J_TASK_CANCEL_EVENT_REQUEUE,
+    NEO4J_TASK_ID,
+    NEO4J_TASK_LOCK_NODE,
+    NEO4J_TASK_LOCK_TASK_ID,
+    NEO4J_TASK_LOCK_WORKER_ID,
+    NEO4J_TASK_MANAGER_EVENT_EVENT,
+    NEO4J_TASK_MANAGER_EVENT_NODE,
+    NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT,
+    NEO4J_TASK_NODE,
+    NEO4J_TASK_PROGRESS,
+    NEO4J_TASK_RETRIES_LEFT,
     TASK_ID,
-    TASK_LOCK_NODE,
-    TASK_LOCK_TASK_ID,
-    TASK_LOCK_WORKER_ID,
-    TASK_MANAGER_EVENT_EVENT,
-    TASK_MANAGER_EVENT_NODE,
-    TASK_MANAGER_EVENT_NODE_CREATED_AT,
-    TASK_NODE,
-    TASK_PROGRESS,
-    TASK_RETRIES_LEFT,
 )
 from icij_worker import AsyncApp, Task, TaskState
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
-from icij_worker.objects import ManagerEvent, Message
-from icij_worker.task_manager import TaskManager
-from icij_worker.task_storage.neo4j_ import Neo4jStorage
+from icij_worker.objects import AsyncBackend, ManagerEvent, Message
+from icij_worker.task_manager import TaskManager, TaskManagerConfig
+from icij_worker.utils import FromConfig
 from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 
-class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin, Neo4jStorage):
+@TaskManagerConfig.register()
+class Neo4JTaskManagerConfig(TaskManagerConfig):
+    backend: ClassVar[AsyncBackend] = Field(const=True, default=AsyncBackend.neo4j)
+    event_refresh_interval_s: float = 0.1
+    neo4j_host: str = "localhost"
+    neo4j_port: int = 7687
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "theneo4jpassword"
+    neo4j_scheme: str = "neo4j"
+
+    def to_driver(self) -> AsyncDriver:
+        uri = f"{self.neo4j_scheme}://{self.neo4j_host}:{self.neo4j_port}"
+        auth = neo4j.basic_auth(self.neo4j_user, self.neo4j_password)
+        driver = AsyncGraphDatabase.driver(uri, auth=auth)
+        return driver
+
+
+@TaskManager.register(AsyncBackend.neo4j)
+class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
 
     def __init__(
         self,
@@ -39,8 +60,15 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin, Neo4jStorage):
         event_refresh_interval_s: float = 0.1,
     ) -> None:
         super().__init__(app)
-        super(Neo4jConsumerMixin, self).__init__(driver)
+        super(TaskManager, self).__init__(driver)
         self._event_refresh_interval_s = event_refresh_interval_s
+
+    @classmethod
+    def _from_config(cls, config: Neo4JTaskManagerConfig, **extras) -> FromConfig:
+        app = AsyncApp.load(config.app)
+        driver = config.to_driver()
+        tm = cls(app, driver, event_refresh_interval_s=config.event_refresh_interval_s)
+        return tm
 
     @property
     def driver(self) -> neo4j.AsyncDriver:
@@ -83,7 +111,7 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin, Neo4jStorage):
 async def _enqueue_task_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str, max_queue_size: int
 ) -> Task:
-    count_query = f"""MATCH (task:{TASK_NODE}:`{TaskState.QUEUED.value}`)
+    count_query = f"""MATCH (task:{NEO4J_TASK_NODE}:`{TaskState.QUEUED.value}`)
 RETURN count(task.id) AS nQueued
 """
     res = await tx.run(count_query)
@@ -92,12 +120,12 @@ RETURN count(task.id) AS nQueued
     if max_queue_size is not None and n_queued >= max_queue_size:
         raise TaskQueueIsFull(max_queue_size)
 
-    query = f"""MATCH (t:{TASK_NODE} {{ {TASK_ID}: $taskId }})
+    query = f"""MATCH (t:{NEO4J_TASK_NODE} {{ {NEO4J_TASK_ID}: $taskId }})
 WITH t
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 RETURN task
 """
-    labels = [TASK_NODE, TaskState.QUEUED.value]
+    labels = [NEO4J_TASK_NODE, TaskState.QUEUED.value]
     res = await tx.run(query, taskId=task_id, labels=labels)
     recs = [rec async for rec in res]
     if not recs:
@@ -108,13 +136,13 @@ RETURN task
 
 
 async def _cancel_task_tx(tx: neo4j.AsyncTransaction, task_id: str, requeue: bool):
-    query = f"""MATCH (task:{TASK_NODE} {{ {TASK_ID}: $taskId }})
+    query = f"""MATCH (task:{NEO4J_TASK_NODE} {{ {NEO4J_TASK_ID}: $taskId }})
 CREATE (task)-[
-    :{TASK_CANCELLED_BY_EVENT_REL}
-]->(:{TASK_CANCEL_EVENT_NODE} {{ 
-        {TASK_CANCEL_EVENT_CANCELLED_AT}: $cancelledAt, 
-        {TASK_CANCEL_EVENT_EFFECTIVE}: false,
-        {TASK_CANCEL_EVENT_REQUEUE}: $requeue
+    :{NEO4J_TASK_CANCELLED_BY_EVENT_REL}
+]->(:{NEO4J_TASK_CANCEL_EVENT_NODE} {{ 
+        {NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT}: $cancelledAt, 
+        {NEO4J_TASK_CANCEL_EVENT_EFFECTIVE}: false,
+        {NEO4J_TASK_CANCEL_EVENT_REQUEUE}: $requeue
     }})
 """
     await tx.run(
@@ -123,9 +151,9 @@ CREATE (task)-[
 
 
 async def _consume_manager_events_tx(tx: neo4j.AsyncTransaction) -> Optional[str]:
-    get_event_query = f"""MATCH (event:{TASK_MANAGER_EVENT_NODE})
-RETURN event.{TASK_MANAGER_EVENT_EVENT} as eventAsJson
-ORDER BY event.{TASK_MANAGER_EVENT_NODE_CREATED_AT} ASC
+    get_event_query = f"""MATCH (event:{NEO4J_TASK_MANAGER_EVENT_NODE})
+RETURN event.{NEO4J_TASK_MANAGER_EVENT_EVENT} as eventAsJson
+ORDER BY event.{NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT} ASC
 LIMIT 1
 """
     res = await tx.run(get_event_query)
@@ -139,7 +167,7 @@ LIMIT 1
 async def _requeue_task_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str, retries_left: int, max_queue_size: int
 ):
-    count_query = f"""MATCH (task:{TASK_NODE}:`{TaskState.QUEUED.value}`)
+    count_query = f"""MATCH (task:{NEO4J_TASK_NODE}:`{TaskState.QUEUED.value}`)
 RETURN count(task.id) AS nQueued
 """
     res = await tx.run(count_query)
@@ -147,13 +175,13 @@ RETURN count(task.id) AS nQueued
     n_queued = count["nQueued"]
     if max_queue_size is not None and n_queued >= max_queue_size:
         raise TaskQueueIsFull(max_queue_size)
-    query = f"""MATCH (t:{TASK_NODE} {{ {TASK_ID}: $taskId}})
-SET t.{TASK_RETRIES_LEFT} = $retriesLeft, t.{TASK_PROGRESS} = 0.0
+    query = f"""MATCH (t:{NEO4J_TASK_NODE} {{ {TASK_ID}: $taskId}})
+SET t.{NEO4J_TASK_RETRIES_LEFT} = $retriesLeft, t.{NEO4J_TASK_PROGRESS} = 0.0
 WITH t
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 RETURN task
 """
-    labels = [TASK_NODE, TaskState.QUEUED.value]
+    labels = [NEO4J_TASK_NODE, TaskState.QUEUED.value]
     res = await tx.run(query, taskId=task_id, retriesLeft=retries_left, labels=labels)
     try:
         await res.single(strict=True)
@@ -162,10 +190,12 @@ RETURN task
 
 
 async def _dlq_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str, worker_id: str):
-    query = f"""MATCH (lock:{TASK_LOCK_NODE} {{ {TASK_LOCK_TASK_ID}: $taskId }})
-WHERE lock.{TASK_LOCK_WORKER_ID} = $workerId
+    query = f"""MATCH (lock:{NEO4J_TASK_LOCK_NODE} {{
+     {NEO4J_TASK_LOCK_TASK_ID}: $taskId 
+    }})
+WHERE lock.{NEO4J_TASK_LOCK_WORKER_ID} = $workerId
 WITH lock
-MATCH (t:{TASK_NODE} {{ {TASK_ID}: lock.{TASK_LOCK_TASK_ID} }})
+MATCH (t:{NEO4J_TASK_NODE} {{ {TASK_ID}: lock.{NEO4J_TASK_LOCK_TASK_ID} }})
 CALL apoc.create.setLabels(t, $labels) YIELD node AS task
 DELETE lock
 RETURN task, lock

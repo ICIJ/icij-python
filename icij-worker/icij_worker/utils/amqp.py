@@ -1,6 +1,6 @@
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from typing import Optional, Tuple, cast
 
 from aio_pika import (
@@ -17,6 +17,7 @@ from aio_pika.abc import (
 from aiormq.abc import ConfirmationFrameType
 from pamqp.commands import Basic
 
+from icij_common.pydantic_utils import ICIJModel
 from icij_worker import Message
 from icij_worker.constants import (
     AMQP_MANAGER_EVENTS_DL_QUEUE,
@@ -36,6 +37,34 @@ from icij_worker.constants import (
     AMQP_WORKER_EVENTS_X,
 )
 from icij_worker.namespacing import Exchange, Namespacing, Routing
+
+
+class AMQPConfigMixin(ICIJModel):
+    connection_timeout_s: float = 5.0
+    reconnection_wait_s: float = 5.0
+    rabbitmq_host: str = "127.0.0.1"
+    rabbitmq_password: Optional[str] = None
+    rabbitmq_port: Optional[int] = 5672
+    rabbitmq_user: Optional[str] = None
+    rabbitmq_vhost: Optional[str] = "%2F"
+
+    @cached_property
+    def broker_url(self) -> str:
+        amqp_userinfo = None
+        if self.rabbitmq_user is not None:
+            amqp_userinfo = self.rabbitmq_user
+            if self.rabbitmq_password is not None:
+                amqp_userinfo += f":{self.rabbitmq_password}"
+            if amqp_userinfo:
+                amqp_userinfo += "@"
+        amqp_authority = (
+            f"{amqp_userinfo or ''}{self.rabbitmq_host}"
+            f"{f':{self.rabbitmq_port}' or ''}"
+        )
+        amqp_uri = f"amqp://{amqp_authority}"
+        if self.rabbitmq_vhost is not None:
+            amqp_uri += f"/{self.rabbitmq_vhost}"
+        return amqp_uri
 
 
 class AMQPMixin:

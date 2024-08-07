@@ -2,10 +2,10 @@ from datetime import datetime
 
 import neo4j
 
-from icij_common.neo4j.constants import (
-    TASK_MANAGER_EVENT_EVENT,
-    TASK_MANAGER_EVENT_NODE,
-    TASK_MANAGER_EVENT_NODE_CREATED_AT,
+from constants import (
+    NEO4J_TASK_MANAGER_EVENT_EVENT,
+    NEO4J_TASK_MANAGER_EVENT_NODE,
+    NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT,
 )
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.objects import ManagerEvent
@@ -34,9 +34,9 @@ async def _publish_manager_event_tx(
     tx: neo4j.AsyncTransaction, event_as_json: str, created_at: datetime
 ):
     create_manager_event = f"""
-CREATE (event:{TASK_MANAGER_EVENT_NODE} {{
-    {TASK_MANAGER_EVENT_EVENT}: $eventAsJson,
-    {TASK_MANAGER_EVENT_NODE_CREATED_AT}: $createdAt 
+CREATE (event:{NEO4J_TASK_MANAGER_EVENT_NODE} {{
+    {NEO4J_TASK_MANAGER_EVENT_EVENT}: $eventAsJson,
+    {NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT}: $createdAt 
 }})
 RETURN event"""
     await tx.run(create_manager_event, eventAsJson=event_as_json, createdAt=created_at)

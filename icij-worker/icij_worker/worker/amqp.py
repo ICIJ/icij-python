@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import AbstractAsyncContextManager
 from copy import deepcopy
 from functools import lru_cache
-from typing import ClassVar, Dict, Optional, Type, cast
+from typing import ClassVar, Dict, Optional, cast
 
 from aio_pika import RobustQueue
 from aio_pika.abc import (
@@ -16,58 +16,31 @@ from pydantic import Field
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import (
     AsyncApp,
+    AsyncBackend,
     ManagerEvent,
     ResultEvent,
     Task,
     TaskError,
     Worker,
     WorkerConfig,
-    WorkerType,
 )
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
 from icij_worker.namespacing import Routing
 from icij_worker.objects import Message, TaskState, WorkerEvent
-from icij_worker.utils.amqp import AMQPMixin
-from icij_worker.utils.from_config import T
+from icij_worker.utils.amqp import AMQPConfigMixin, AMQPMixin
 
 # TODO: remove this when project information is inside the tasks
 _PROJECT_PLACEHOLDER = "placeholder_project_amqp"
 
 
 @WorkerConfig.register()
-class AMQPWorkerConfig(WorkerConfig):
-    type: ClassVar[str] = Field(const=True, default=WorkerType.amqp.value)
-
-    amqp_connection_timeout_s: float = 5.0
-    amqp_reconnection_wait_s: float = 5.0
-    rabbitmq_host: str = "127.0.0.1"
-    rabbitmq_password: Optional[str] = None
-    rabbitmq_port: Optional[int] = 5672
-    rabbitmq_user: Optional[str] = None
-    rabbitmq_vhost: Optional[str] = "%2F"
-
-    @property
-    def broker_url(self) -> str:
-        amqp_userinfo = None
-        if self.rabbitmq_user is not None:
-            amqp_userinfo = self.rabbitmq_user
-            if self.rabbitmq_password is not None:
-                amqp_userinfo += f":{self.rabbitmq_password}"
-            if amqp_userinfo:
-                amqp_userinfo += "@"
-        amqp_authority = (
-            f"{amqp_userinfo or ''}{self.rabbitmq_host}"
-            f"{f':{self.rabbitmq_port}' or ''}"
-        )
-        amqp_uri = f"amqp://{amqp_authority}"
-        if self.rabbitmq_vhost is not None:
-            amqp_uri += f"/{self.rabbitmq_vhost}"
-        return amqp_uri
+class AMQPWorkerConfig(WorkerConfig, AMQPConfigMixin):
+    type: ClassVar[str] = Field(const=True, default=AsyncBackend.amqp.value)
 
 
-@Worker.register(WorkerType.amqp)
+@Worker.register(AsyncBackend.amqp)
 class AMQPWorker(Worker, AMQPMixin):
 
     def __init__(
@@ -168,7 +141,9 @@ class AMQPWorker(Worker, AMQPMixin):
 
     async def _consume(self) -> Task:
         while "I'm waiting to get a known task":
-            message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
+            message: AbstractIncomingMessage = (
+                await self._task_messages_it.__anext__()  # pylint: disable=unnecessary-dunder-call
+            )
             task = Task.parse_raw(message.body)
             self._delivered[task.id] = message
             # This behavior is not shared with other implems, it's AMQP specific and
@@ -179,7 +154,9 @@ class AMQPWorker(Worker, AMQPMixin):
             return task
 
     async def _consume_worker_events(self) -> WorkerEvent:
-        message: AbstractIncomingMessage = await self._worker_events_it.__anext__()
+        message: AbstractIncomingMessage = (
+            await self._worker_events_it.__anext__()  # pylint: disable=unnecessary-dunder-call
+        )
         await message.ack()
         event = cast(WorkerEvent, Message.parse_raw(message.body))
         return event
@@ -238,15 +215,14 @@ class AMQPWorker(Worker, AMQPMixin):
         )
 
     @classmethod
-    def _from_config(cls: Type[T], config: AMQPWorkerConfig, **extras) -> AMQPWorker:
+    def _from_config(cls, config: AMQPWorkerConfig, **extras) -> AMQPWorker:
         worker = cls(
             broker_url=config.broker_url,
-            connection_timeout_s=config.amqp_connection_timeout_s,
-            reconnection_wait_s=config.amqp_reconnection_wait_s,
+            connection_timeout_s=config.connection_timeout_s,
+            reconnection_wait_s=config.reconnection_wait_s,
             inactive_after_s=config.inactive_after_s,
             **extras,
         )
-        worker.set_config(config)
         return worker
 
     async def _ensure_can_consume(self, task: Task) -> bool:
