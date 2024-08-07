@@ -7,24 +7,29 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum, unique
 from functools import lru_cache
-from typing import Callable, ClassVar, Union, cast
+from typing import Callable, ClassVar, Sequence, Union, cast
 
+from psycopg.cursor import BaseCursor
+from psycopg.rows import RowMaker
 from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
-from icij_common import neo4j
-from icij_common.neo4j.constants import (
-    TASK_CANCEL_EVENT_CANCELLED_AT,
-    TASK_CANCEL_EVENT_REQUEUE,
-    TASK_COMPLETED_AT,
-    TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT,
-    TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT,
-    TASK_ERROR_STACKTRACE,
-    TASK_ID,
-    TASK_NODE,
-    TASK_RESULT_RESULT,
+from constants import (
+    NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
+    NEO4J_TASK_CANCEL_EVENT_REQUEUE,
+    NEO4J_TASK_COMPLETED_AT,
+    NEO4J_TASK_ERROR_MESSAGE,
+    NEO4J_TASK_ERROR_NAME,
+    NEO4J_TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT,
+    NEO4J_TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT,
+    NEO4J_TASK_ERROR_STACKTRACE,
+    NEO4J_TASK_ID,
+    NEO4J_TASK_NODE,
+    NEO4J_TASK_RESULT_RESULT,
 )
+from icij_common import neo4j
+
 from icij_common.pydantic_utils import (
     ICIJModel,
     ISODatetime,
@@ -39,6 +44,16 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_HANDLER_ARG = "progress_handler"
 _TASK_SCHEMA = None
+
+TASK_ERROR_CAUSE = "cause"
+
+
+@unique
+class AsyncBackend(str, Enum):
+    # pylint: disable=invalid-name@
+    mock = "mock"
+    neo4j = "neo4j"
+    amqp = "amqp"
 
 
 class FromTask(ABC):
@@ -159,7 +174,10 @@ class Registrable(ICIJModel, RegistrableMixin, ABC):
             exclude_defaults=exclude_defaults,
             exclude_none=exclude_none,
         )
-        as_dict[self.__class__.registry_key.default] = self.__class__.registered_name
+        if not exclude or self.__class__.registry_key.default not in exclude:
+            as_dict[self.__class__.registry_key.default] = (
+                self.__class__.registered_name
+            )
         return as_dict
 
     def json(
@@ -288,7 +306,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         node = dict(node)
         if len(labels) != 2:
             raise ValueError(f"Expected task to have exactly 2 labels found {labels}")
-        state = [label for label in labels if label != TASK_NODE]
+        state = [label for label in labels if label != NEO4J_TASK_NODE]
         if len(state) != 1:
             raise ValueError(f"Invalid task labels {labels}")
         state = state[0]
@@ -300,6 +318,19 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             node.pop("namespace")
         node["state"] = state
         return cls(**node)
+
+    @classmethod
+    def postgres_row_factory(cls, cursor: BaseCursor[Any, Any]) -> RowMaker[Task]:
+
+        def as_row(values: Sequence[Any]) -> Task:
+            as_dict = {
+                k.name: v
+                for k, v in zip(cursor.description, values)
+                if k.name != "namespace"
+            }
+            return cls(**as_dict)
+
+        return as_row
 
     @final
     def resolve_event(self, event: TaskEvent) -> Optional[TaskUpdate]:
@@ -461,9 +492,9 @@ class CancelEvent(WorkerEvent):
     ) -> CancelEvent:
         task = record.get(task_key)
         event = record.get(event_key)
-        task_id = task[TASK_ID]
-        requeue = event[TASK_CANCEL_EVENT_REQUEUE]
-        created_at = event[TASK_CANCEL_EVENT_CANCELLED_AT]
+        task_id = task[NEO4J_TASK_ID]
+        requeue = event[NEO4J_TASK_CANCEL_EVENT_REQUEUE]
+        created_at = event[NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT]
         return cls(task_id=task_id, requeue=requeue, created_at=created_at)
 
     @classmethod
@@ -488,8 +519,17 @@ class CancelledEvent(ManagerEvent):
 
 @Message.register("ResultEvent")
 class ResultEvent(ManagerEvent):
-    task_id: str
     result: object
+
+    @classmethod
+    def from_task(cls, task: Task, result: object, **kwargs) -> ResultEvent:
+        # pylint: disable=arguments-differ
+        return cls(
+            task_id=task.id,
+            result=result,
+            created_at=datetime.now(timezone.utc),
+            **kwargs,
+        )
 
     @classmethod
     def from_neo4j(
@@ -501,21 +541,27 @@ class ResultEvent(ManagerEvent):
     ) -> ResultEvent:
         result = record.get(result_key)
         if result is not None:
-            result = json.loads(result[TASK_RESULT_RESULT])
-        task_id = record[task_key][TASK_ID]
-        completed_at = record[task_key][TASK_COMPLETED_AT]
+            result = json.loads(result[NEO4J_TASK_RESULT_RESULT])
+        task_id = record[task_key][NEO4J_TASK_ID]
+        completed_at = record[task_key][NEO4J_TASK_COMPLETED_AT]
         as_dict = {"result": result, "task_id": task_id, "created_at": completed_at}
         return ResultEvent(**as_dict)
 
     @classmethod
-    def from_task(cls, task: Task, result: object, **kwargs) -> ResultEvent:
-        # pylint: disable=arguments-differ
-        return cls(
-            task_id=task.id,
-            result=result,
-            created_at=datetime.now(timezone.utc),
-            **kwargs,
-        )
+    def postgres_row_factory(
+        cls, cursor: BaseCursor[Any, Any]
+    ) -> RowMaker[ResultEvent]:
+        def as_row(values: Sequence[Any]) -> ResultEvent:
+            # pylint: disable=c-extension-no-member
+            import ujson
+
+            as_dict = {k.name: v for k, v in zip(cursor.description, values)}
+            as_dict[NEO4J_TASK_RESULT_RESULT] = ujson.loads(
+                as_dict[NEO4J_TASK_RESULT_RESULT]
+            )
+            return cls(**as_dict)
+
+        return as_row
 
 
 @Message.register("ErrorEvent")
@@ -549,23 +595,45 @@ class ErrorEvent(ManagerEvent):
         rel_key: str = "rel",
     ) -> ErrorEvent:
         error = dict(record.value(error_key))
-        if TASK_ERROR_STACKTRACE in error:
+        if NEO4J_TASK_ERROR_STACKTRACE in error:
             stacktrace = [
                 StacktraceItem(**json.loads(item))
-                for item in error[TASK_ERROR_STACKTRACE]
+                for item in error[NEO4J_TASK_ERROR_STACKTRACE]
             ]
-            error[TASK_ERROR_STACKTRACE] = stacktrace
+            error[NEO4J_TASK_ERROR_STACKTRACE] = stacktrace
         error = TaskError(**error)
         rel = dict(record.value(rel_key))
-        task_id = record[task_key][TASK_ID]
-        retries_left = rel[TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT]
-        created_at = rel[TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT]
+        task_id = record[task_key][NEO4J_TASK_ID]
+        retries_left = rel[NEO4J_TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT]
+        created_at = rel[NEO4J_TASK_ERROR_OCCURRED_TYPE_OCCURRED_AT]
         return ErrorEvent(
             task_id=task_id,
             error=error,
             created_at=created_at,
             retries_left=retries_left,
         )
+
+    @classmethod
+    def postgres_row_factory(cls, cursor: BaseCursor[Any, Any]) -> RowMaker[ErrorEvent]:
+        def as_row(values: Sequence[Any]) -> cls:
+            # pylint: disable=c-extension-no-member
+            import ujson
+
+            as_dict = {k.name: v for k, v in zip(cursor.description, values)}
+            stacktrace = ujson.loads(as_dict.pop(NEO4J_TASK_ERROR_STACKTRACE))
+            message = as_dict.pop(NEO4J_TASK_ERROR_MESSAGE)
+            name = as_dict.pop(NEO4J_TASK_ERROR_NAME)
+            cause = as_dict.pop(TASK_ERROR_CAUSE)
+            task_error = {
+                "stacktrace": stacktrace,
+                "name": name,
+                "message": message,
+                "cause": cause,
+            }
+            as_dict["error"] = task_error
+            return cls(**as_dict)
+
+        return as_row
 
 
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):

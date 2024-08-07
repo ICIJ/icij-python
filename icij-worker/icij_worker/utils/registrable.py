@@ -3,10 +3,13 @@ Simplified implementation of AllenNLP Registrable:
 https://github.com/allenai/allennlp
 """
 
+from __future__ import annotations
+
 import logging
 import os
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections import defaultdict
+from pathlib import Path
 from typing import (
     Callable,
     ClassVar,
@@ -14,25 +17,27 @@ from typing import (
     Dict,
     List,
     Optional,
+    Protocol,
+    Tuple,
     Type,
     TypeVar,
+    Union,
     cast,
 )
 
-from pydantic import Field
+from pydantic import BaseModel, Field
+from pydantic.parse import load_file
 
 from icij_common.pydantic_utils import ICIJSettings
-from icij_worker.utils import FromConfig
-from icij_worker.utils.from_config import T
 from icij_worker.utils.imports import VariableNotFound, import_variable
 
 logger = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
-_C = TypeVar("_C", bound="RegistrableConfig")
 _RegistrableT = TypeVar("_RegistrableT", bound="Registrable")
 _SubclassRegistry = Dict[str, _RegistrableT]
 _SubclssNames = Dict[_SubclassRegistry, str]
+
+T = TypeVar("T", bound="FromConfig")
 
 
 class RegistrableMixin(ABC):
@@ -44,12 +49,14 @@ class RegistrableMixin(ABC):
     @classmethod
     def register(
         cls, name: Optional[str] = None, exist_ok: bool = False
-    ) -> Callable[[Type[_T]], Type[_T]]:
+    ) -> Callable[[Type[RegistrableMixin]], Type[RegistrableMixin]]:
         # pylint: disable=protected-access
         registry = RegistrableMixin._registry[cls]
         registered_names = RegistrableMixin._registered_names[cls]
 
-        def add_subclass_to_registry(subclass: Type[_T]) -> Type[_T]:
+        def add_subclass_to_registry(
+            subclass: Type[RegistrableMixin],
+        ) -> Type[RegistrableMixin]:
             registered_name = name
             if registered_name is None:
                 registered_key = subclass.registry_key.default
@@ -143,11 +150,36 @@ If your registered class comes from custom code, you'll need to import the\
         raise ValueError("registration inconsistency")
 
 
-class RegistrableConfig(ICIJSettings, RegistrableMixin):
+class RegistrableConfig(BaseModel, RegistrableMixin):
     registry_key: ClassVar[str] = Field(const=True, default="name")
 
     @classmethod
-    def from_env(cls: Type[_C]):
+    def parse_file(
+        cls,
+        path: Union[str, Path],
+        *,
+        content_type: str = None,
+        encoding: str = "utf8",
+        proto: Protocol = None,
+        allow_pickle: bool = False,
+    ) -> RegistrableConfig:
+        obj = load_file(
+            path,
+            proto=proto,
+            content_type=content_type,
+            encoding=encoding,
+            allow_pickle=allow_pickle,
+            json_loads=cls.__config__.json_loads,
+        )
+        worker_type = obj.pop(cls.registry_key.default)
+        subcls = cls.resolve_class_name(worker_type)
+        return subcls(**obj)
+
+
+class RegistrableSettings(RegistrableConfig, ICIJSettings):
+
+    @classmethod
+    def from_env(cls):
         key = cls.registry_key.default
         if cls.__config__.env_prefix is not None:
             key = cls.__config__.env_prefix + key
@@ -156,22 +188,32 @@ class RegistrableConfig(ICIJSettings, RegistrableMixin):
         return subcls()
 
 
-class Registrable(RegistrableMixin, FromConfig, ABC):
+class FromConfig(ABC):
     @classmethod
-    def from_config(cls: Type[T], config: _C, **extras) -> T:
+    @abstractmethod
+    def _from_config(cls, config: RegistrableConfig, **extras) -> FromConfig: ...
+
+
+class RegistrableFromConfig(RegistrableMixin, FromConfig, ABC):
+    @classmethod
+    def from_config(cls, config: RegistrableConfig, **extras) -> FromConfig:
         name = getattr(config, config.registry_key.default).default
         subcls = cls.resolve_class_name(name)
         return subcls._from_config(config, **extras)  # pylint: disable=protected-access
 
 
-def find_in_env(variable: str, case_sensitive: bool) -> str:
+def find_variable_loc_in_env(variable: str, case_sensitive: bool) -> Tuple[str, str]:
     if case_sensitive:
         try:
-            return os.environ[variable]
+            return variable, os.environ[variable]
         except KeyError as e:
             raise ValueError(f"couldn't find {variable} in env variables") from e
     lowercase = variable.lower()
     for k, v in os.environ.items():
         if k.lower() == lowercase:
-            return v
+            return k, v
     raise ValueError(f"couldn't find {variable.upper()} in env variables")
+
+
+def find_in_env(variable: str, case_sensitive: bool) -> str:
+    return find_variable_loc_in_env(variable, case_sensitive)[1]

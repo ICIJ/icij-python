@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, Dict, Iterator, List, Optional
 
 import aio_pika
 import aiohttp
@@ -28,15 +28,15 @@ from icij_common.neo4j.db import (
     add_multidatabase_support_migration_tx,
     db_specific_session,
 )
-from icij_common.neo4j.migrate import (
-    Migration,
-    init_database,
-)
+from icij_common.neo4j.migrate import Migration, init_database
 
 # noinspection PyUnresolvedReferences
 from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
+
+# noinspection PyUnresolvedReferences
+from icij_common.test_utils import reset_env  # pylint: disable=unused-import
 from icij_worker import AsyncApp, Neo4JTaskManager, Task
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
@@ -79,6 +79,15 @@ _DEFAULT_BROKER_URL = (
     f"amqp://guest:guest@{RABBITMQ_TEST_HOST}:{RABBITMQ_TEST_PORT}/{DEFAULT_VHOST}"
 )
 _DEFAULT_AUTH = aiohttp.BasicAuth(login="guest", password="guest", encoding="utf-8")
+
+
+@pytest.fixture(scope="session")
+def event_loop(request) -> Iterator[asyncio.AbstractEventLoop]:
+    # pylint: disable=unused-argument
+    """Create an instance of the default event loop for each test case."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
 def rabbit_mq_test_session() -> aiohttp.ClientSession:

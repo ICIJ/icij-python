@@ -36,6 +36,7 @@ from icij_common.pydantic_utils import (
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
     AsyncApp,
+    AsyncBackend,
     ManagerEvent,
     Namespacing,
     ResultEvent,
@@ -44,7 +45,6 @@ from icij_worker import (
     TaskState,
     Worker,
     WorkerConfig,
-    WorkerType,
 )
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher import EventPublisher
@@ -56,7 +56,7 @@ from icij_worker.objects import (
     TaskUpdate,
     WorkerEvent,
 )
-from icij_worker.task_manager import TaskManager
+from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.typing_ import RateProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
 from icij_worker.utils.logging_ import LogWithWorkerIDMixin
@@ -329,8 +329,13 @@ if _has_pytest:
     def test_async_app_late(late_ack_app_config: AsyncAppConfig) -> AsyncApp:
         return AsyncApp.load(f"{__name__}.APP", config=late_ack_app_config)
 
-    class MockManager(DBMixin, TaskManager):
+    class MockManagerConfig(TaskManagerConfig):
+        backend: ClassVar[AsyncBackend] = Field(const=True, default=AsyncBackend.mock)
+        db_path: Path
+        event_refresh_interval_s: float = 0.1
 
+    @TaskManager.register(AsyncBackend.mock)
+    class MockManager(DBMixin, TaskManager):
         def __init__(
             self, app: AsyncApp, db_path: Path, event_refresh_interval_s: float = 0.1
         ):
@@ -464,6 +469,16 @@ if _has_pytest:
             events[key].append(event_dict)
             self._write(db)
 
+        @classmethod
+        def _from_config(cls, config: MockManagerConfig, **extras) -> MockManager:
+            app = AsyncApp.load(config.app)
+            tm = cls(
+                app,
+                config.db_path,
+                event_refresh_interval_s=config.event_refresh_interval_s,
+            )
+            return tm
+
     R = TypeVar("R")
 
     class MockEventPublisher(DBMixin, EventPublisher):
@@ -493,14 +508,14 @@ if _has_pytest:
 
     @WorkerConfig.register()
     class MockWorkerConfig(WorkerConfig, IgnoreExtraModel):
-        type: ClassVar[str] = Field(const=True, default=WorkerType.mock.value)
+        type: ClassVar[str] = Field(const=True, default=AsyncBackend.mock.value)
 
         db_path: Path
         log_level: str = "DEBUG"
         loggers: List[str] = [icij_worker.__name__]
         task_queue_poll_interval_s: float = 2.0
 
-    @Worker.register(WorkerType.mock)
+    @Worker.register(AsyncBackend.mock)
     class MockWorker(Worker, MockEventPublisher):
         def __init__(
             self,
@@ -565,9 +580,6 @@ if _has_pytest:
                 **extras,
             )
             return worker
-
-        def _to_config(self) -> MockWorkerConfig:
-            return MockWorkerConfig(db_path=self._db_path)
 
         def _get_db_errors(self, task_id: str, db_name: str) -> List[TaskError]:
             key = self._task_key(task_id=task_id, db=db_name)

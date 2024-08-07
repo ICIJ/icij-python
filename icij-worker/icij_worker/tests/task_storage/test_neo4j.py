@@ -6,9 +6,9 @@ import neo4j
 import pytest
 from neo4j import AsyncDriver
 
-from icij_common.neo4j.constants import (
-    TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
-    TASK_TYPE_DEPRECATED,
+from constants import (
+    NEO4J_TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
+    NEO4J_TASK_TYPE_DEPRECATED,
 )
 from icij_worker import AsyncApp, Neo4JTaskManager, Task, TaskError, TaskState
 from icij_worker.app import AsyncAppConfig
@@ -228,7 +228,7 @@ async def test_migrate_cancelled_event_created_at_v0_tx(
     driver = neo4j_test_driver
     query = f""" CREATE (task:_Task {{ taskID: $taskId }})-[
     :_CANCELLED_BY]->(:_CancelEvent {{ 
-        {TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}: $createdAt, 
+        {NEO4J_TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED}: $createdAt, 
         effective: false,
         requeue: false
     }})
@@ -322,7 +322,7 @@ async def test_migrate_task_type_to_name_v0_tx(
     driver = neo4j_task_manager.driver
     create_legacy_index = f"""CREATE INDEX task_type_index
 FOR (task:_Task) 
-ON (task.{TASK_TYPE_DEPRECATED})"""
+ON (task.{NEO4J_TASK_TYPE_DEPRECATED})"""
     await driver.execute_query(create_legacy_index)
     # When
     async with driver.session() as sess:

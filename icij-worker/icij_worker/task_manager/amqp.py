@@ -4,33 +4,46 @@ import logging
 from copy import deepcopy
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Dict, List, Optional, TypeVar, Union, cast
+from typing import ClassVar, Dict, List, Optional, TypeVar, Union, cast
 
 from aio_pika import connect_robust
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
 from aiormq import DeliveryError
+from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
-from icij_worker import AsyncApp, Task, TaskManager
+from icij_worker.app import AsyncApp
 from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.namespacing import Routing
 from icij_worker.objects import (
+    AsyncBackend,
     CancelEvent,
     ErrorEvent,
     ManagerEvent,
     Message,
     ResultEvent,
+    Task,
     TaskState,
 )
+from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.task_storage import TaskStorage
-from icij_worker.utils.amqp import AMQPMixin
+from icij_worker.task_storage.fs import FSKeyValueStorageConfig
+from icij_worker.task_storage.postgres import PostgresStorageConfig
+from icij_worker.utils.amqp import AMQPConfigMixin, AMQPMixin
 
 S = TypeVar("S", bound=TaskStorage)
 
 logger = logging.getLogger(__name__)
 
 
+@TaskManagerConfig.register()
+class AMQPTaskManagerConfig(TaskManagerConfig, AMQPConfigMixin):
+    backend: ClassVar[AsyncBackend] = Field(const=True, default=AsyncBackend.amqp)
+    storage: Union[FSKeyValueStorageConfig, PostgresStorageConfig]
+
+
+@TaskManager.register(AsyncBackend.amqp)
 class AMQPTaskManager(TaskManager, AMQPMixin):
 
     def __init__(
@@ -59,6 +72,19 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self._manager_messages_it: Optional[AbstractQueueIterator] = None
 
         self._task_namespaces: Dict[str, Optional[str]] = dict()
+
+    @classmethod
+    def _from_config(cls, config: AMQPTaskManagerConfig, **extras) -> AMQPTaskManager:
+        app = AsyncApp.load(config.app)
+        storage = config.storage.to_storage(app.namespacing)
+        task_manager = cls(
+            app,
+            storage,
+            broker_url=config.broker_url,
+            connection_timeout_s=config.connection_timeout_s,
+            reconnection_wait_s=config.reconnection_wait_s,
+        )
+        return task_manager
 
     async def _aenter__(self) -> AMQPTaskManager:
         logger.info("starting task manager connection workflow...")
@@ -115,7 +141,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._storage.save_error(error)
 
     async def _consume(self) -> ManagerEvent:
-        msg = await self._manager_messages_it.__anext__()
+        msg = (
+            await self._manager_messages_it.__anext__()  # pylint: disable=unnecessary-dunder-call
+        )
         await msg.ack()
         return cast(ManagerEvent, Message.parse_raw(msg.body))
 

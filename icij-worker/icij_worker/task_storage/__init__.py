@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
@@ -6,9 +8,14 @@ from icij_worker.namespacing import Namespacing
 from icij_worker.objects import ErrorEvent, ProgressEvent
 
 
+class TaskStorageConfig(ABC):
+    @abstractmethod
+    def to_storage(self, namespacing: Optional[Namespacing]) -> TaskStorage:
+        pass
+
+
 class TaskStorage(ABC):
     _namespacing: Namespacing
-    _app: AsyncApp
 
     @abstractmethod
     async def get_task(self, task_id: str) -> Task: ...
