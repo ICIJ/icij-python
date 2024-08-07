@@ -2,7 +2,7 @@ from datetime import datetime
 
 import neo4j
 
-from constants import (
+from icij_worker.constants import (
     NEO4J_TASK_MANAGER_EVENT_EVENT,
     NEO4J_TASK_MANAGER_EVENT_NODE,
     NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT,

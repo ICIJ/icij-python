@@ -7,7 +7,7 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ResultNotSingleError
 from pydantic import Field
 
-from constants import (
+from icij_worker.constants import (
     NEO4J_TASK_CANCELLED_BY_EVENT_REL,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_EFFECTIVE,
