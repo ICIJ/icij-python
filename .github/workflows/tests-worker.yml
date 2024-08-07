@@ -21,6 +21,10 @@ jobs:
           version: "~= 24.2.0"
       - name: Install poetry
         run: pipx install poetry
+      - name: Installing DBmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.19.0/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
       - name: Setup Python project
         uses: actions/setup-python@v5
         with:
