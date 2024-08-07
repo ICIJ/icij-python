@@ -15,7 +15,15 @@ from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
 
-from constants import (
+from icij_common import neo4j
+from icij_common.pydantic_utils import (
+    ICIJModel,
+    ISODatetime,
+    LowerCamelCaseModel,
+    NoEnumModel,
+    safe_copy,
+)
+from icij_worker.constants import (
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_REQUEUE,
     NEO4J_TASK_COMPLETED_AT,
@@ -27,15 +35,6 @@ from constants import (
     NEO4J_TASK_ID,
     NEO4J_TASK_NODE,
     NEO4J_TASK_RESULT_RESULT,
-)
-from icij_common import neo4j
-
-from icij_common.pydantic_utils import (
-    ICIJModel,
-    ISODatetime,
-    LowerCamelCaseModel,
-    NoEnumModel,
-    safe_copy,
 )
 from icij_worker.typing_ import AbstractSetIntStr, DictStrAny, MappingIntStrAny
 from icij_worker.utils.registrable import RegistrableMixin
