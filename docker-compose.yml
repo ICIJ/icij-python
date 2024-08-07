@@ -17,19 +17,19 @@ services:
       - "7688:7687"
 
   icij-python-test-postgres:
-      image: postgres
-      container_name: test-postgres
-      restart: always
-      environment:
-        POSTGRES_PASSWORD: changeme
-      healthcheck:
-        test: pg_isready
-        interval: 2s
-        timeout: 2s
-        retries: 10
-        start_period: 5s
-      ports:
-        - "5555:5432"
+    image: postgres
+    container_name: test-postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: changeme
+    healthcheck:
+      test: pg_isready
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "5555:5432"
 
 
   icij-python-test-rabbit-mq:
