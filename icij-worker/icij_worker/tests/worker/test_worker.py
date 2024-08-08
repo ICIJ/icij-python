@@ -472,8 +472,9 @@ async def test_work_once_should_not_run_already_cancelled_task(
     await task_manager.save_task(task)
 
     # When
-    def _cancel(w: MockWorker):
-        updated = safe_copy(task, update={"state": TaskState.CANCELLED})
+    async def _cancel(w: MockWorker):
+        t = await MockWorker.consume(w)
+        updated = safe_copy(t, update={"state": TaskState.CANCELLED})
         w._current = updated  # pylint: disable=protected-access
         return updated
 

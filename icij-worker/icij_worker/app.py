@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import logging
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from inspect import iscoroutinefunction, signature
 from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
@@ -148,7 +149,7 @@ class AsyncApp:
 
     @classmethod
     def load(cls, app_path: str, config: Optional[AsyncAppConfig] = None) -> AsyncApp:
-        app = import_variable(app_path)
+        app = deepcopy(import_variable(app_path))
         if config is not None:
             app.with_config(config)
         return app
@@ -169,6 +170,17 @@ class AsyncApp:
         )
         self._registry = {k: self._registry[k] for k in kept}
         return self
+
+    def __deepcopy__(self, memodict={}) -> AsyncApp:
+        # pylint: disable=dangerous-default-value
+        app = AsyncApp(
+            name=self.name,
+            config=deepcopy(self.config),
+            dependencies=list(self._dependencies),
+            namespacing=self.namespacing,
+        )
+        app._registry = deepcopy(self._registry)
+        return app
 
 
 def supports_progress(task_fn) -> bool:

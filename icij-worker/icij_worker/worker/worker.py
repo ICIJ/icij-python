@@ -331,7 +331,7 @@ class Worker(
             await self._publish_cancelled_event(event)
             self._current = None
 
-    @functools.cached_property
+    @property
     def _late_ack(self) -> bool:
         return self._app.config.late_ack
 
