@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import ClassVar, Generic, TypeVar
 
 from pydantic import BaseSettings, validator
+from pydantic.fields import FieldInfo
 from pydantic.generics import GenericModel
 
 from icij_worker.task_manager import TaskManagerConfig
@@ -58,7 +59,10 @@ class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
     @validator("task_manager", pre=True, always=True)
     def set_task_manager_app_path(cls, v: TM):
         # pylint: disable=no-self-argument
-        v["app_path"] = cls.app_path.default
+        app_path = cls.app_path
+        if isinstance(app_path, FieldInfo):
+            app_path = app_path.default
+        v["app_path"] = app_path
         return v
 
     def to_task_manager(self) -> "TaskManager":

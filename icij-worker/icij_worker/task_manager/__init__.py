@@ -13,7 +13,13 @@ from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.app import AsyncAppConfig
 from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
 from icij_worker.namespacing import Namespacing
-from icij_worker.objects import CancelledEvent, ErrorEvent, ManagerEvent, ProgressEvent
+from icij_worker.objects import (
+    AsyncBackend,
+    CancelledEvent,
+    ErrorEvent,
+    ManagerEvent,
+    ProgressEvent,
+)
 from icij_worker.task_storage import TaskStorage
 from icij_worker.utils import RegistrableConfig
 from icij_worker.utils.asyncio_ import stop_other_tasks_when_exc
@@ -24,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 class TaskManagerConfig(RegistrableConfig):
     registry_key: ClassVar[str] = Field(const=True, default="backend")
+    backend: ClassVar[AsyncBackend]
 
     app_path: str
     app_config: AsyncAppConfig = Field(default_factory=AsyncAppConfig)

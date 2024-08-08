@@ -4,7 +4,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Dict, Generic, List, Optional, cast
+from typing import ClassVar, Dict, Generic, List, Optional, cast
 
 import pytest
 from psycopg import AsyncClientCursor, AsyncConnection, sql
@@ -512,6 +512,7 @@ def test_task_manager_with_postgres_storage_from_config(reset_env):
     # pylint: disable=unused-argument
     # Given
     class _MySettings(SettingsWithTM, Generic[TM]):
+        app_path: ClassVar[str] = "icij_worker.utils.tests.APP"
         some_other_app_setting: str
 
         class Config:
