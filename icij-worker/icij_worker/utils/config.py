@@ -1,9 +1,9 @@
 import os
 from abc import ABC
 from copy import deepcopy
-from typing import Generic, TypeVar
+from typing import ClassVar, Generic, TypeVar
 
-from pydantic import BaseSettings
+from pydantic import BaseSettings, validator
 from pydantic.generics import GenericModel
 
 from icij_worker.task_manager import TaskManagerConfig
@@ -23,6 +23,8 @@ class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
     TASK_MANAGER__RABBITMQ_HOST=localhost
     TASK_MANAGER__RABBITMQ_PORT=15752
     """
+
+    app_path: ClassVar[str]
 
     task_manager: TM
 
@@ -52,6 +54,12 @@ class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
         finally:
             os.environ.clear()
             os.environ.update(old_env)
+
+    @validator("task_manager", pre=True, always=True)
+    def set_task_manager_app_path(cls, v: TM):
+        # pylint: disable=no-self-argument
+        v["app_path"] = cls.app_path.default
+        return v
 
     def to_task_manager(self) -> "TaskManager":
         from icij_worker import TaskManager
