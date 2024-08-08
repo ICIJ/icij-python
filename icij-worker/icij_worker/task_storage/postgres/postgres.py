@@ -172,7 +172,8 @@ class PostgresStorage(TaskStorage):
                 else:
                     await _insert_task(cur, task, namespace)
         self._task_meta[task.id] = (db_name, namespace)
-        return task_exists
+        is_new = not task_exists
+        return is_new
 
     async def save_result(self, result: ResultEvent):
         task_db = await self._get_task_db(result.task_id)

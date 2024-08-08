@@ -222,9 +222,9 @@ async def test_save_task(
     conn = test_postgres_conn
     task = task_0()
     # When
-    existed = await storage.save_task_(task, None)
+    is_new = await storage.save_task_(task, None)
     # Then
-    assert not existed
+    assert is_new
     async with conn.cursor(row_factory=dict_row) as cur:
         query = "SELECT * FROM tasks AS t WHERE t.id = %s"
         await cur.execute(query, (task.id,))
@@ -251,9 +251,9 @@ async def test_save_existing_task(
     )
 
     # When
-    existed = await storage.save_task_(task, None)
+    is_new = await storage.save_task_(task, None)
     # Then
-    assert existed
+    assert not is_new
     async with conn.cursor(row_factory=dict_row) as cur:
         query = "SELECT * FROM tasks AS t WHERE t.id = %s"
         await cur.execute(query, (task.id,))
