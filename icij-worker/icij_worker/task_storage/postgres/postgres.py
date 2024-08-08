@@ -29,6 +29,8 @@ from psycopg.conninfo import make_conninfo
 from psycopg.errors import DuplicateDatabase
 from psycopg.rows import dict_row
 
+from icij_common.pydantic_utils import jsonable_encoder
+from icij_worker import Namespacing, ResultEvent, Task, TaskState
 from icij_worker.constants import (
     POSTGRES_TASKS_TABLE,
     POSTGRES_TASK_DBS_TABLE,
@@ -46,7 +48,6 @@ from icij_worker.constants import (
     TASK_RESULT_TASK_ID,
     TASK_STATE,
 )
-from icij_worker import Namespacing, ResultEvent, Task, TaskState
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, TaskError, TaskUpdate
 from icij_worker.task_storage import TaskStorage, TaskStorageConfig
@@ -54,7 +55,6 @@ from icij_worker.task_storage.postgres.connection_info import PostgresConnection
 from icij_worker.task_storage.postgres.db_mate import migrate
 
 logger = logging.getLogger(__name__)
-
 
 C = TypeVar("C", bound="AsyncContextManager")
 ConnectionFactory = Callable[[str], C]
@@ -317,7 +317,7 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
 async def _insert_task(cur: AsyncClientCursor, task: Task, namespace: Optional[str]):
     task_as_dict = task.dict(exclude={Task.registry_key.default})
     task_as_dict[TASK_NAMESPACE] = namespace
-    task_as_dict[TASK_ARGUMENTS] = ujson.dumps(task.arguments)
+    task_as_dict[TASK_ARGUMENTS] = ujson.dumps(jsonable_encoder(task.arguments))
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
     col_value_placeholders = sql.SQL(", ").join(
         sql.Placeholder(n) for n in task_as_dict
