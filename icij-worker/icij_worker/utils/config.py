@@ -7,6 +7,7 @@ from pydantic import BaseSettings, validator
 from pydantic.fields import FieldInfo
 from pydantic.generics import GenericModel
 
+from icij_common.pydantic_utils import safe_copy
 from icij_worker.task_manager import TaskManagerConfig
 from icij_worker.utils.registrable import find_variable_loc_in_env
 
@@ -59,10 +60,11 @@ class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
     @validator("task_manager", pre=True, always=True)
     def set_task_manager_app_path(cls, v: TM):
         # pylint: disable=no-self-argument
-        app_path = cls.app_path
+        app_path = cls.app_path.default
         if isinstance(app_path, FieldInfo):
-            app_path = app_path.default
-        v["app_path"] = app_path
+            v["app_path"] = app_path
+        elif isinstance(app_path, TaskManagerConfig):
+            v = safe_copy(v, update={"app_path": app_path})
         return v
 
     def to_task_manager(self) -> "TaskManager":
