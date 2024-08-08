@@ -471,9 +471,8 @@ if _has_pytest:
 
         @classmethod
         def _from_config(cls, config: MockManagerConfig, **extras) -> MockManager:
-            app = AsyncApp.load(config.app)
             tm = cls(
-                app,
+                config.app,
                 config.db_path,
                 event_refresh_interval_s=config.event_refresh_interval_s,
             )

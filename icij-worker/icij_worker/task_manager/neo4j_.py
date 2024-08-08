@@ -7,6 +7,7 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ResultNotSingleError
 from pydantic import Field
 
+from icij_worker import AsyncApp, Task, TaskState
 from icij_worker.constants import (
     NEO4J_TASK_CANCELLED_BY_EVENT_REL,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
@@ -25,7 +26,6 @@ from icij_worker.constants import (
     NEO4J_TASK_RETRIES_LEFT,
     TASK_ID,
 )
-from icij_worker import AsyncApp, Task, TaskState
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
 from icij_worker.objects import AsyncBackend, ManagerEvent, Message
 from icij_worker.task_manager import TaskManager, TaskManagerConfig
@@ -65,9 +65,10 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
 
     @classmethod
     def _from_config(cls, config: Neo4JTaskManagerConfig, **extras) -> FromConfig:
-        app = AsyncApp.load(config.app)
         driver = config.to_driver()
-        tm = cls(app, driver, event_refresh_interval_s=config.event_refresh_interval_s)
+        tm = cls(
+            config.app, driver, event_refresh_interval_s=config.event_refresh_interval_s
+        )
         return tm
 
     @property

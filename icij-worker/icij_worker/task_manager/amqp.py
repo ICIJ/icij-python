@@ -75,7 +75,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     @classmethod
     def _from_config(cls, config: AMQPTaskManagerConfig, **extras) -> AMQPTaskManager:
-        app = AsyncApp.load(config.app)
+        app = config.app
         storage = config.storage.to_storage(app.namespacing)
         task_manager = cls(
             app,
