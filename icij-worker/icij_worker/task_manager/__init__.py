@@ -8,9 +8,9 @@ from typing import ClassVar, List, final
 
 from pydantic import Field
 
-from app import AsyncAppConfig
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
+from icij_worker.app import AsyncAppConfig
 from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
 from icij_worker.namespacing import Namespacing
 from icij_worker.objects import CancelledEvent, ErrorEvent, ManagerEvent, ProgressEvent
@@ -28,7 +28,7 @@ class TaskManagerConfig(RegistrableConfig):
     app_path: str
     app_config: AsyncAppConfig = Field(default_factory=AsyncAppConfig)
 
-    @cached_property
+    @property
     def app(self) -> AsyncApp:
         app = AsyncApp.load(self.app_path).with_config(self.app_config)
         return app
