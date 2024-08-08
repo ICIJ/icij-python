@@ -6,6 +6,7 @@ import logging
 import time
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy
+from functools import cached_property
 from typing import (
     AsyncGenerator,
     Awaitable,
@@ -67,15 +68,8 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
     migration_throttle_s: float = 0.1
 
     def to_storage(self, namespacing: Optional[Namespacing]) -> PostgresStorage:
-        if namespacing is None:
-            namespacing = Namespacing()
-        self_as_connection_info = {
-            k: v
-            for k, v in self.dict().items()
-            if k in PostgresConnectionInfo.__fields__
-        }
         storage = PostgresStorage(
-            connection_info=PostgresConnectionInfo(**self_as_connection_info),
+            connection_info=self.as_connection_info,
             namespacing=namespacing,
             registry_db_name=self.registry_db_name,
             max_connections=self.max_connections,
@@ -83,6 +77,15 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
             migration_throttle_s=self.migration_throttle_s,
         )
         return storage
+
+    @cached_property
+    def as_connection_info(self) -> PostgresConnectionInfo:
+        self_as_connection_info = {
+            k: v
+            for k, v in self.dict().items()
+            if k in PostgresConnectionInfo.__fields__
+        }
+        return PostgresConnectionInfo(**self_as_connection_info)
 
 
 class ConnectionManager(OrderedDict[str, C], Generic[C], AbstractAsyncContextManager):
