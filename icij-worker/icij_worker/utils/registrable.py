@@ -171,8 +171,8 @@ class RegistrableConfig(BaseModel, RegistrableMixin):
             allow_pickle=allow_pickle,
             json_loads=cls.__config__.json_loads,
         )
-        worker_type = obj.pop(cls.registry_key.default)
-        subcls = cls.resolve_class_name(worker_type)
+        key = obj.pop(cls.registry_key.default)
+        subcls = cls.resolve_class_name(key)
         return subcls(**obj)
 
 
