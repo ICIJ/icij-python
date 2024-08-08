@@ -148,6 +148,13 @@ class PostgresStorage(TaskStorage):
 
     async def __aenter__(self):
         await self._exit_stack.enter_async_context(self._conn_manager)
+        await self._refresh_dbs()
+
+    async def _refresh_dbs(self):
+        base_conn = await self._conn_manager.get_connection("")
+        await create_databases_registry_db(base_conn, self._registry_db_name)
+        some_conn = await self._conn_manager.get_connection(self._registry_db_name)
+        self._known_dbs.update(await retrieve_dbs(some_conn))
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
@@ -261,8 +268,7 @@ class PostgresStorage(TaskStorage):
             raise UnknownTask(task_id) from e
 
     async def _refresh_task_meta(self):
-        some_conn = await self._conn_manager.get_connection(self._registry_db_name)
-        self._known_dbs.update(await retrieve_dbs(some_conn))
+        await self._refresh_dbs()
         for db_name in self._known_dbs:
             conn = await self._conn_manager.get_connection(db_name)
             db_meta = dict()
@@ -283,8 +289,7 @@ class PostgresStorage(TaskStorage):
         return conn
 
     async def _ensure_db(self, db_name):
-        some_conn = await self._conn_manager.get_connection(self._registry_db_name)
-        self._known_dbs.update(await retrieve_dbs(some_conn))
+        await self._refresh_dbs()
         if db_name not in self._known_dbs:
             await self.init_database(db_name)
             self._known_dbs.add(db_name)
@@ -471,7 +476,6 @@ async def init_database(
         except DuplicateDatabase:
             pass
         await base_conn.set_autocommit(old_autocommit)
-    await create_databases_registry_db(base_conn, registry_db_name)
     registry_conn = await conn_factory(registry_db_name)
     await _insert_db_into_registry(registry_conn, db_name=db_name)
     async with _migration_lock(

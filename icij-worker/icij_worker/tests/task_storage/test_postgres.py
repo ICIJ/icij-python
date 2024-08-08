@@ -520,7 +520,7 @@ def test_task_manager_with_postgres_storage_from_config(reset_env):
 
     env_vars = {
         "MY_APP_SOME_OTHER_APP_SETTING": "ANOTHER_SETTING",
-        "MY_APP_TASK_MANAGER__APP": "icij_worker.utils.tests.APP",
+        "MY_APP_TASK_MANAGER__APP_PATH": "icij_worker.utils.tests.APP",
         "MY_APP_TASK_MANAGER__BACKEND": "amqp",
         "MY_APP_TASK_MANAGER__STORAGE__MAX_CONNECTIONS": "28",
         "MY_APP_TASK_MANAGER__RABBITMQ_HOST": "localhost",
