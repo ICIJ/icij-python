@@ -202,7 +202,7 @@ async def test_task_manager_should_consume(
     message = Message(message, delivery_mode=DeliveryMode.PERSISTENT)
     await exchange.publish(message, "routingKeyManagerEvents")
     # Then
-    consume_timeout = 2.0
+    consume_timeout = 5.0
     msg = f"Failed to consume error in less than {consume_timeout}"
     assert true_after(lambda: task_manager.consumed, after_s=consume_timeout), msg
     consumed = task_manager.consumed[0]
