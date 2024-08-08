@@ -60,10 +60,12 @@ class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
     @validator("task_manager", pre=True, always=True)
     def set_task_manager_app_path(cls, v: TM):
         # pylint: disable=no-self-argument
-        app_path = cls.app_path.default
+        app_path = cls.app_path
         if isinstance(app_path, FieldInfo):
+            app_path = app_path.default
+        if isinstance(v, dict):
             v["app_path"] = app_path
-        elif isinstance(app_path, TaskManagerConfig):
+        elif isinstance(v, TaskManagerConfig):
             v = safe_copy(v, update={"app_path": app_path})
         return v
 
