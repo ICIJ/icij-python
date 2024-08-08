@@ -6,9 +6,10 @@ from typing import Generic, TypeVar
 from pydantic import BaseSettings
 from pydantic.generics import GenericModel
 
+from icij_worker.task_manager import TaskManagerConfig
 from icij_worker.utils.registrable import find_variable_loc_in_env
 
-TM = TypeVar("TM", bound="TaskManagerConfig")  # pylint: disable=invalid-name
+TM = TypeVar("TM", bound=TaskManagerConfig)  # pylint: disable=invalid-name
 
 
 class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
@@ -34,8 +35,6 @@ class SettingsWithTM(BaseSettings, GenericModel, Generic[TM], ABC):
 
     @classmethod
     def from_env(cls):
-        from icij_worker.task_manager import TaskManagerConfig
-
         tm_field_name = cls.__fields__["task_manager"].name
         backend_field_name = TaskManagerConfig.registry_key.default
         tm_backend_env_key = (
