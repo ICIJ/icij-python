@@ -1160,12 +1160,10 @@ idna = ">=2.0"
 multidict = ">=4.0"
 
 [extras]
-amqp = ["aio-pika"]
-fs = ["sqlitedict", "ujson"]
+amqp = ["aio-pika", "psycopg", "sqlitedict", "ujson"]
 neo4j = ["neo4j"]
-postgres = ["psycopg", "ujson"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "90118256efc10eb803cf91f362970751c0b68607d435f233fe2e5050120929d2"
+content-hash = "62390e735a9c7745a5698af31bbcf9bc0ee4e44d4f7d64413867aeb21f0d2134"
