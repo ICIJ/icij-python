@@ -3,19 +3,19 @@ from abc import ABC
 from typing import Optional, Sequence
 
 
-class ICIJWorkerError(ABC): ...
+class ICIJError(ABC): ...
 
 
-class UnknownApp(ICIJWorkerError, ValueError, ABC): ...
+class UnknownApp(ICIJError, ValueError, ABC): ...
 
 
-class MaxRetriesExceeded(ICIJWorkerError, RuntimeError): ...
+class MaxRetriesExceeded(ICIJError, RuntimeError): ...
 
 
-class RecoverableError(ICIJWorkerError, Exception): ...
+class RecoverableError(ICIJError, Exception): ...
 
 
-class UnknownTask(ICIJWorkerError, ValueError):
+class UnknownTask(ICIJError, ValueError):
     def __init__(self, task_id: str, worker_id: Optional[str] = None):
         msg = f'Unknown task "{task_id}"'
         if worker_id is not None:
@@ -23,7 +23,7 @@ class UnknownTask(ICIJWorkerError, ValueError):
         super().__init__(msg)
 
 
-class TaskQueueIsFull(ICIJWorkerError, RuntimeError):
+class TaskQueueIsFull(ICIJError, RuntimeError):
     def __init__(self, max_queue_size: Optional[int]):
         msg = "task queue is full"
         if max_queue_size is not None:
@@ -31,18 +31,18 @@ class TaskQueueIsFull(ICIJWorkerError, RuntimeError):
         super().__init__(msg)
 
 
-class TaskAlreadyCancelled(ICIJWorkerError, RuntimeError):
+class TaskAlreadyCancelled(ICIJError, RuntimeError):
     def __init__(self, task_id: str):
         super().__init__(f'Task(id="{task_id}") has been cancelled')
 
 
-class TaskAlreadyQueued(ICIJWorkerError, ValueError):
+class TaskAlreadyQueued(ICIJError, ValueError):
     def __init__(self, task_id: Optional[str] = None):
         msg = f'task "{task_id}" is already queued'
         super().__init__(msg)
 
 
-class TaskAlreadyReserved(ICIJWorkerError, ValueError):
+class TaskAlreadyReserved(ICIJError, ValueError):
     def __init__(self, task_id: Optional[str] = None):
         msg = "task "
         if task_id is not None:
@@ -51,7 +51,7 @@ class TaskAlreadyReserved(ICIJWorkerError, ValueError):
         super().__init__(msg)
 
 
-class UnregisteredTask(ICIJWorkerError, ValueError):
+class UnregisteredTask(ICIJError, ValueError):
     def __init__(self, task_name: str, available_tasks: Sequence[str], *args, **kwargs):
         msg = (
             f'UnregisteredTask task "{task_name}", available tasks: {available_tasks}. '
@@ -60,13 +60,25 @@ class UnregisteredTask(ICIJWorkerError, ValueError):
         super().__init__(msg, *args, **kwargs)
 
 
-class MissingTaskResult(ICIJWorkerError, LookupError):
+class MissingTaskResult(ICIJError, LookupError):
     def __init__(self, task_id: str):
         msg = f'Result of task "{task_id}" couldn\'t be found, did it complete ?'
         super().__init__(msg)
 
 
-class WorkerTimeoutError(ICIJWorkerError, RuntimeError): ...
+class WorkerTimeoutError(ICIJError, RuntimeError): ...
+
+
+class DAGError(Exception):
+    def __init__(self, dag_task_id: str, error: "ErrorEvent"):
+        self.dag_task_id = dag_task_id
+        self.error_source = error.task_id
+        self.error = error
+        msg = (
+            f'Error occurred in Task(id="{self.error_source}") which belongs to the'
+            f' DAG of Task(id="{self.dag_task_id}")'
+        )
+        super().__init__(msg)
 
 
 class MessageDeserializationError(ICIJWorkerError, RuntimeError): ...
