@@ -43,3 +43,7 @@ def test_filter_tasks(
 
     # Then
     assert app.registered_keys == expected_keys
+
+
+def test_load_app_should_raise_for_conflicting_argument_names_in_dag():
+    assert False

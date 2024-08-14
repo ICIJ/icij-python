@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
+    AsyncApp,
     Namespacing,
     PostgresConnectionInfo,
     PostgresStorage,
@@ -22,6 +23,7 @@ from icij_worker import (
     TaskState,
     init_postgres_database,
 )
+from icij_worker.dag.dag import TaskDAG
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, StacktraceItem, TaskError
 from icij_worker.task_storage.postgres.postgres import create_databases_registry_db
@@ -34,9 +36,27 @@ TEST_PG_PORT = 5555
 TEST_PG_PASSWORD = "changeme"
 
 
+class TestablePostgresStorage(PostgresStorage):
+    async def get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        return await self._get_task_dag(task_id)
+
+
+class TestablePostgresStorageConfig(PostgresStorageConfig):
+    def to_storage(self, namespacing: Optional[Namespacing]) -> PostgresStorage:
+        storage = TestablePostgresStorage(
+            connection_info=self.as_connection_info,
+            namespacing=namespacing,
+            registry_db_name=self.registry_db_name,
+            max_connections=self.max_connections,
+            migration_timeout_s=self.migration_timeout_s,
+            migration_throttle_s=self.migration_throttle_s,
+        )
+        return storage
+
+
 @pytest.fixture(scope="session")
-async def test_postgres_config() -> PostgresStorageConfig:
-    return PostgresStorageConfig(
+async def test_postgres_config() -> TestablePostgresStorageConfig:
+    return TestablePostgresStorageConfig(
         host=TEST_PG_HOST,
         port=TEST_PG_PORT,
         user=TEST_PG_USER,
@@ -79,7 +99,7 @@ def task_0() -> Task:
         created_at=datetime.now(timezone.utc),
         state=TaskState.CREATED,
         arguments={"greeted": "world"},
-    ).with_max_retries(3)
+    ).with_max_retries()
     return t
 
 
@@ -94,7 +114,7 @@ def task_1() -> Task:
         created_at=datetime.now(timezone.utc),
         state=TaskState.QUEUED,
         arguments={},
-    ).with_max_retries(3)
+    ).with_max_retries()
     return t
 
 
@@ -133,6 +153,23 @@ async def _wipe_registry(conn: AsyncConnection):
         await conn.set_autocommit(True)
         await cur.execute(delete_everything)
         await conn.set_autocommit(old_autocommit)
+
+
+async def _save_dag_tasks(
+    storage: PostgresStorage, dag: TaskDAG, dag_task: Task, conn: AsyncConnection
+):
+    await storage.save_task_(dag_task, None)
+    for t in dag.created_tasks:
+        await storage.save_task_(t, None)
+    for child, parents in dag.arg_providers.items():
+        for provided_arg, parent in parents.items():
+            await conn.execute(
+                """
+INSERT INTO task_argument_providers (task_id, provider_id, provided_argument)
+VALUES (%s, %s, %s);
+""",
+                (child, parent, provided_arg),
+            )
 
 
 @pytest.fixture(scope="session")
@@ -536,3 +573,34 @@ def test_task_manager_with_postgres_storage_from_config(reset_env):
     assert isinstance(
         task_manager._storage, PostgresStorage  # pylint: disable=protected-access
     )
+
+
+async def test_get_task_dag(
+    test_postgres_storage: TestablePostgresStorage,
+    test_postgres_conn: AsyncConnection,
+    test_dag_app: AsyncApp,
+):
+    # Given
+    storage = test_postgres_storage
+    conn = test_postgres_conn
+    app = test_dag_app
+    dag_task_id = "dag-task-id"
+    args = {"a_input": "some-input"}
+    dag_task = Task.create(
+        task_id=dag_task_id, task_name="d", arguments=args
+    ).with_max_retries(app)
+    dag = TaskDAG.from_app(app, dag_task)
+    await _save_dag_tasks(storage, dag, dag_task, conn)
+
+    # When
+    db_dag = await storage.get_task_dag(dag_task.id)
+
+    # Then
+    assert db_dag == dag
+
+    for t in dag.created_tasks:
+        # When
+        db_dag = await storage.get_task_dag(t.id)
+
+        # Then
+        assert db_dag == dag

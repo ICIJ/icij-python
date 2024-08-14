@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy
 from functools import cached_property
@@ -33,6 +34,10 @@ from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import Namespacing, ResultEvent, Task, TaskState
 from icij_worker.constants import (
     POSTGRES_TASKS_TABLE,
+    POSTGRES_TASK_ARGUMENT_PROVIDED_ARGUMENT,
+    POSTGRES_TASK_ARGUMENT_PROVIDERS_PROVIDER_ID,
+    POSTGRES_TASK_ARGUMENT_PROVIDERS_TABLE,
+    POSTGRES_TASK_ARGUMENT_PROVIDERS_TASK_ID,
     POSTGRES_TASK_DBS_TABLE,
     POSTGRES_TASK_DB_IS_LOCKED,
     POSTGRES_TASK_DB_NAME,
@@ -48,6 +53,7 @@ from icij_worker.constants import (
     TASK_RESULT_TASK_ID,
     TASK_STATE,
 )
+from icij_worker.dag.dag import TaskDAG
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, TaskError, TaskUpdate
 from icij_worker.task_storage import TaskStorage, TaskStorageConfig
@@ -121,6 +127,7 @@ class ConnectionManager(OrderedDict[str, C], Generic[C], AbstractAsyncContextMan
 
 
 class PostgresStorage(TaskStorage):
+
     def __init__(
         self,
         connection_info: PostgresConnectionInfo,
@@ -250,6 +257,12 @@ class PostgresStorage(TaskStorage):
         ns = ns["task_ns"]
         return ns
 
+    async def _get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        task_db = await self._get_task_db(task_id)
+        conn = await self._conn_manager.get_connection(task_db)
+        dag = await _get_task_dag(conn, task_id)
+        return dag
+
     async def init_database(self, db_name: str):
         await init_database(
             db_name,
@@ -370,6 +383,46 @@ async def _get_tasks(
     # TODO: pass the above chunksize, when upgrading to a new version of psycopg
     async for task in cur.stream(query, size=1):
         yield task
+
+
+async def _get_task_dag(conn: AsyncConnection, task_id: str) -> Optional[TaskDAG]:
+    unexplored = [task_id]
+    graph = defaultdict(dict)
+    seen = set()
+    async with conn.cursor(row_factory=dict_row) as cur:
+        async with conn.transaction():
+            while unexplored:
+                await cur.execute(_GET_TASK_DAG_QUERY, (unexplored, unexplored))
+                unexplored = set()
+                dag_relationships = await cur.fetchall()
+                if not dag_relationships:
+                    break
+                for dag_rel in dag_relationships:
+                    child_id = dag_rel[POSTGRES_TASK_ARGUMENT_PROVIDERS_TASK_ID]
+                    parent_id = dag_rel[POSTGRES_TASK_ARGUMENT_PROVIDERS_PROVIDER_ID]
+                    provided_arg = dag_rel[POSTGRES_TASK_ARGUMENT_PROVIDED_ARGUMENT]
+                    graph[child_id][parent_id] = provided_arg
+                    if child_id not in seen:
+                        seen.add(child_id)
+                        unexplored.add(child_id)
+                    if parent_id not in seen:
+                        seen.add(parent_id)
+                        unexplored.add(parent_id)
+                unexplored = list(unexplored)
+    if not graph:
+        return None
+    parents = set(p for parents in graph.values() for p in parents)
+    all_tasks = set(graph.keys()).union(parents)
+    root = all_tasks - parents
+    if len(root) != 1:
+        raise ValueError(f"Found several root in DAG {graph}: {sorted(root)}")
+    root = next(iter(root))
+    dag = TaskDAG(dag_task_id=root)
+    for child, parents in graph.items():
+        for parent, provided_arg in parents.items():
+            dag.add_task_dep(child, parent_id=parent, provided_arg=provided_arg)
+    dag.prepare()
+    return dag
 
 
 async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
@@ -527,6 +580,17 @@ async def create_databases_registry_db(conn: AsyncConnection, registry_db_name: 
 
 _GET_TASK_QUERY = sql.SQL("SELECT * FROM {} AS task WHERE task.{task_id} = %s").format(
     sql.Identifier(POSTGRES_TASKS_TABLE), task_id=sql.Identifier(TASK_ID)
+)
+
+_GET_TASK_DAG_QUERY = sql.SQL(
+    """SELECT *
+FROM {providers_table} AS provider 
+WHERE provider.{task_id} = ANY(%s) OR provider.{provider_id} = ANY(%s)
+"""
+).format(
+    providers_table=sql.Identifier(POSTGRES_TASK_ARGUMENT_PROVIDERS_TABLE),
+    task_id=sql.Identifier(POSTGRES_TASK_ARGUMENT_PROVIDERS_TASK_ID),
+    provider_id=sql.Identifier(POSTGRES_TASK_ARGUMENT_PROVIDERS_PROVIDER_ID),
 )
 
 _BASE_GET_TASKS_QUERY = sql.SQL("SELECT * FROM {} AS task").format(

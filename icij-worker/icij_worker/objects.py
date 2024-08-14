@@ -259,30 +259,6 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             values["retries_left"] = max_retries
         return values
 
-    @classmethod
-    def create(cls, *, task_id: str, task_name: str, arguments: Dict[str, Any]) -> Task:
-        created_at = datetime.now(timezone.utc)
-        state = TaskState.CREATED
-        return cls(
-            id=task_id,
-            name=task_name,
-            arguments=arguments,
-            created_at=created_at,
-            state=state,
-        )
-
-    def with_max_retries(self, max_retries: Union[AsyncApp, Optional[int]]) -> Task:
-        if isinstance(max_retries, AsyncApp):
-            try:
-                max_retries = max_retries.registry[self.name].max_retries
-            except KeyError as e:
-                available_tasks = list(self._app.registry)
-                raise UnregisteredTask(self.name, available_tasks) from e
-            return self.with_max_retries(max_retries)
-        as_dict = self.dict()
-        as_dict.pop("max_retries", None)
-        return Task(max_retries=max_retries, **as_dict)
-
     @validator("arguments", pre=True)
     def _validate_args(cls, value: Any):  # pylint: disable=no-self-argument
         if isinstance(value, str):
@@ -308,6 +284,32 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             msg = f"progress is expected to be in [0.0, 1.0], found {value}"
             raise ValueError(msg)
         return value
+
+    @classmethod
+    def create(cls, *, task_id: str, task_name: str, arguments: Dict[str, Any]) -> Task:
+        created_at = datetime.now(timezone.utc)
+        state = TaskState.CREATED
+        return cls(
+            id=task_id,
+            name=task_name,
+            arguments=arguments,
+            created_at=created_at,
+            state=state,
+        )
+
+    def with_max_retries(self, max_retries: Union[AsyncApp, int] = 3) -> Task:
+        if isinstance(max_retries, AsyncApp):
+            try:
+                max_retries = max_retries.registry[self.name].max_retries
+            except KeyError as e:
+                available_tasks = list(self._app.registry)
+                raise UnregisteredTask(self.name, available_tasks) from e
+            if max_retries is None:
+                max_retries = 3
+            return self.with_max_retries(max_retries)
+        as_dict = self.dict()
+        as_dict.pop("max_retries", None)
+        return Task(max_retries=max_retries, **as_dict)
 
     @final
     @classmethod

@@ -39,7 +39,7 @@ def test_dag_from_app(test_async_app: AsyncApp):
     arguments = {"model": "some-model", "documents": []}
     dag_task = Task.create(task_id=task_id, task_name="detect", arguments=arguments)
     # When
-    dag = TaskDAG.from_app(dag_task, app)
+    dag = TaskDAG.from_app(app, dag_task)
     # Then
     assert len(dag.created_tasks) == 1
     child = next(iter(dag.created_tasks))
@@ -50,34 +50,15 @@ def test_dag_from_app(test_async_app: AsyncApp):
     assert dag.arg_providers == expected_providers
 
 
-def test_dag_from_app_should_cache_tasks():
+def test_dag_from_app_should_cache_tasks(test_dag_app: AsyncApp):
     # Given
-    app = AsyncApp("test-app")
-
-    @app.task
-    def a(a_input: str) -> str:
-        return a_input + " a"
-
-    @app.task
-    def b(b_input: Annotated[str, Depends(on=a)]) -> str:
-        return b_input + " b"
-
-    @app.task
-    def c(c_input: Annotated[str, Depends(on=a)]) -> str:
-        return c_input + " c"
-
-    @app.task
-    def d(
-        left_input: Annotated[str, Depends(on=b)],
-        right_input: Annotated[str, Depends(on=c)],
-    ) -> str:
-        return f"{left_input} d {right_input}"
+    app = test_dag_app
 
     dag_task = Task.create(
         task_id="d-task-id", task_name="d", arguments={"a_input": "dag_input"}
     )
     # When
-    dag = TaskDAG.from_app(dag_task, app)
+    dag = TaskDAG.from_app(app, dag_task)
     # Then
     assert len(dag.created_tasks) == 3
 
@@ -110,7 +91,7 @@ def test_dag_validate_args_should_raise_for_missing_arg():
     match = """Missing arguments:
 - preprocess: documents"""
     with pytest.raises(ValueError, match=match):
-        _ = TaskDAG.from_app(dag_task, app)
+        _ = TaskDAG.from_app(app, dag_task)
 
 
 def test_dag_validate_args_should_raise_for_extra_arg():
@@ -142,4 +123,4 @@ def test_dag_validate_args_should_raise_for_extra_arg():
     # When/Then
     match = "Arguments ['extra'] were provided as input but are not used by DAG tasks"
     with pytest.raises(ValueError, match=re.escape(match)):
-        _ = TaskDAG.from_app(dag_task, app)
+        _ = TaskDAG.from_app(app, dag_task)

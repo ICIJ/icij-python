@@ -174,7 +174,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         except DeliveryError as e:
             raise TaskQueueIsFull(self.max_task_queue_size) from e
 
-    async def cancel(self, task_id: str, *, requeue: bool):
+    async def _cancel(self, task_id: str, *, requeue: bool):
         cancel_event = CancelEvent(
             task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
         )

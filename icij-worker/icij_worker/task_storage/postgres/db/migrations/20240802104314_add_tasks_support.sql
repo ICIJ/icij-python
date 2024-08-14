@@ -20,7 +20,7 @@ CREATE INDEX index_tasks_state ON tasks (state);
 TODO: discuss the varchar vs jsonb here, since we don't need validation + compression varchar might be OK
 */
 CREATE TABLE results (
-    task_id varchar(128) references tasks(id),
+    task_id varchar(128) NOT NULL references tasks(id),
     result varchar,
     created_at timestamptz NOT NULL,
     PRIMARY KEY(task_id)

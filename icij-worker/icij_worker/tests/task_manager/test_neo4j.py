@@ -572,7 +572,7 @@ async def test_task_manager_cancel(
 
     # When
     task = await neo4j_task_manager.enqueue(task)
-    await neo4j_task_manager.cancel(task_id=task.id, requeue=requeue)
+    await neo4j_task_manager._cancel(task_id=task.id, requeue=requeue)
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
 RETURN task, event"""

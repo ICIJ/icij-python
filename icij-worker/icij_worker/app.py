@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import functools
 import logging
+from collections import namedtuple
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from inspect import iscoroutinefunction, signature
-from typing import Callable, Dict, List, Optional, Tuple, Type, final
+from inspect import Parameter, iscoroutinefunction, signature
+from typing import Callable, Dict, List, Optional, Tuple, Type, final, get_type_hints
 
 from icij_common.pydantic_utils import ICIJModel, ICIJSettings
 from icij_worker.namespacing import Namespacing
@@ -16,6 +17,9 @@ from icij_worker.utils.imports import import_variable
 logger = logging.getLogger(__name__)
 
 PROGRESS_HANDLER_ARG = "progress"
+
+Chunked = namedtuple("Chunked", "size")
+Depends = namedtuple("Depends", "on")
 
 
 class AsyncAppConfig(ICIJSettings):
@@ -31,6 +35,8 @@ class RegisteredTask(ICIJModel):
     recover_from: Tuple[Type[Exception], ...] = tuple()
     max_retries: Optional[int]
     namespace: Optional[str]
+    progress_weight: float
+    parents: Dict[str, Callable]
 
 
 class AsyncApp:
@@ -88,13 +94,19 @@ class AsyncApp:
         name: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
+        progress_weight: float = 1.0,
         *,
         namespace: Optional[str] = None,
+        # The local ns is for when app is defined inside a local context
+        local_ns: Optional[Dict] = None,
     ) -> Callable:
         if callable(name) and not recover_from and max_retries is None:
             f = name
             return functools.partial(
-                self._register_task, name=f.__name__, namespace=namespace
+                self._register_task,
+                name=f.__name__,
+                namespace=namespace,
+                local_ns=local_ns,
             )(f)
         if max_retries is None:
             max_retries = 3
@@ -104,6 +116,8 @@ class AsyncApp:
             recover_from=recover_from,
             max_retries=max_retries,
             namespace=namespace,
+            progress_weight=progress_weight,
+            local_ns=local_ns,
         )
 
     @final
@@ -116,11 +130,13 @@ class AsyncApp:
     def _register_task(
         self,
         f: Callable,
+        local_ns: Optional[Dict],
         *,
         name: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
         namespace: Optional[str],
+        progress_weight: float = 1.0,
     ) -> Callable:
         if not iscoroutinefunction(f) and supports_progress(f):
             msg = (
@@ -134,11 +150,14 @@ class AsyncApp:
         registered = self._registry.get(name)
         if registered is not None:
             raise ValueError(f'Task "{name}" is already registered: {registered}')
+        parents = _parse_parents(name, f, local_ns=local_ns)
         self._registry[name] = RegisteredTask(
             task=f,
             max_retries=max_retries,
             recover_from=recover_from,
             namespace=namespace,
+            parents=parents,
+            progress_weight=progress_weight,
         )
 
         @functools.wraps(f)
@@ -152,6 +171,7 @@ class AsyncApp:
         app = deepcopy(import_variable(app_path))
         if config is not None:
             app.with_config(config)
+        # TODO: add a consistency check for DAG task arguments
         return app
 
     def filter_tasks(self, namespace: str) -> AsyncApp:
@@ -188,3 +208,49 @@ def supports_progress(task_fn) -> bool:
         param.name == PROGRESS_HANDLER_ARG
         for param in signature(task_fn).parameters.values()
     )
+
+
+_VALID_DAG_TASK_PARAMS = {
+    Parameter.KEYWORD_ONLY,
+    Parameter.POSITIONAL_ONLY,
+    Parameter.POSITIONAL_OR_KEYWORD,
+}
+
+
+def _parse_parents(
+    task_name: str, task_fn: Callable, local_ns: Optional[Dict]
+) -> Dict[str, str]:
+    parents = dict()
+    hints = get_type_hints(task_fn, include_extras=True, localns=local_ns)
+    depends = (
+        (arg, annotation)
+        for arg, annotation in hints.items()
+        if arg != "return" and hasattr(annotation, "__metadata__")
+    )
+    depends = (
+        (arg, [m for m in annotation.__metadata__ if isinstance(m, Depends)])
+        for arg, annotation in depends
+    )
+    for provided_arg, deps in depends:
+        if not deps:
+            continue
+        if len(deps) > 1:
+            msg = (
+                f'Found several dependencies for arg {provided_arg} for "{task_name}",'
+                f" an task argument can be provided by at most one {Depends.__name__}"
+            )
+            raise ValueError(msg)
+        sig = signature(task_fn)
+        invalid = []
+        for p in sig.parameters.values():
+            if p.kind not in _VALID_DAG_TASK_PARAMS:
+                invalid.append(p.name)
+        if invalid:
+            msg = (
+                f"DAG tasks only support positional or keyword arguments, arguments"
+                f' {sorted(invalid)} of task "{task_name}" are invalid.'
+            )
+            raise ValueError(msg)
+        dep = deps[0]
+        parents[provided_arg] = dep.on
+    return parents
