@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum, unique
-from functools import lru_cache
 from typing import Callable, ClassVar, Sequence, Union, cast
 
 from pydantic import Field, root_validator, validator
@@ -21,6 +21,7 @@ from icij_common.pydantic_utils import (
     NoEnumModel,
     safe_copy,
 )
+from icij_worker import AsyncApp
 from icij_worker.constants import (
     NEO4J_SHUTDOWN_EVENT_CREATED_AT,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
@@ -35,6 +36,7 @@ from icij_worker.constants import (
     NEO4J_TASK_NODE,
     NEO4J_TASK_RESULT_RESULT,
 )
+from icij_worker.exceptions import UnregisteredTask
 from icij_worker.typing_ import AbstractSetIntStr, DictStrAny, MappingIntStrAny
 from icij_worker.utils.registrable import RegistrableMixin
 
@@ -242,6 +244,9 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         "retries_left",
     ]
 
+    def __hash__(self) -> int:
+        return hash(self.id)
+
     @validator("args", pre=True, always=True)
     def args_as_dict(cls, v: Optional[Dict[str, Any]]):
         # pylint: disable=no-self-argument
@@ -271,7 +276,14 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             state=state,
         )
 
-    def with_max_retries(self, max_retries: Optional[int]) -> Task:
+    def with_max_retries(self, max_retries: Union[AsyncApp, Optional[int]]) -> Task:
+        if isinstance(max_retries, AsyncApp):
+            try:
+                max_retries = max_retries.registry[self.name].max_retries
+            except KeyError as e:
+                available_tasks = list(self._app.registry)
+                raise UnregisteredTask(self.name, available_tasks) from e
+            return self.with_max_retries(max_retries)
         as_dict = self.dict()
         as_dict.pop("max_retries", None)
         return Task(max_retries=max_retries, **as_dict)
@@ -318,6 +330,20 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             node.pop("group")
         node["state"] = state
         return cls(**node)
+
+    @final
+    @classmethod
+    def from_parent(cls, parent: Task, *, name: str, **kwargs) -> Task:
+        child_id = f"dag-{parent.id}-{name}-{uuid.uuid4().hex}"
+        child = cls(
+            id=child_id,
+            name=name,
+            created_at=parent.created_at,
+            state=TaskState.CREATED,
+            progress=0,
+            **kwargs,
+        )
+        return child
 
     @classmethod
     def postgres_row_factory(cls, cursor: "BaseCursor[Any, Any]") -> "RowMaker[Task]":
@@ -668,7 +694,6 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
         return cls(**from_task)
 
     @classmethod
-    @lru_cache(maxsize=1)
     def done(cls, completed_at: Optional[datetime] = None) -> TaskUpdate:
         return cls(progress=1.0, completed_at=completed_at, state=TaskState.DONE)
 
