@@ -15,6 +15,7 @@ exclude = ["batch_download_utils/tests"]
 
 [tool.poetry.scripts]
 hmap-cleaner = "batch_download_utils.hmap_cleaner:main_async"
+hmap-migrate = "batch_download_utils.migrate_task_manager_batch_downloads:main_async"
 
 [tool.poetry.dependencies]
 python = "^3.9"
