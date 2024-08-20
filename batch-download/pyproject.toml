@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "batch-download-utils"
+version = "0.1.0"
+description = "Script utils for managing batch download redis persistence"
+authors = [
+    "Maxime Vanza <mvanza@icij.org>",
+    "Bruno Thomas <bthomas@icij.org>",
+    "ICIJ <engineering@icij.org>",
+]
+readme = "README.md"
+packages = [
+    { include = "batch_download_utils" }
+]
+exclude = ["batch_download_utils/tests"]
+
+[tool.poetry.scripts]
+hmap-cleaner = "batch_download_utils.hmap_cleaner:main_async"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+redis = "^5.0.8"
+
+[tool.poetry.group.dev.dependencies]
+pylint = "^3.1.0"
+pytest = "^7.2.1"
+pytest-asyncio = "^0.20.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
