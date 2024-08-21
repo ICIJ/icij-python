@@ -110,6 +110,7 @@ async def main(args: dict) -> None:
     pool = redis.ConnectionPool.from_url(args.get("redis_url"))
     client = redis.Redis.from_pool(pool)
     tasks = await client.hgetall(DS_TASK_MANAGER)
+    await client.copy(DS_TASK_MANAGER, DS_TASK_MANAGER + ":backup")
     for k, v in tasks.items():
         task = loads(v)
         new_task = rename_field(task, "properties", "args")
