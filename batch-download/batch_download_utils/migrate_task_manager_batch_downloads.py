@@ -125,9 +125,7 @@ async def main(args: dict) -> None:
         new_task = add_field(new_task, "createdAt", int(get_date_from_task(task).timestamp()*1000))
         new_task = move_field(new_task, "user", "args.user")
 
-
-        print(dumps(new_task, indent=4))
-        # await client.hset(DS_TASK_MANAGER, task.get("id"), dumps(new_task))
+        await client.hset(DS_TASK_MANAGER, task.get("id"), dumps(new_task))
 
 
 def parse_args(argv) -> dict:
