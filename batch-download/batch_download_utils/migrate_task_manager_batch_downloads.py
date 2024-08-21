@@ -4,6 +4,7 @@ from datetime import datetime
 from functools import reduce
 from json import loads, dumps
 from os.path import basename
+from typing import Callable
 from urllib.parse import urlparse, unquote
 
 import redis
@@ -71,6 +72,13 @@ def get_date_from_task(task: dict) -> datetime:
         return datetime.now()
 
 
+def change_value(task: dict, dict_path: str, change_func: Callable) -> dict:
+    fields = dict_path.split(".")
+    old_value = reduce(lambda d, k: d[k], fields, task)
+    dest_path_result = reduce(lambda d, k: {k: d}, reversed(fields[0:-1]), {fields[-1]: change_func(old_value)})
+    return {**task.copy(), **dest_path_result}
+
+
 async def main(args: dict) -> None:
     pool = redis.ConnectionPool.from_url(args.get("redis_url"))
     client = redis.Redis.from_pool(pool)
@@ -83,6 +91,7 @@ async def main(args: dict) -> None:
         new_task = add_field(new_task, "retriesLeft", 3)
         new_task = add_field(new_task, "createdAt", get_date_from_task(task).timestamp())
         new_task = move_field(new_task, "user", "args.user")
+        new_task = change_value(new_task, "args.batchDownload.filename", lambda v: v[1])
         await client.hset(DS_TASK_MANAGER, task.get("id"), dumps(new_task))
 
 

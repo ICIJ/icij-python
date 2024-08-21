@@ -1,7 +1,7 @@
 import datetime
 
 from batch_download_utils.migrate_task_manager_batch_downloads import rename_field, rename_value, add_field, \
-    get_date_from_task, move_field
+    get_date_from_task, move_field, change_value
 
 
 def test_rename_basic_field():
@@ -42,3 +42,9 @@ def test_get_date_from_task_for_tasks():
     a_date = datetime.datetime.fromisoformat("2024-08-20T07:27:42.192")
     date = get_date_from_task({"@type":"Task","id":"771c45b4-1fac-421f-9791-64ac4e1eb4ab","name":"my_task", "createdAt": a_date.timestamp()})
     assert date == a_date
+
+
+def test_change_value():
+    assert change_value({"foo": "bar"}, "foo", lambda v: v + "_blah") == {"foo": "bar_blah"}
+    assert change_value({"foo": {"level1": 1}}, "foo.level1", lambda v: v+1) == {"foo": {"level1": 2}}
+    assert change_value({"foo": {"level1": 1}, "bar": "baz"}, "foo.level1", lambda v: v+1) == {"foo": {"level1": 2}, "bar": "baz"}
