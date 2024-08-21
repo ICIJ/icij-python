@@ -1,7 +1,7 @@
 import asyncio
-import re
 import sys
 from datetime import datetime
+from functools import reduce
 from json import loads, dumps
 from os.path import basename
 from urllib.parse import urlparse, unquote
@@ -42,19 +42,15 @@ def add_field(task: dict, key, value):
 def move_field(task, source_json_path, dest_json_path) -> dict:
     source_fields = source_json_path.split(".")
     dest_fields = dest_json_path.split(".")
-    dest = task.copy()
-    value = None
-    for field in source_fields:
-        value = task.get(field)
-    d = {dest_fields[-1]: value}
-    for field in reversed(dest_fields[1:-1]):
-        d = {field: d}
-    if len(dest_fields) == 1:
-        dest[dest_fields[0]] = value
-    else:
-        dest[dest_fields[0]] = d
-    del dest[source_fields[0]]
-    return dest
+    # get the "leaf" value = final value of the source_json_path
+    value = reduce(lambda d, k: d[k], source_fields, task)
+    # build one way dest_fields dictionary with the original value {c:value} if we have "a.b.c" path
+    dest_path_result = reduce(lambda d, k: {k: d}, reversed(dest_fields[0:-1]), {dest_fields[-1]: value})
+    # then merge it with the original task dict copy
+    result = {**task.copy(), **dest_path_result}
+    # finally remove original path
+    del result[source_fields[0]]
+    return result
 
 
 def get_date_from_task(task: dict) -> datetime:
