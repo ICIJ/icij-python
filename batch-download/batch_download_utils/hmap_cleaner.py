@@ -17,9 +17,9 @@ async def main(args: dict) -> None:
     for k, v in tasks.items():
         task = loads(v)
 
-        if task.get("properties") and task.get("properties").get("batchDownload"):
-            batch_download = task.get("properties").get("batchDownload")
-            filename = batch_download.get("filename")[1]
+        if task.get("args") and task.get("args").get("batchDownload"):
+            batch_download = task.get("args").get("batchDownload")
+            filename = batch_download.get("filename")
             parse_result = urlparse(unquote(filename))
             file_path = join(base_dir, basename(parse_result.path))
             if not exists(file_path):
