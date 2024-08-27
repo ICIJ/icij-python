@@ -78,7 +78,7 @@ def task_0() -> Task:
         name="task-type-0",
         created_at=datetime.now(timezone.utc),
         state=TaskState.CREATED,
-        arguments={"greeted": "world"},
+        args={"greeted": "world"},
     ).with_max_retries(3)
     return t
 
@@ -93,12 +93,26 @@ def task_1() -> Task:
         name="task-type-1",
         created_at=datetime.now(timezone.utc),
         state=TaskState.QUEUED,
-        arguments={},
+        args={},
     ).with_max_retries(3)
     return t
 
 
 _ = task_1()
+
+_TASK_COLS_LEGACY_V0 = [
+    "id",
+    "name",
+    "namespace",
+    "state",
+    "progress",
+    "created_at",
+    "completed_at",
+    "cancelled_at",
+    "retries_left",
+    "max_retries",
+    "arguments",
+]
 
 _TASK_COLS = [
     "id",
@@ -111,7 +125,7 @@ _TASK_COLS = [
     "cancelled_at",
     "retries_left",
     "max_retries",
-    "arguments",
+    "args",
 ]
 
 
@@ -198,11 +212,30 @@ async def test_postgres_conn(
 
 
 @pytest.fixture()
-async def populate_task(test_postgres_conn: AsyncConnection) -> List[Task]:
+async def populate_task_legacy_v0(test_postgres_conn: AsyncConnection) -> List[Task]:
     tasks = [task_0(), task_1()]
     task_tuples = [t.dict() for t in tasks]
     for i, t in enumerate(task_tuples):
         t["arguments"] = json.dumps(t["arguments"])
+        t["namespace"] = "some-namespace" if i % 2 == 0 else None
+    task_tuples = [tuple(t[col] for col in _TASK_COLS_LEGACY_V0) for t in task_tuples]
+    async with test_postgres_conn.cursor() as cur:
+        query = f"INSERT INTO tasks ({', '.join(_TASK_COLS_LEGACY_V0)}) VALUES\n"
+        values_placeholder = (
+            f"({','.join('%s' for _ in range(len(_TASK_COLS_LEGACY_V0)))})"
+        )
+        query += ",\n".join(cur.mogrify(values_placeholder, t) for t in task_tuples)
+        query += ";"
+        await cur.execute(query)
+    return tasks
+
+
+@pytest.fixture()
+async def populate_task(test_postgres_conn: AsyncConnection) -> List[Task]:
+    tasks = [task_0(), task_1()]
+    task_tuples = [t.dict() for t in tasks]
+    for i, t in enumerate(task_tuples):
+        t["args"] = json.dumps(t["args"])
         t["namespace"] = "some-namespace" if i % 2 == 0 else None
     task_tuples = [tuple(t[col] for col in _TASK_COLS) for t in task_tuples]
     async with test_postgres_conn.cursor() as cur:
@@ -229,7 +262,7 @@ async def test_save_task(
         query = "SELECT * FROM tasks AS t WHERE t.id = %s"
         await cur.execute(query, (task.id,))
         db_task = await cur.fetchone()
-    db_task["arguments"] = json.loads(db_task["arguments"])
+    db_task["args"] = json.loads(db_task["args"])
     namespace = db_task.pop("namespace")
     assert namespace is None
     db_task = Task(**db_task)
@@ -258,7 +291,7 @@ async def test_save_existing_task(
         query = "SELECT * FROM tasks AS t WHERE t.id = %s"
         await cur.execute(query, (task.id,))
         db_task = await cur.fetchone()
-    db_task["arguments"] = json.loads(db_task["arguments"])
+    db_task["args"] = json.loads(db_task["args"])
     namespace = db_task.pop("namespace")
     assert namespace == "some-namespace"
     db_task = Task(**db_task)
@@ -536,3 +569,34 @@ def test_task_manager_with_postgres_storage_from_config(reset_env):
     assert isinstance(
         task_manager._storage, PostgresStorage  # pylint: disable=protected-access
     )
+
+
+async def test_migrate_rename_task_arguments_into_args(
+    test_postgres_conn: AsyncConnection,
+):
+    # Given
+    conn = test_postgres_conn
+    # When
+    async with conn.cursor() as cur:
+        migration_query = (
+            "SELECT * FROM schema_migrations WHERE version = '20240827142011';"
+        )
+        await cur.execute(migration_query)
+        migration = await cur.fetchone()
+        assert migration is not None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'arguments';
+"""
+        await cur.execute(arguments_col_query)
+        arguments_cols = await cur.fetchone()
+        assert arguments_cols is None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'args';
+"""
+        await cur.execute(arguments_col_query)
+        args_cols = await cur.fetchone()
+        assert args_cols is not None

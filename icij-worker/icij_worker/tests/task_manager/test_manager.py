@@ -186,7 +186,7 @@ async def test_save_task(mock_manager: MockManager):
     task = Task(
         id="some-id",
         name="often_retriable",
-        arguments=dict(),
+        args=dict(),
         created_at=datetime.now(),
         state=TaskState.CREATED,
     )
@@ -227,7 +227,7 @@ async def test_save_unknown_task_should_raise_unregistered_task_error(
     task = Task(
         id="some-id",
         name="i_dont_exist",
-        arguments=dict(),
+        args=dict(),
         created_at=datetime.now(),
         state=TaskState.CREATED,
     )

@@ -38,7 +38,7 @@ from icij_worker.constants import (
     POSTGRES_TASK_DB_NAME,
     POSTGRES_TASK_ERRORS_TABLE,
     POSTGRES_TASK_RESULTS_TABLE,
-    TASK_ARGUMENTS,
+    TASK_ARGS,
     TASK_ERRORS_TASK_ID,
     TASK_ID,
     TASK_NAME,
@@ -318,7 +318,7 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
 async def _insert_task(cur: AsyncClientCursor, task: Task, namespace: Optional[str]):
     task_as_dict = task.dict(exclude={Task.registry_key.default})
     task_as_dict[TASK_NAMESPACE] = namespace
-    task_as_dict[TASK_ARGUMENTS] = ujson.dumps(jsonable_encoder(task.arguments))
+    task_as_dict[TASK_ARGS] = ujson.dumps(jsonable_encoder(task.args))
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
     col_value_placeholders = sql.SQL(", ").join(
         sql.Placeholder(n) for n in task_as_dict

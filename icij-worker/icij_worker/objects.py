@@ -217,7 +217,7 @@ class Message(Registrable): ...  # pylint: disable=multiple-statements
 class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     id: str
     name: str
-    arguments: Optional[Dict[str, object]] = None
+    args: Optional[Dict[str, object]] = None
     state: TaskState
     progress: Optional[float] = None
     created_at: datetime
@@ -237,7 +237,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         "retries_left",
     ]
 
-    @validator("arguments", pre=True, always=True)
+    @validator("args", pre=True, always=True)
     def args_as_dict(cls, v: Optional[Dict[str, Any]]):
         # pylint: disable=no-self-argument
         if v is None:
@@ -255,13 +255,13 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return values
 
     @classmethod
-    def create(cls, *, task_id: str, task_name: str, arguments: Dict[str, Any]) -> Task:
+    def create(cls, *, task_id: str, task_name: str, args: Dict[str, Any]) -> Task:
         created_at = datetime.now(timezone.utc)
         state = TaskState.CREATED
         return cls(
             id=task_id,
             name=task_name,
-            arguments=arguments,
+            args=args,
             created_at=created_at,
             state=state,
         )
@@ -271,7 +271,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         as_dict.pop("max_retries", None)
         return Task(max_retries=max_retries, **as_dict)
 
-    @validator("arguments", pre=True)
+    @validator("args", pre=True)
     def _validate_args(cls, value: Any):  # pylint: disable=no-self-argument
         if isinstance(value, str):
             value = json.loads(value)
@@ -311,8 +311,8 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         state = state[0]
         if "completedAt" in node:
             node["completedAt"] = node["completedAt"].to_native()
-        if "arguments" in node:
-            node["arguments"] = json.loads(node["arguments"])
+        if "args" in node:
+            node["args"] = json.loads(node["args"])
         if "namespace" in node:
             node.pop("namespace")
         node["state"] = state

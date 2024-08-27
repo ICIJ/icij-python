@@ -21,7 +21,7 @@ def task_0() -> Task:
         name="task-type-0",
         created_at=datetime.now(),
         state=TaskState.CREATED,
-        arguments={"greeted": "world"},
+        args={"greeted": "world"},
     )
     return t
 
@@ -33,7 +33,7 @@ def task_1() -> Task:
         name="task-type-1",
         created_at=datetime.now(),
         state=TaskState.QUEUED,
-        arguments={},
+        args={},
     )
     return t
 
@@ -101,7 +101,7 @@ async def test_save_task_should_not_update_non_updatable_field(
     updates = {
         "name": "another-type",
         "created_at": datetime.now(),
-        "arguments": {"other": "input"},
+        "args": {"other": "input"},
     }
     updated = safe_copy(task, update=updates)
     # When

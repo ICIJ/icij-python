@@ -172,9 +172,7 @@ async def test_worker_negatively_acknowledge(
     assert n_locks == 0
 
 
-_TASK = Task.create(
-    task_id="some-id", task_name="sleep_for", arguments={"duration": 100}
-)
+_TASK = Task.create(task_id="some-id", task_name="sleep_for", args={"duration": 100})
 _EVENTS = (
     ProgressEvent.from_task(
         safe_copy(_TASK, update={"progress": 0.66, "state": TaskState.RUNNING})

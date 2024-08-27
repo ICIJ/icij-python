@@ -144,14 +144,14 @@ async def populate_tasks(rabbit_mq: str, request):
             name="hello_world",
             created_at=datetime.now(),
             state=TaskState.CREATED,
-            arguments={"greeted": "world"},
+            args={"greeted": "world"},
         ),
         Task(
             id="task-1",
             name="hello_world",
             created_at=datetime.now(),
             state=TaskState.CREATED,
-            arguments={"greeted": "goodbye"},
+            args={"greeted": "goodbye"},
         ),
     ]
     async with connection:
@@ -244,7 +244,7 @@ async def test_worker_should_nack_queue_unregistered_task(
     test_amqp_task_manager: AMQPTaskManager,
 ):
     # Given
-    unknown = Task.create(task_id="some-id", task_name="im_unknown", arguments=dict())
+    unknown = Task.create(task_id="some-id", task_name="im_unknown", args=dict())
     task_manager = test_amqp_task_manager
     task_routing = amqp_worker.default_task_routing()
     await task_manager.save_task_(unknown, None)
@@ -314,7 +314,7 @@ async def test_worker_consume_cancel_events(
         name="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
-        arguments={"duration": duration},
+        args={"duration": duration},
         retries_left=retries_left,
     )
     await task_manager.save_task(task)

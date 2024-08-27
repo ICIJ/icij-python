@@ -51,7 +51,7 @@ async def test_task_manager_enqueue(
         "id": "some-id",
         "state": "CREATED",
         "name": "hello_world",
-        "arguments": {"greeted": "world"},
+        "args": {"greeted": "world"},
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
@@ -91,7 +91,7 @@ async def test_task_manager_enqueue_with_namespace(
         "id": "some-id",
         "state": "CREATED",
         "name": "namespaced_hello_world",
-        "arguments": {"greeted": "world"},
+        "args": {"greeted": "world"},
         "retriesLeft": 3,
         "maxRetries": 3,
     }
@@ -174,7 +174,7 @@ async def test_task_manager_requeue(
         datetime.fromisoformat(created_at)
     expected_json = {
         "@type": "Task",
-        "arguments": {"greeted": "world"},
+        "args": {"greeted": "world"},
         "id": "some-id",
         "name": "hello_world",
         "progress": 0.0,

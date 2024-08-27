@@ -11,9 +11,9 @@ from neo4j.exceptions import ResultNotSingleError
 from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_common.pydantic_utils import jsonable_encoder
-
 from icij_worker.constants import (
-    NEO4J_TASK_ARGUMENTS,
+    NEO4J_TASK_ARGS,
+    NEO4J_TASK_ARGUMENTS_DEPRECATED,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     NEO4J_TASK_CANCEL_EVENT_NODE,
@@ -192,8 +192,8 @@ async def _save_task_tx(
     try:
         existing = await res.single(strict=True)
     except ResultNotSingleError:
-        task_props[NEO4J_TASK_ARGUMENTS] = json.dumps(
-            task_props.get(NEO4J_TASK_ARGUMENTS, dict())
+        task_props[NEO4J_TASK_ARGS] = json.dumps(
+            task_props.get(NEO4J_TASK_ARGS, dict())
         )
         task_props[NEO4J_TASK_NAMESPACE] = namespace
     else:
@@ -426,7 +426,7 @@ ON (task.{NEO4J_TASK_NAMESPACE})
 # pylint: disable=line-too-long
 async def migrate_task_inputs_to_arguments_v0_tx(tx: neo4j.AsyncTransaction):
     query = f"""MATCH (task:{NEO4J_TASK_NODE})
-SET task.{NEO4J_TASK_ARGUMENTS} = task.{NEO4J_TASK_INPUTS_DEPRECATED}
+SET task.{NEO4J_TASK_ARGS} = task.{NEO4J_TASK_INPUTS_DEPRECATED}
 REMOVE task.{NEO4J_TASK_INPUTS_DEPRECATED}
 RETURN task
 """
@@ -496,6 +496,18 @@ RETURN error
     await tx.run(query)
 
 
+async def migrate_task_arguments_into_args_v0_tx(
+    tx: neo4j.AsyncTransaction,
+):
+    query = f"""MATCH (task:{NEO4J_TASK_NODE})
+WHERE task.{NEO4J_TASK_ARGUMENTS_DEPRECATED} IS NOT NULL
+SET task.{NEO4J_TASK_ARGS} = task.{NEO4J_TASK_ARGUMENTS_DEPRECATED}  
+REMOVE task.{NEO4J_TASK_ARGUMENTS_DEPRECATED}
+RETURN task
+"""
+    await tx.run(query)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = [
     add_support_for_async_task_tx,
@@ -507,4 +519,5 @@ MIGRATIONS = [
     migrate_task_progress_v0_tx,
     migrate_index_event_dates_v0_tx,
     migrate_task_retries_and_error_v0_tx,
+    migrate_task_arguments_into_args_v0_tx,
 ]
