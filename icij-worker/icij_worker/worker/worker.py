@@ -541,7 +541,7 @@ async def task_wrapper(worker: Worker, task: Task) -> Task:
         raise TaskAlreadyCancelled(task_id=task.id)
     # Parse task to retrieve recoverable errors and max retries
     task_fn, recoverable_errors = worker.parse_task(task)
-    task_inputs = add_missing_args(task_fn, task.arguments)
+    task_inputs = add_missing_args(task_fn, task.args)
     # Retry task until success, fatal error or max retry exceeded
     return await _retry_task(worker, task, task_fn, task_inputs, recoverable_errors)
 
@@ -574,23 +574,21 @@ async def _retry_task(
     return task
 
 
-def add_missing_args(
-    fn: Callable, arguments: Dict[str, Any], **kwargs
-) -> Dict[str, Any]:
+def add_missing_args(fn: Callable, args: Dict[str, Any], **kwargs) -> Dict[str, Any]:
     # We make the choice not to raise in case of missing argument here, the error will
     # be correctly raise when the function is called
     from_kwargs = dict()
     sig = inspect.signature(fn)
     for param_name in sig.parameters:
-        if param_name in arguments:
+        if param_name in args:
             continue
         kwargs_value = kwargs.get(param_name)
         if kwargs_value is not None:
             from_kwargs[param_name] = kwargs_value
     if from_kwargs:
-        arguments = deepcopy(arguments)
-        arguments.update(from_kwargs)
-    return arguments
+        args = deepcopy(args)
+        args.update(from_kwargs)
+    return args
 
 
 def _format_error(error: Exception) -> str:

@@ -49,6 +49,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_add_index_to_task_namespace_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
     migrate_index_event_dates_v0_tx,
+    migrate_task_arguments_into_args_v0_tx,
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
     migrate_task_progress_v0_tx,
@@ -148,6 +149,11 @@ TEST_MIGRATIONS = [
         label="task retries and error occurred_at",
         migration_fn=migrate_task_retries_and_error_v0_tx,
     ),
+    Migration(
+        version="0.10.0",
+        label="rename task arguments into args",
+        migration_fn=migrate_task_arguments_into_args_v0_tx,
+    ),
 ]
 
 
@@ -182,7 +188,7 @@ async def populate_tasks(
     id: 'task-0', 
     name: $taskName,
     createdAt: $now,
-    arguments: '{"greeted": "0"}'
+    args: '{"greeted": "0"}'
  }) 
 RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
@@ -196,7 +202,7 @@ RETURN task"""
     progress: 0.66,
     createdAt: $now,
     retriesLeft: 1,
-    arguments: '{"greeted": "1"}'
+    args: '{"greeted": "1"}'
  }) 
 RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
@@ -417,7 +423,7 @@ def hello_world_task() -> Task:
     task = Task(
         id="some-id",
         name="hello_world",
-        arguments={"greeted": "world"},
+        args={"greeted": "world"},
         state=TaskState.CREATED,
         created_at=datetime.now(),
     )
@@ -429,7 +435,7 @@ def namespaced_hello_world_task() -> Task:
     task = Task(
         id="some-id",
         name="namespaced_hello_world",
-        arguments={"greeted": "world"},
+        args={"greeted": "world"},
         state=TaskState.CREATED,
         created_at=datetime.now(),
     )

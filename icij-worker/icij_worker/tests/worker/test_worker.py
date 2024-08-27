@@ -49,7 +49,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         name="hello_world",
         created_at=created_at,
         state=TaskState.CREATED,
-        arguments={"greeted": "world"},
+        args={"greeted": "world"},
     )
     await task_manager.save_task(task)
 
@@ -79,7 +79,7 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
             progress=1.0,
             created_at=created_at,
             state=TaskState.DONE,
-            arguments={"greeted": "world"},
+            args={"greeted": "world"},
         )
         completed_at = saved_task.completed_at
         assert isinstance(saved_task.completed_at, datetime)
@@ -126,7 +126,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         name="hello_world_sync",
         created_at=created_at,
         state=TaskState.CREATED,
-        arguments={"greeted": "world"},
+        args={"greeted": "world"},
     )
     await task_manager.save_task(task)
 
@@ -156,7 +156,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
             progress=1.0,
             created_at=created_at,
             state=TaskState.DONE,
-            arguments={"greeted": "world"},
+            args={"greeted": "world"},
         )
         completed_at = saved_task.completed_at
         assert isinstance(saved_task.completed_at, datetime)
@@ -500,7 +500,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         name="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
-        arguments={"duration": duration},
+        args={"duration": duration},
     )
     await task_manager.save_task(task)
 
@@ -549,7 +549,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
         name="sleep_for",
         created_at=created_at,
         state=TaskState.CREATED,
-        arguments={"duration": duration},
+        args={"duration": duration},
     )
     await task_manager.save_task(task)
 
@@ -606,7 +606,7 @@ def test_add_missing_args(
         return f"{a}-{b}-{c}"
 
     # When
-    all_args = add_missing_args(fn, arguments=provided_args, **kwargs)
+    all_args = add_missing_args(fn, args=provided_args, **kwargs)
     # Then
     if maybe_output is not None:
         output = fn(**all_args)

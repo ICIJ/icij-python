@@ -91,7 +91,7 @@ async def test_worker_publish_done_task_event_should_not_update_task(
         name: 'hello_world',
         createdAt: $now,
         completedAt: $now,
-        arguments: '{"greeted": "0"}'
+        args: '{"greeted": "0"}'
      }) 
     RETURN task"""
     async with publisher.driver.session() as sess:
@@ -150,7 +150,7 @@ id: $taskId,
 name: 'hello_world',
 createdAt: $now,
 completedAt: $now,
-arguments: '{"greeted": "0"}'
+args: '{"greeted": "0"}'
 }) 
 RETURN task"""
     async with publisher.driver.session() as sess:

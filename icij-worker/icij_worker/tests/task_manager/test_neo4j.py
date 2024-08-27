@@ -85,7 +85,7 @@ async def _populate_results(
     name: 'hello_world',
     createdAt: $now,
     completedAt: $after,
-    arguments: '{"greeted": "2"}'
+    args: '{"greeted": "2"}'
 })
 CREATE (result:_TaskResult { result: '"Hello 2"' })
 CREATE (task)-[:_HAS_RESULT]->(result)
@@ -108,14 +108,14 @@ RETURN task, result"""
             Task(
                 id="task-3",
                 name="hello_world",
-                arguments={"greeted": "3"},
+                args={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
                 retries_left=1,
             ),
             {
                 "id": "task-3",
-                "arguments": '{"greeted": "3"}',
+                "args": '{"greeted": "3"}',
                 "retriesLeft": 1,
                 "state": "CREATED",
                 "name": "hello_world",
@@ -129,14 +129,14 @@ RETURN task, result"""
             Task(
                 id="task-3",
                 name="namespaced_hello_world",
-                arguments={"greeted": "3"},
+                args={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
                 retries_left=1,
             ),
             {
                 "id": "task-3",
-                "arguments": '{"greeted": "3"}',
+                "args": '{"greeted": "3"}',
                 "retriesLeft": 1,
                 "maxRetries": 3,
                 "state": "CREATED",
@@ -152,7 +152,7 @@ RETURN task, result"""
             Task(
                 id="task-1",
                 name="hello_world",
-                arguments={"greeted": "1"},
+                args={"greeted": "1"},
                 state=TaskState.RUNNING,
                 progress=0.8,
                 created_at=_NOW,
@@ -160,7 +160,7 @@ RETURN task, result"""
             ),
             {
                 "id": "task-1",
-                "arguments": '{"greeted": "1"}',
+                "args": '{"greeted": "1"}',
                 "progress": 0.8,
                 "retriesLeft": 0,
                 "state": "RUNNING",
@@ -175,7 +175,7 @@ RETURN task, result"""
             Task(
                 id="task-1",
                 name="namespaced_hello_world",
-                arguments={"greeted": "1"},
+                args={"greeted": "1"},
                 state=TaskState.RUNNING,
                 progress=0.8,
                 created_at=_NOW,
@@ -183,7 +183,7 @@ RETURN task, result"""
             ),
             {
                 "id": "task-1",
-                "arguments": '{"greeted": "1"}',
+                "args": '{"greeted": "1"}',
                 "progress": 0.80,
                 "retriesLeft": 0,
                 "state": "RUNNING",
@@ -199,14 +199,14 @@ RETURN task, result"""
             Task(
                 id="task-1",
                 name="updated_task",
-                arguments={"updated": "input"},
+                args={"updated": "input"},
                 state=TaskState.RUNNING,
                 created_at=_NOW,
                 retries_left=1,
             ),
             {
                 "id": "task-1",
-                "arguments": '{"greeted": "1"}',
+                "args": '{"greeted": "1"}',
                 "progress": 0.66,
                 "retriesLeft": 1,
                 "state": "RUNNING",
@@ -275,7 +275,7 @@ async def test_task_manager_get_task(
     expected_task = Task(
         id="task-1",
         name="hello_world",
-        arguments={"greeted": "1"},
+        args={"greeted": "1"},
         state=TaskState.RUNNING,
         progress=0.66,
         created_at=datetime.now(),
@@ -505,7 +505,7 @@ async def test_task_manager_requeue(neo4j_task_manager: TestableNeo4JTaskManager
 
 
 _TASK = Task.create(
-    task_id="some-task-id", task_name="sleep_for", arguments={"duration": 100}
+    task_id="some-task-id", task_name="sleep_for", args={"duration": 100}
 )
 _EVENTS = (
     ProgressEvent.from_task(

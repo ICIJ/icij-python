@@ -1,7 +1,7 @@
 version: '3.7'
 services:
   icij-python-test-neo4j:
-    container_name: test-neo4j
+    container_name: icij-python-test-neo4j
     image: neo4j:4.4.31
     environment:
       NEO4J_AUTH: neo4j/theneo4jpassword
@@ -18,7 +18,7 @@ services:
 
   icij-python-test-postgres:
     image: postgres
-    container_name: test-postgres
+    container_name: icij-python-test-postgres
     restart: always
     environment:
       POSTGRES_PASSWORD: changeme
