@@ -9,8 +9,6 @@ from enum import Enum, unique
 from functools import lru_cache
 from typing import Callable, ClassVar, Sequence, Union, cast
 
-from psycopg.cursor import BaseCursor
-from psycopg.rows import RowMaker
 from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
 from typing_extensions import Any, Dict, List, Optional, final
@@ -319,7 +317,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return cls(**node)
 
     @classmethod
-    def postgres_row_factory(cls, cursor: BaseCursor[Any, Any]) -> RowMaker[Task]:
+    def postgres_row_factory(cls, cursor: "BaseCursor[Any, Any]") -> "RowMaker[Task]":
 
         def as_row(values: Sequence[Any]) -> Task:
             as_dict = {
@@ -548,8 +546,8 @@ class ResultEvent(ManagerEvent):
 
     @classmethod
     def postgres_row_factory(
-        cls, cursor: BaseCursor[Any, Any]
-    ) -> RowMaker[ResultEvent]:
+        cls, cursor: "BaseCursor[Any, Any]"
+    ) -> "RowMaker[ResultEvent]":
         def as_row(values: Sequence[Any]) -> ResultEvent:
             # pylint: disable=c-extension-no-member
             import ujson
@@ -613,7 +611,9 @@ class ErrorEvent(ManagerEvent):
         )
 
     @classmethod
-    def postgres_row_factory(cls, cursor: BaseCursor[Any, Any]) -> RowMaker[ErrorEvent]:
+    def postgres_row_factory(
+        cls, cursor: "BaseCursor[Any, Any]"
+    ) -> "RowMaker[ErrorEvent]":
         def as_row(values: Sequence[Any]) -> cls:
             # pylint: disable=c-extension-no-member
             import ujson
