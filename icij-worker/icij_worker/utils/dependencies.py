@@ -44,7 +44,6 @@ async def run_deps(
         yield
     except Exception as e:  # pylint: disable=broad-exception-caught
         original_ex = e
-        logger.exception("Exception occurred while opening dependency: %s", e)
     finally:
         to_raise = []
         if original_ex is not None:
