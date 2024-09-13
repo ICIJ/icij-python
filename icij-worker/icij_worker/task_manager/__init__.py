@@ -1,10 +1,9 @@
 import asyncio
-import functools
 import logging
 from abc import ABC, abstractmethod
-from asyncio import Future
+from asyncio import Task as AsyncIOTask
 from functools import cached_property
-from typing import ClassVar, List, final
+from typing import ClassVar, Optional, final
 
 from pydantic import Field
 
@@ -22,7 +21,6 @@ from icij_worker.objects import (
 )
 from icij_worker.task_storage import TaskStorage
 from icij_worker.utils import RegistrableConfig
-from icij_worker.utils.asyncio_ import stop_other_tasks_when_exc
 from icij_worker.utils.registrable import RegistrableFromConfig
 
 logger = logging.getLogger(__name__)
@@ -45,12 +43,12 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     def __init__(self, app: AsyncApp):
         self._app = app
         self._loop = asyncio.get_event_loop()
-        self._loops: List[Future] = []
+        self._consume_loop: Optional[AsyncIOTask] = None
 
     @final
     async def __aenter__(self):
         await self._aenter__()
-        self._start_loops()
+        self._consume_loop = self._loop.create_task(self.consume_events())
 
     async def _aenter__(self):
         pass
@@ -58,7 +56,11 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     @final
     async def __aexit__(self, exc_type, exc_value, tb):
         await self._aenter__()
-        await self._stop_loops()
+        if self._consume_loop is not None:
+            logger.info("cancelling worker event loop...")
+            self._consume_loop.cancel()
+            await self._consume_loop
+            logger.info("worker event loop cancelled")
 
     async def _aexit__(self, exc_type, exc_val, exc_tb):
         pass
@@ -169,17 +171,3 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
 
     @abstractmethod
     async def _requeue(self, task: Task): ...
-
-    def _start_loops(self):
-        self._loops = [self.consume_events()]
-        self._loops = [self._loop.create_task(t) for t in self._loops]
-        callback = functools.partial(stop_other_tasks_when_exc, others=self._loops)
-        for loop in self._loops:
-            loop.add_done_callback(callback)
-
-    async def _stop_loops(self):
-        for loop in self._loops:
-            loop.cancel()
-        await asyncio.wait(self._loops, return_when=asyncio.ALL_COMPLETED)
-        del self._loops
-        self._loops = []
