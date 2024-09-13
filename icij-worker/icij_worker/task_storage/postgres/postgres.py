@@ -116,7 +116,7 @@ class ConnectionManager(OrderedDict[str, C], Generic[C], AbstractAsyncContextMan
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         for conn in self.values():
             await conn.__aexit__(exc_type, exc_val, exc_tb)
-        for k in self:
+        for k in list(self):
             del self[k]
 
 
