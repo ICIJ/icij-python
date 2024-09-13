@@ -68,4 +68,4 @@ async def run_deps(
         if to_raise:
             for e in to_raise:
                 logger.exception("Error while handling dependencies %s!", e)
-            raise RuntimeError(to_raise)
+            raise RuntimeError(to_raise) from to_raise[0]
