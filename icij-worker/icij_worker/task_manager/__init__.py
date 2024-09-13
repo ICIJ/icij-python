@@ -55,7 +55,7 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
 
     @final
     async def __aexit__(self, exc_type, exc_value, tb):
-        await self._aenter__()
+        await self._aexit__(exc_type, exc_value, tb)
         if self._consume_loop is not None:
             logger.info("cancelling worker event loop...")
             self._consume_loop.cancel()
