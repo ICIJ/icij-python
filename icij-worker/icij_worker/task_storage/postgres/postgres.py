@@ -105,7 +105,9 @@ class ConnectionManager(OrderedDict[str, C], Generic[C], AbstractAsyncContextMan
             while self._max_connections - len(self) < 1:
                 old_key = next(iter(self))
                 old_conn = super().__getitem__(old_key)
-                await old_conn.__aexit__(None, None, None)
+                if not old_conn.autocommit:
+                    await old_conn.commit()
+                await old_conn.close()
                 super().__delitem__(old_key)
             conn = await self._conn_factory(key)
             conn = await conn.__aenter__()  # pylint: disable=unnecessary-dunder-call
