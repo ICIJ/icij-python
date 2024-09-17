@@ -4,11 +4,13 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import ClassVar, Dict, Generic, List, Optional, cast
+from typing import ClassVar, Dict, Generic, List, Optional
 
 import pytest
 from psycopg import AsyncClientCursor, AsyncConnection, sql
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB
@@ -53,20 +55,11 @@ class _TestNamespacing(Namespacing):
 
 
 @pytest.fixture(scope="session")
-async def test_postgres_storage_session(
+async def test_postgres_storage(
     test_postgres_config: PostgresStorageConfig,
 ) -> PostgresStorage:
     namespacing = _TestNamespacing()
     storage = test_postgres_config.to_storage(namespacing=namespacing)
-    storage = cast(PostgresStorage, storage)
-    return storage
-
-
-@pytest.fixture
-async def test_postgres_storage(
-    test_postgres_storage_session: PostgresStorage,
-) -> PostgresStorage:
-    storage = test_postgres_storage_session
     async with storage:
         yield storage
 
@@ -171,16 +164,16 @@ async def test_postgres_conn_session(
         await _wipe_registry(conn)
         await create_databases_registry_db(conn, registry_db_name)
 
-    connections: Dict[str, AsyncConnection] = dict()
+    connection_pools: Dict[str, AsyncConnectionPool] = dict()
 
-    async def _factory(db_name: str) -> AsyncConnection:
-        if db_name not in connections:
-            conn = await AsyncConnection.connect(
-                autocommit=True, dbname=db_name, **test_connection_info.kwargs
-            )
-            await conn.__aenter__()  # pylint: disable=unnecessary-dunder-call
-            connections[db_name] = conn
-        return connections[db_name]
+    async def _factory(db_name: str) -> AsyncConnectionPool:
+        if db_name not in connection_pools:
+            kwargs = {"autocommit": True}
+            conninfo = make_conninfo(dbname=db_name, **test_connection_info.kwargs)
+            pool = AsyncConnectionPool(conninfo=conninfo, kwargs=kwargs)
+            await pool.__aenter__()  # pylint: disable=unnecessary-dunder-call
+            connection_pools[db_name] = pool
+        return connection_pools[db_name]
 
     await init_postgres_database(
         TEST_DB,
@@ -198,7 +191,7 @@ async def test_postgres_conn_session(
     )
     async with connection:
         yield connection
-    for c in connections.values():
+    for c in connection_pools.values():
         await c.close()
 
 

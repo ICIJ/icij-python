@@ -13,13 +13,11 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
-    Generic,
     List,
     Optional,
-    OrderedDict,
+    Protocol,
     Set,
     Tuple,
-    TypeVar,
     Union,
 )
 
@@ -28,6 +26,7 @@ from psycopg import AsyncClientCursor, AsyncConnection, AsyncCursor, sql
 from psycopg.conninfo import make_conninfo
 from psycopg.errors import DuplicateDatabase
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import Namespacing, ResultEvent, Task, TaskState
@@ -56,8 +55,11 @@ from icij_worker.task_storage.postgres.db_mate import migrate
 
 logger = logging.getLogger(__name__)
 
-C = TypeVar("C", bound="AsyncContextManager")
-ConnectionFactory = Callable[[str], C]
+
+class ConnectionPoolFactory(Protocol):
+    async def __call__(
+        self, key: str, *, min_size: int, max_size: int
+    ) -> AsyncConnectionPool: ...
 
 
 class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
@@ -88,38 +90,35 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
         return PostgresConnectionInfo(**self_as_connection_info)
 
 
-class ConnectionManager(OrderedDict[str, C], Generic[C], AbstractAsyncContextManager):
-    def __init__(self, conn_factory: ConnectionFactory, max_connections: int):
-        self._max_connections = max_connections
-        self._conn_factory = conn_factory
-        super().__init__()
+class PoolManager(AbstractAsyncContextManager):
+    def __init__(
+        self,
+        pool_factory: ConnectionPoolFactory,
+        *,
+        max_size: Optional[int],
+        min_size: Optional[int],
+    ):
+        # TODO: limit the number of total pools if needed
+        if min_size is not None:
+            min_size = 1
+        self._min_size = min_size
+        if max_size is not None:
+            max_size = min_size
+        self._max_size = max_size
+        self._pool_factory = pool_factory
+        self._exit_stack = AsyncExitStack()
+        self._pools = dict()
 
-    async def get_connection(self, key: str) -> C:
-        create_conn = False
-        conn = None
-        try:
-            conn = self[key]
-        except KeyError:
-            create_conn = True
-        if create_conn:
-            while self._max_connections - len(self) < 1:
-                old_key = next(iter(self))
-                old_conn = super().__getitem__(old_key)
-                if not old_conn.autocommit:
-                    await old_conn.commit()
-                await old_conn.close()
-                super().__delitem__(old_key)
-            conn = await self._conn_factory(key)
-            conn = await conn.__aenter__()  # pylint: disable=unnecessary-dunder-call
-            super().__setitem__(key, conn)
-        super().move_to_end(key)
-        return conn
+    async def get_pool(self, key: str) -> AsyncConnectionPool:
+        if key not in self._pools:
+            self._pools[key] = await self._pool_factory(
+                key, max_size=self._max_size, min_size=self._min_size
+            )
+            await self._exit_stack.enter_async_context(self._pools[key])
+        return self._pools[key]
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        for conn in self.values():
-            await conn.__aexit__(exc_type, exc_val, exc_tb)
-        for k in list(self):
-            del self[k]
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self._exit_stack.__aexit__(exc_type, exc_value, traceback)
 
 
 class PostgresStorage(TaskStorage):
@@ -141,22 +140,24 @@ class PostgresStorage(TaskStorage):
         self._migration_timeout_s = migration_timeout_s
         self._migration_throttle_s = migration_throttle_s
         # Let's try to make the most of the pool while not opening to many connections
-        self._conn_manager = ConnectionManager[AsyncConnection](
-            self._conn_factory, max_connections=self._max_connections
+        self._pool_manager = PoolManager(
+            self._pool_factory, min_size=1, max_size=self._max_connections
         )
         self._task_meta: Dict[str, Tuple[str, str]] = dict()
         self._known_dbs: Set[str] = set()
         self._exit_stack = AsyncExitStack()
 
     async def __aenter__(self):
-        await self._exit_stack.enter_async_context(self._conn_manager)
+        await self._exit_stack.enter_async_context(self._pool_manager)
         await self._refresh_dbs()
 
     async def _refresh_dbs(self):
-        base_conn = await self._conn_manager.get_connection("")
-        await create_databases_registry_db(base_conn, self._registry_db_name)
-        some_conn = await self._conn_manager.get_connection(self._registry_db_name)
-        self._known_dbs.update(await retrieve_dbs(some_conn))
+        base_pool = await self._pool_manager.get_pool("")
+        async with base_pool.connection() as conn:
+            await create_databases_registry_db(conn, self._registry_db_name)
+        registry_pool = await self._pool_manager.get_pool(self._registry_db_name)
+        async with registry_pool.connection() as conn:
+            self._known_dbs.update(await retrieve_dbs(conn))
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
@@ -165,46 +166,50 @@ class PostgresStorage(TaskStorage):
         db_name = self._namespacing.postgres_db(namespace)
         if db_name not in self._known_dbs:
             await self._ensure_db(db_name)
-        conn = await self._conn_manager.get_connection(db_name)
-        async with conn.cursor(row_factory=dict_row) as cur:
-            async with conn.transaction():
-                task_exists = await _task_exists(cur, task.id)
-                if task_exists:
-                    await _update_task(cur, task)
-                else:
-                    await _insert_task(cur, task, namespace)
+        pool = await self._pool_manager.get_pool(db_name)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                async with conn.transaction():
+                    task_exists = await _task_exists(cur, task.id)
+                    if task_exists:
+                        await _update_task(cur, task)
+                    else:
+                        await _insert_task(cur, task, namespace)
         self._task_meta[task.id] = (db_name, namespace)
         is_new = not task_exists
         return is_new
 
     async def save_result(self, result: ResultEvent):
         task_db = await self._get_task_db(result.task_id)
-        conn = await self._conn_manager.get_connection(task_db)
         params = result.dict(
             include={TASK_RESULT_TASK_ID, TASK_RESULT_RESULT, TASK_RESULT_CREATED_AT},
             exclude={ResultEvent.registry_key.default},
         )
-        params[TASK_RESULT_RESULT] = ujson.dumps(params[TASK_RESULT_RESULT])
-        async with conn.cursor() as cur:
-            await cur.execute(_INSERT_RESULT_QUERY, params)
+        pool = await self._pool_manager.get_pool(task_db)
+        async with pool.connection() as conn:
+            params[TASK_RESULT_RESULT] = ujson.dumps(params[TASK_RESULT_RESULT])
+            async with conn.cursor() as cur:
+                await cur.execute(_INSERT_RESULT_QUERY, params)
 
     async def save_error(self, error: ErrorEvent):
         task_db = await self._get_task_db(error.task_id)
-        conn = await self._conn_manager.get_connection(task_db)
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await _insert_error(cur, error)
+        pool = await self._pool_manager.get_pool(task_db)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await _insert_error(cur, error)
 
     async def get_task(self, task_id: str) -> Task:
         task_db = await self._get_task_db(task_id)
-        conn = await self._conn_manager.get_connection(task_db)
-        async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:
-            await cur.execute(_GET_TASK_QUERY, (task_id,))
-            tasks = await cur.fetchall()
-            if not tasks:
-                raise UnknownTask(task_id)
-            if len(tasks) != 1:
-                raise ValueError(f"found several task with id {task_id}")
-            return tasks[0]
+        pool = await self._pool_manager.get_pool(task_db)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:
+                await cur.execute(_GET_TASK_QUERY, (task_id,))
+                tasks = await cur.fetchall()
+        if not tasks:
+            raise UnknownTask(task_id)
+        if len(tasks) != 1:
+            raise ValueError(f"found several task with id {task_id}")
+        return tasks[0]
 
     async def get_tasks(
         self,
@@ -215,38 +220,42 @@ class PostgresStorage(TaskStorage):
         **kwargs,
     ) -> List[Task]:
         tasks_db = self._namespacing.postgres_db(namespace)
-        conn = await self._conn_manager.get_connection(tasks_db)
-        async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:
-            tasks = [
-                t
-                async for t in _get_tasks(
-                    cur, namespace=namespace, task_name=task_name, state=state
-                )
-            ]
-            return tasks
+        pool = await self._pool_manager.get_pool(tasks_db)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:
+                tasks = [
+                    t
+                    async for t in _get_tasks(
+                        cur, namespace=namespace, task_name=task_name, state=state
+                    )
+                ]
+        return tasks
 
     async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
         tasks_db = await self._get_task_db(task_id)
-        conn = await self._conn_manager.get_connection(tasks_db)
-        async with conn.cursor(row_factory=ErrorEvent.postgres_row_factory) as cur:
-            await cur.execute(_GET_TASK_ERRORS_QUERY, (task_id,))
-            errors = await cur.fetchall()
+        pool = await self._pool_manager.get_pool(tasks_db)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=ErrorEvent.postgres_row_factory) as cur:
+                await cur.execute(_GET_TASK_ERRORS_QUERY, (task_id,))
+                errors = await cur.fetchall()
         return errors
 
     async def get_task_result(self, task_id: str) -> ResultEvent:
         tasks_db = await self._get_task_db(task_id)
-        conn = await self._conn_manager.get_connection(tasks_db)
-        async with conn.cursor(row_factory=ResultEvent.postgres_row_factory) as cur:
-            await cur.execute(_GET_TASK_RESULT_QUERY, (task_id,))
-            res = await cur.fetchone()
+        pool = await self._pool_manager.get_pool(tasks_db)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=ResultEvent.postgres_row_factory) as cur:
+                await cur.execute(_GET_TASK_RESULT_QUERY, (task_id,))
+                res = await cur.fetchone()
         return res
 
     async def get_task_namespace(self, task_id: str) -> Optional[str]:
         tasks_db = await self._get_task_db(task_id)
-        conn = await self._conn_manager.get_connection(tasks_db)
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(_GET_TASK_NAMESPACE_QUERY, (task_id,))
-            ns = await cur.fetchone()
+        pool = await self._pool_manager.get_pool(tasks_db)
+        async with pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(_GET_TASK_NAMESPACE_QUERY, (task_id,))
+                ns = await cur.fetchone()
         if ns is None:
             raise UnknownTask(task_id)
         ns = ns["task_ns"]
@@ -255,7 +264,7 @@ class PostgresStorage(TaskStorage):
     async def init_database(self, db_name: str):
         await init_database(
             db_name,
-            self._conn_manager.get_connection,
+            self._pool_manager.get_pool,
             registry_db_name=self._registry_db_name,
             connection_info=self._connection_info,
             migration_timeout_s=self._migration_timeout_s,
@@ -273,23 +282,32 @@ class PostgresStorage(TaskStorage):
     async def _refresh_task_meta(self):
         await self._refresh_dbs()
         for db_name in self._known_dbs:
-            conn = await self._conn_manager.get_connection(db_name)
+            pool = await self._pool_manager.get_pool(db_name)
             db_meta = dict()
-            async for task_meta in _tasks_meta(conn):
-                db_meta[task_meta[TASK_ID]] = (db_name, task_meta[TASK_NAMESPACE])
+            async with pool.connection() as conn:
+                async for task_meta in _tasks_meta(conn):
+                    db_meta[task_meta[TASK_ID]] = (db_name, task_meta[TASK_NAMESPACE])
             self._task_meta.update(db_meta)
 
-    async def _conn_factory(self, db_name: str) -> AsyncConnection:
+    async def _pool_factory(
+        self, key: str, *, min_size: int, max_size: int
+    ) -> AsyncConnectionPool:
         kwargs = copy(self._connection_info.kwargs)
-        if db_name is not None:
-            kwargs["dbname"] = db_name
+        if key is not None:
+            kwargs["dbname"] = key
+        kwargs["cursor_factory"] = AsyncClientCursor
         # Use autocommit transactions to avoid psycopg creating transactions at each
         # statement and keeping them open forever:
         # https://www.psycopg.org/psycopg3/docs/basic/transactions.html
-        conn = await AsyncConnection.connect(
-            autocommit=True, cursor_factory=AsyncClientCursor, **kwargs
+        kwargs["autocommit"] = True
+        pool = AsyncConnectionPool(
+            kwargs=kwargs,
+            check=AsyncConnectionPool.check_connection,
+            min_size=min_size,
+            max_size=max_size,
+            num_workers=1,
         )
-        return conn
+        return pool
 
     async def _ensure_db(self, db_name):
         await self._refresh_dbs()
@@ -457,7 +475,7 @@ async def _migration_lock(
 
 async def init_database(
     db_name: str,
-    conn_factory: Callable[[str], Awaitable[AsyncConnection]],
+    pool_factory: Callable[[str], Awaitable[AsyncConnectionPool]],
     *,
     registry_db_name: str,
     connection_info: PostgresConnectionInfo,
@@ -466,29 +484,31 @@ async def init_database(
 ):
     # Create DB
     default_db = ""
-    base_conn = await conn_factory(default_db)
-    async with base_conn.cursor() as cur:
-        old_autocommit = base_conn.autocommit
-        await base_conn.set_autocommit(True)
-        try:
-            await cur.execute(
-                sql.SQL("CREATE DATABASE {table};").format(
-                    table=sql.Identifier(db_name)
+    base_pool = await pool_factory(default_db)
+    async with base_pool.connection() as base_conn:
+        async with base_conn.cursor() as cur:
+            old_autocommit = base_conn.autocommit
+            await base_conn.set_autocommit(True)
+            try:
+                await cur.execute(
+                    sql.SQL("CREATE DATABASE {table};").format(
+                        table=sql.Identifier(db_name)
+                    )
                 )
-            )
-        except DuplicateDatabase:
-            pass
-        await base_conn.set_autocommit(old_autocommit)
-    registry_conn = await conn_factory(registry_db_name)
-    await _insert_db_into_registry(registry_conn, db_name=db_name)
-    async with _migration_lock(
-        registry_conn,
-        db_name,
-        timeout_s=migration_timeout_s,
-        throttle_s=migration_throttle_s,
-    ):
-        # Migrate it
-        migrate(connection_info, db_name, timeout_s=migration_timeout_s)
+            except DuplicateDatabase:
+                pass
+            await base_conn.set_autocommit(old_autocommit)
+    registry_pool = await pool_factory(registry_db_name)
+    async with registry_pool.connection() as registry_conn:
+        await _insert_db_into_registry(registry_conn, db_name=db_name)
+        async with _migration_lock(
+            registry_conn,
+            db_name,
+            timeout_s=migration_timeout_s,
+            throttle_s=migration_throttle_s,
+        ):
+            # Migrate it
+            migrate(connection_info, db_name, timeout_s=migration_timeout_s)
     logger.info("database %s successfully initialized", db_name)
 
 
