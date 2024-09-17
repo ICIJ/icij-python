@@ -643,6 +643,7 @@ files = [
 
 [package.dependencies]
 psycopg-binary = {version = "3.2.1", optional = true, markers = "implementation_name != \"pypy\" and extra == \"binary\""}
+psycopg-pool = {version = "*", optional = true, markers = "extra == \"pool\""}
 typing-extensions = ">=4.4"
 tzdata = {version = "*", markers = "sys_platform == \"win32\""}
 
@@ -715,6 +716,20 @@ files = [
     {file = "psycopg_binary-3.2.1-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:21927f41c4d722ae8eb30d62a6ce732c398eac230509af5ba1749a337f8a63e2"},
     {file = "psycopg_binary-3.2.1-cp39-cp39-win_amd64.whl", hash = "sha256:921f0c7f39590763d64a619de84d1b142587acc70fd11cbb5ba8fa39786f3073"},
 ]
+
+[[package]]
+name = "psycopg-pool"
+version = "3.2.3"
+description = "Connection Pool for Psycopg"
+optional = true
+python-versions = ">=3.8"
+files = [
+    {file = "psycopg_pool-3.2.3-py3-none-any.whl", hash = "sha256:53bd8e640625e01b2927b2ad96df8ed8e8f91caea4597d45e7673fc7bbb85eb1"},
+    {file = "psycopg_pool-3.2.3.tar.gz", hash = "sha256:bb942f123bef4b7fbe4d55421bd3fb01829903c95c0f33fd42b7e94e5ac9b52a"},
+]
+
+[package.dependencies]
+typing-extensions = ">=4.6"
 
 [[package]]
 name = "pydantic"
@@ -1166,4 +1181,4 @@ neo4j = ["neo4j"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "62390e735a9c7745a5698af31bbcf9bc0ee4e44d4f7d64413867aeb21f0d2134"
+content-hash = "49a17df8f84ba462c8a62278453cf8f8ca1181781be798956f9ac715505829bd"
