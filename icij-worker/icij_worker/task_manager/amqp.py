@@ -64,9 +64,6 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             inactive_after_s=inactive_after_s,
         )
         self._storage = task_store
-
-        self._loops = set()
-
         self._task_x: Optional[AbstractExchange] = None
         self._worker_evt_x: Optional[AbstractExchange] = None
         self._manager_messages_it: Optional[AbstractQueueIterator] = None
@@ -97,7 +94,6 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
                 self.manager_evt_routing(), declare_exchanges=False
             )
         )[0]
-        logger.info("starting consume loops..")
         return self
 
     async def _aexit__(self, exc_type, exc_val, exc_tb):
