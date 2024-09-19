@@ -7,7 +7,12 @@ from typing import ClassVar, Dict, List, Optional, Type
 
 import itertools
 import pytest
-from aio_pika import Message as AMQPMessage, RobustConnection, connect_robust
+from aio_pika import (
+    ExchangeType,
+    Message as AMQPMessage,
+    RobustConnection,
+    connect_robust,
+)
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
@@ -583,7 +588,9 @@ async def test_worker_connection_workflow(
         await route_creator._create_routing(route_creator.default_task_routing())
         await route_creator._create_routing(route_creator.manager_evt_routing())
         await route_creator.channel.declare_exchange(
-            route_creator.worker_evt_routing().exchange.name, durable=True
+            route_creator.worker_evt_routing().exchange.name,
+            durable=True,
+            type=ExchangeType.FANOUT,
         )
         # When
         msg = "Failed to start worker"
