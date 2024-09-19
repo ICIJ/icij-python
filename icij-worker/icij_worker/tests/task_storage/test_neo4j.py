@@ -20,6 +20,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_arguments_into_args_v0_tx,
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
+    migrate_task_namespace_into_group_v0,
     migrate_task_progress_v0_tx,
     migrate_task_retries_and_error_v0_tx,
     migrate_task_type_to_name_v0,
@@ -140,29 +141,52 @@ RETURN task"""
 async def populate_tasks_legacy_v4(neo4j_test_driver: neo4j.AsyncDriver):
     task_name = "hello_world"
     query_0 = """CREATE (task:_Task:QUEUED {
-        namespace: $namespace,
-        id: 'task-0', 
-        name: $taskName,
-        createdAt: $now,
-        arguments: '{"greeted": "0"}'
-     }) 
-    RETURN task"""
+    namespace: $namespace,
+    id: 'task-0', 
+    name: $taskName,
+    createdAt: $now,
+    arguments: '{"greeted": "0"}'
+ }) 
+RETURN task"""
     await neo4j_test_driver.execute_query(
         query_0, now=_NOW, taskName=task_name, namespace=None
     )
     query_1 = """CREATE (task:_Task:RUNNING {
-        id: 'task-1', 
-        namespace: $namespace,
-        name: $taskName,
-        progress: 0.66,
-        createdAt: $now,
-        retriesLeft: 1,
-        arguments: '{"greeted": "1"}'
-     }) 
-    RETURN task"""
+id: 'task-1', 
+namespace: $namespace,
+name: $taskName,
+progress: 0.66,
+createdAt: $now,
+retriesLeft: 1,
+arguments: '{"greeted": "1"}'
+}) 
+RETURN task"""
     await neo4j_test_driver.execute_query(
         query_1, now=_NOW, taskName=task_name, namespace=None
     )
+
+
+@pytest.fixture(scope="function")
+async def populate_tasks_legacy_v5(neo4j_test_driver: neo4j.AsyncDriver):
+    query_0 = """CREATE (task:_Task:QUEUED {
+    namespace: 'hello_world_namespace',
+    id: 'task-0', 
+    name: 'hello_world',
+    createdAt: $now,
+    args: '{"greeted": "0"}'
+ }) 
+RETURN task"""
+    await neo4j_test_driver.execute_query(query_0, now=_NOW)
+    query_1 = """CREATE (task:_Task:RUNNING {
+    id: 'task-1', 
+    name: 'hello_world',
+    progress: 0.66,
+    createdAt: $now,
+    retriesLeft: 1,
+    args: '{"greeted": "1"}'
+ }) 
+RETURN task"""
+    await neo4j_test_driver.execute_query(query_1, now=_NOW)
 
 
 @pytest.fixture(scope="function")
@@ -333,7 +357,7 @@ async def test_migrate_task_inputs_to_arguments_v0_tx(
     for t in expected:
         t.pop("createdAt")
     expected = sorted(expected, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(namespace=None)
+    retrieved_tasks = await task_manager.get_tasks(group=None)
     retrieved_tasks = [
         t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
     ]
@@ -386,7 +410,7 @@ ON (task.{NEO4J_TASK_TYPE_DEPRECATED})"""
         for t in expected:
             t.pop("createdAt")
         expected = sorted(expected, key=lambda x: x["id"])
-        retrieved_tasks = await task_manager.get_tasks(namespace=None)
+        retrieved_tasks = await task_manager.get_tasks(group=None)
         retrieved_tasks = [
             t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
         ]
@@ -430,7 +454,7 @@ async def test_migrate_task_progress_v0_tx(
     for t in expected:
         t.pop("createdAt")
     expected = sorted(expected, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(namespace=None)
+    retrieved_tasks = await task_manager.get_tasks(group=None)
     retrieved_tasks = [
         t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
     ]
@@ -499,7 +523,7 @@ async def test_migrate_task_retries_and_error_v0_tx(
     for t in expected_tasks:
         t.pop("createdAt")
     expected_tasks = sorted(expected_tasks, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(namespace=None)
+    retrieved_tasks = await task_manager.get_tasks(group=None)
     retrieved_tasks = [t.dict(by_alias=True) for t in retrieved_tasks]
     for t in retrieved_tasks:
         t.pop("createdAt")
@@ -573,7 +597,69 @@ async def test_migrate_task_arguments_into_args_v0_tx(
         for t in expected:
             t.pop("createdAt")
         expected = sorted(expected, key=lambda x: x["id"])
-        retrieved_tasks = await task_manager.get_tasks(namespace=None)
+        retrieved_tasks = await task_manager.get_tasks(group=None)
+        retrieved_tasks = [
+            t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
+        ]
+        for t in retrieved_tasks:
+            t.pop("createdAt")
+        retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
+        assert retrieved_tasks == expected
+
+
+async def test_migrate_task_namespace_into_group_v0(
+    neo4j_task_manager: Neo4JTaskManager,
+    populate_tasks_legacy_v5,  # pylint: disable=unused-argument
+):
+    # Given
+    task_manager = neo4j_task_manager
+    driver = neo4j_task_manager.driver
+    create_legacy_index = f"""CREATE INDEX task_type_index
+FOR (task:_Task) 
+ON (task.{NEO4J_TASK_TYPE_DEPRECATED})"""
+    await driver.execute_query(create_legacy_index)
+    # When
+    async with driver.session() as sess:
+        await migrate_task_namespace_into_group_v0(sess)
+        # Then
+        indexes_res = await sess.run("SHOW INDEXES")
+        existing_indexes = set()
+        async for rec in indexes_res:
+            existing_indexes.add(rec["name"])
+        assert "index_task_group" in existing_indexes
+        assert "index_task_namespace" not in existing_indexes
+        expected = [
+            Task(
+                id="task-0",
+                name="hello_world",
+                args={"greeted": "0"},
+                state=TaskState.QUEUED,
+                created_at=datetime.now(),
+            ),
+            Task(
+                id="task-1",
+                name="hello_world",
+                args={"greeted": "1"},
+                state=TaskState.RUNNING,
+                progress=0.66,
+                created_at=datetime.now(),
+                retries_left=1,
+            ),
+        ]
+        expected = [t.dict(by_alias=True, exclude_unset=True) for t in expected]
+        for t in expected:
+            t.pop("createdAt")
+        expected = sorted(expected, key=lambda x: x["id"])
+        retrieved_tasks = await task_manager.get_tasks(group="hello_world_namespace")
+        retrieved_tasks = [
+            t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
+        ]
+        for t in retrieved_tasks:
+            t.pop("createdAt")
+        retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
+        assert retrieved_tasks == expected[:1]
+
+        retrieved_tasks = await task_manager.get_tasks(group=None)
         retrieved_tasks = [
             t.dict(by_alias=True, exclude_unset=True) for t in retrieved_tasks
         ]

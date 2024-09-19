@@ -26,20 +26,20 @@ except ImportError:
 POSTGRES_DEFAULT = "postgres"
 
 
-class Namespacing:
-    """Override this class to implement your own mapping between task namespace and
-    DBs/amqp queues and so on..."""
+class RoutingStrategy:
+    """Override this class to implement your own routing strategy between task groups
+    and DBs, amqp queues and so on..."""
 
-    def app_tasks_filter(self, *, task_namespace: str, app_namespace: str) -> bool:
-        """Used to filter app task so that the app can be started with a restricted
-        namespace. Useful when tasks from the same app must be run by different workers
+    def app_tasks_filter(self, *, task_group: str, app_group: str) -> bool:
+        """Used to filter app tasks so that the app can be started with a restricted
+        group. Useful when tasks from the same app must be run by different workers
         """
-        return task_namespace.startswith(app_namespace)
+        return task_group.startswith(app_group)
 
     @classmethod
     @lru_cache
-    def amqp_task_routing(cls, task_namespace: Optional[str]) -> Routing:
-        """Used to route task with the right AMQP routing key based on the namespace"""
+    def amqp_task_routing(cls, task_group: Optional[str]) -> Routing:
+        """Used to route task with the right AMQP routing key based on the group"""
         # Overriding this default might require overriding AMQPTaskManager/AMQPWorker
         # so that they communicate correctly
         from icij_worker.utils.amqp import AMQPMixin
@@ -48,45 +48,45 @@ class Namespacing:
         exchange_name = default_task_routing.exchange.name
         routing_key = default_task_routing.routing_key
         queue_name = default_task_routing.queue_name
-        if task_namespace is not None:
-            routing_key += f".{task_namespace}"
-            queue_name += f".{task_namespace}"
+        if task_group is not None:
+            routing_key += f".{task_group}"
+            queue_name += f".{task_group}"
 
         return Routing(
             exchange=Exchange(name=exchange_name, type=ExchangeType.DIRECT),
             routing_key=routing_key,
             queue_name=queue_name,
             queue_args=default_task_routing.queue_args,
-            # TODO: route DLQ by namespace ???
+            # TODO: route DLQ by group ???
             dead_letter_routing=default_task_routing.dead_letter_routing,
         )
 
     @classmethod
-    def db_filter_factory(cls, worker_namespace: str) -> Callable[[str], bool]:
+    def db_filter_factory(cls, worker_group: str) -> Callable[[str], bool]:
         """Used during DB task polling to poll only from the DBs supported by the
-        worker namespace.
+        worker group.
 
         This factory should return a callable which will take the DB name and
-         return whether the DB is supported for that worker namespace
+         return whether the DB is supported for that worker group
         """
         # pylint: disable=unused-argument
         # By default, workers are allowed to listen to all DBs
         return lambda db_name: True
 
     @classmethod
-    def neo4j_db(cls, namespace: Optional[str]) -> str:
+    def neo4j_db(cls, group: Optional[str]) -> str:
         # pylint: disable=unused-argument
-        # By default, task from all namespaces are saved in the default neo4j db
+        # By default, task from all groups are saved in the default neo4j db
         from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
 
         return NEO4J_COMMUNITY_DB
 
     @classmethod
-    def postgres_db(cls, namespace: Optional[str]) -> str:
+    def postgres_db(cls, group: Optional[str]) -> str:
         # pylint: disable=unused-argument
         return POSTGRES_DEFAULT
 
     @classmethod
-    def test_db(cls, namespace: Optional[str]) -> str:
+    def test_db(cls, group: Optional[str]) -> str:
         # pylint: disable=unused-argument
         return TEST_DB

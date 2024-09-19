@@ -27,7 +27,7 @@ from icij_worker import (
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
-from icij_worker.namespacing import Routing
+from icij_worker.routing_strategy import Routing
 from icij_worker.objects import Message, TaskState, WorkerEvent
 from icij_worker.utils.amqp import AMQPConfigMixin, AMQPMixin
 
@@ -48,7 +48,7 @@ class AMQPWorker(Worker, AMQPMixin):
         app: AsyncApp,
         worker_id: Optional[str] = None,
         *,
-        namespace: Optional[str],
+        group: Optional[str],
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
@@ -59,7 +59,7 @@ class AMQPWorker(Worker, AMQPMixin):
         super().__init__(
             app,
             worker_id,
-            namespace=namespace,
+            group=group,
             handle_signals=handle_signals,
             teardown_dependencies=teardown_dependencies,
         )
@@ -111,7 +111,7 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _bind_task_queue(self):
-        task_routing = self.task_routing(self._namespace)
+        task_routing = self.task_routing(self._group)
         if self._app.config.max_task_queue_size is not None:
             queue_args = deepcopy(task_routing.queue_args)
             queue_args["x-max-length"] = self._app.config.max_task_queue_size
@@ -201,8 +201,8 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._publisher.publish_error(error)
 
     @lru_cache()
-    def task_routing(self, namespace: Optional[str]) -> Routing:
-        routing = self._namespacing.amqp_task_routing(namespace)
+    def task_routing(self, group: Optional[str]) -> Routing:
+        routing = self._namespacing.amqp_task_routing(group)
         return routing
 
     def _create_publisher(self) -> AMQPPublisher:

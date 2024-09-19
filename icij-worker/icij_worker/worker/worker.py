@@ -36,7 +36,7 @@ from icij_worker.exceptions import (
     UnknownTask,
     UnregisteredTask,
 )
-from icij_worker.namespacing import Namespacing
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import (
     CancelEvent,
     CancelledEvent,
@@ -65,7 +65,7 @@ class Worker(
         app: AsyncApp,
         worker_id: Optional[str] = None,
         *,
-        namespace: Optional[str],
+        group: Optional[str],
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
     ):
@@ -76,7 +76,7 @@ class Worker(
         if worker_id is None:
             worker_id = self._create_worker_id()
         self._id = worker_id
-        self._namespace = namespace
+        self._group = group
         self._teardown_dependencies = teardown_dependencies
         self._graceful_shutdown = True
         self._loop = asyncio.get_event_loop()
@@ -100,8 +100,8 @@ class Worker(
         return self._cancel_lock
 
     @property
-    def _namespacing(self) -> Namespacing:
-        return self._app.namespacing
+    def _namespacing(self) -> RoutingStrategy:
+        return self._app.routing_strategy
 
     @functools.cached_property
     def id(self) -> str:

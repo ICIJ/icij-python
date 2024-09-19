@@ -29,7 +29,7 @@ def mock_failing_worker(mock_db: Path, request) -> MockWorker:
     worker = MockWorker(
         app,
         "test-worker",
-        namespace=None,
+        group=None,
         db_path=mock_db,
         poll_interval_s=0.1,
     )
@@ -395,7 +395,7 @@ async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWor
         created_at=created_at,
         state=TaskState.CREATED,
     ).with_max_retries(3)
-    await task_manager.save_task_(task, namespace=None)
+    await task_manager.save_task_(task, group=None)
 
     # When
     await task_manager.enqueue(task)

@@ -52,6 +52,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_arguments_into_args_v0_tx,
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
+    migrate_task_namespace_into_group_v0,
     migrate_task_progress_v0_tx,
     migrate_task_retries_and_error_v0_tx,
     migrate_task_type_to_name_v0,
@@ -154,6 +155,11 @@ TEST_MIGRATIONS = [
         label="rename task arguments into args",
         migration_fn=migrate_task_arguments_into_args_v0_tx,
     ),
+    Migration(
+        version="0.11.0",
+        label="rename task namespace into group",
+        migration_fn=migrate_task_namespace_into_group_v0,
+    ),
 ]
 
 
@@ -179,12 +185,12 @@ _NOW = datetime.now()
 async def populate_tasks(
     neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[Task]:
-    namespace = getattr(request, "param", None)
+    group = getattr(request, "param", None)
     task_name = "hello_world"
-    if namespace is not None:
-        task_name = f"namespaced_{task_name}"
+    if group is not None:
+        task_name = f"grouped_{task_name}"
     query_0 = """CREATE (task:_Task:QUEUED {
-    namespace: $namespace,
+    group: $group,
     id: 'task-0', 
     name: $taskName,
     createdAt: $now,
@@ -192,12 +198,12 @@ async def populate_tasks(
  }) 
 RETURN task"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=_NOW, taskName=task_name, namespace=namespace
+        query_0, now=_NOW, taskName=task_name, group=group
     )
     t_0 = Task.from_neo4j(recs_0[0])
     query_1 = """CREATE (task:_Task:RUNNING {
     id: 'task-1', 
-    namespace: $namespace,
+    group: $group,
     name: $taskName,
     progress: 0.66,
     createdAt: $now,
@@ -206,7 +212,7 @@ RETURN task"""
  }) 
 RETURN task"""
     recs_1, _, _ = await neo4j_async_app_driver.execute_query(
-        query_1, now=_NOW, taskName=task_name, namespace=namespace
+        query_1, now=_NOW, taskName=task_name, group=group
     )
     t_1 = Task.from_neo4j(recs_1[0])
     return [t_0, t_1]
@@ -216,13 +222,13 @@ RETURN task"""
 async def populate_cancel_events(
     populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
 ) -> List[CancelEvent]:
-    namespace = getattr(request, "param", None)
+    group = getattr(request, "param", None)
     query_0 = """MATCH (task:_Task { id: $taskId })
-SET task.namespace = $namespace
+SET task.group = $group
 CREATE (task)-[:_CANCELLED_BY]->(event:_CancelEvent { requeue: false, effective: false, cancelledAt: $now }) 
 RETURN task, event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
-        query_0, now=datetime.now(), taskId=populate_tasks[0].id, namespace=namespace
+        query_0, now=datetime.now(), taskId=populate_tasks[0].id, group=group
     )
     return [CancelEvent.from_neo4j(recs_0[0])]
 
@@ -431,10 +437,10 @@ def hello_world_task() -> Task:
 
 
 @pytest.fixture(scope="session")
-def namespaced_hello_world_task() -> Task:
+def grouped_hello_world_task() -> Task:
     task = Task(
         id="some-id",
-        name="namespaced_hello_world",
+        name="grouped_hello_world",
         args={"greeted": "world"},
         state=TaskState.CREATED,
         created_at=datetime.now(),
@@ -533,7 +539,7 @@ def mock_worker(mock_db: Path, request) -> MockWorker:
     worker = MockWorker(
         app,
         "test-worker",
-        namespace=param.get("namespace"),
+        group=param.get("group"),
         db_path=mock_db,
         poll_interval_s=0.1,
         teardown_dependencies=False,

@@ -16,10 +16,10 @@ from icij_worker.constants import (
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_EFFECTIVE,
     NEO4J_TASK_CANCEL_EVENT_NODE,
+    NEO4J_TASK_GROUP,
     NEO4J_TASK_LOCK_NODE,
     NEO4J_TASK_LOCK_TASK_ID,
     NEO4J_TASK_LOCK_WORKER_ID,
-    NEO4J_TASK_NAMESPACE,
     NEO4J_TASK_NODE,
 )
 from icij_worker import AsyncApp, AsyncBackend, Task, TaskState, Worker, WorkerConfig
@@ -63,7 +63,7 @@ class Neo4jWorkerConfig(WorkerConfig):
         return driver
 
 
-def _no_filter(namespace: str) -> bool:
+def _no_filter(group: str) -> bool:
     # pylint: disable=unused-argument
     return True
 
@@ -76,15 +76,15 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
         app: AsyncApp,
         worker_id: Optional[str] = None,
         *,
-        namespace: Optional[str],
+        group: Optional[str],
         driver: neo4j.AsyncDriver,
         poll_interval_s: float,
         **kwargs,
     ):
-        super().__init__(app, worker_id, namespace=namespace, **kwargs)
+        super().__init__(app, worker_id, group=group, **kwargs)
         super(Worker, self).__init__(driver)
-        if self._namespace is not None:
-            db_filter = self._namespacing.db_filter_factory(self._namespace)
+        if self._group is not None:
+            db_filter = self._namespacing.db_filter_factory(self._group)
         else:
             db_filter = _no_filter
         self._db_filter: Callable[[str], bool] = db_filter
@@ -103,9 +103,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
     async def _consume(self) -> Task:
         task = await self._consume_(
-            functools.partial(
-                _consume_task_tx, namespace=self._namespace, worker_id=self.id
-            ),
+            functools.partial(_consume_task_tx, group=self._group, worker_id=self.id),
             refresh_interval_s=self._poll_interval_s,
             db_filter=self._db_filter,
         )
@@ -113,7 +111,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
     async def _consume_worker_events(self) -> WorkerEvent:
         return await self._consume_(
-            functools.partial(_consume_worker_events_tx, namespace=self._namespace),
+            functools.partial(_consume_worker_events_tx, group=self._group),
             refresh_interval_s=self._poll_interval_s,
             db_filter=self._db_filter,
         )
@@ -135,11 +133,11 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
 
 async def _consume_task_tx(
-    tx: neo4j.AsyncTransaction, *, worker_id: str, namespace: Optional[str]
+    tx: neo4j.AsyncTransaction, *, worker_id: str, group: Optional[str]
 ) -> Optional[neo4j.Record]:
     where_ns = ""
-    if namespace is not None:
-        where_ns = f"WHERE t.{NEO4J_TASK_NAMESPACE} = $namespace"
+    if group is not None:
+        where_ns = f"WHERE t.{NEO4J_TASK_GROUP} = $group"
     query = f"""MATCH (t:{NEO4J_TASK_NODE}:`{TaskState.QUEUED.value}`)
 {where_ns}
 WITH t
@@ -152,7 +150,7 @@ CREATE (lock:{NEO4J_TASK_LOCK_NODE} {{
 }})
 RETURN task"""
     labels = [NEO4J_TASK_NODE, TaskState.RUNNING.value]
-    res = await tx.run(query, workerId=worker_id, labels=labels, namespace=namespace)
+    res = await tx.run(query, workerId=worker_id, labels=labels, group=group)
     try:
         task = await res.single(strict=True)
     except ResultNotSingleError:
@@ -163,11 +161,11 @@ RETURN task"""
 
 
 async def _consume_worker_events_tx(
-    tx: neo4j.AsyncTransaction, namespace: Optional[str], **_
+    tx: neo4j.AsyncTransaction, group: Optional[str], **_
 ) -> Optional[WorkerEvent]:
     where_ns = ""
-    if namespace is not None:
-        where_ns = f"AND task.{NEO4J_TASK_NAMESPACE} = $namespace"
+    if group is not None:
+        where_ns = f"AND task.{NEO4J_TASK_GROUP} = $group"
     get_event_query = f"""MATCH (task:{NEO4J_TASK_NODE})-[
     :{NEO4J_TASK_CANCELLED_BY_EVENT_REL}
 ]->(event:{NEO4J_TASK_CANCEL_EVENT_NODE})
@@ -177,7 +175,7 @@ RETURN task, event
 ORDER BY event.{NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT} ASC
 LIMIT 1
 """
-    res = await tx.run(get_event_query, namespace=namespace)
+    res = await tx.run(get_event_query, group=group)
     try:
         event = await res.single(strict=True)
     except ResultNotSingleError:

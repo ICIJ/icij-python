@@ -55,7 +55,7 @@ CREATE TABLE public.schema_migrations (
 CREATE TABLE public.tasks (
     id character varying(128) NOT NULL,
     name character varying(128) NOT NULL,
-    namespace character varying(128),
+    "group" character varying(128),
     state character varying(16) NOT NULL,
     progress real,
     created_at timestamp with time zone NOT NULL,
@@ -146,4 +146,5 @@ ALTER TABLE ONLY public.results
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20240802104314'),
-    ('20240827142011');
+    ('20240827142011'),
+    ('20240919114022');

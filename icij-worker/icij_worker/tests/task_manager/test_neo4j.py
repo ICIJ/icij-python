@@ -128,7 +128,7 @@ RETURN task, result"""
             "hello",
             Task(
                 id="task-3",
-                name="namespaced_hello_world",
+                name="grouped_hello_world",
                 args={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
@@ -140,9 +140,9 @@ RETURN task, result"""
                 "retriesLeft": 1,
                 "maxRetries": 3,
                 "state": "CREATED",
-                "name": "namespaced_hello_world",
+                "name": "grouped_hello_world",
                 "createdAt": datetime.now(),
-                "namespace": "hello",
+                "group": "hello",
             },
             True,
         ),
@@ -174,7 +174,7 @@ RETURN task, result"""
             "hello",
             Task(
                 id="task-1",
-                name="namespaced_hello_world",
+                name="grouped_hello_world",
                 args={"greeted": "1"},
                 state=TaskState.RUNNING,
                 progress=0.8,
@@ -187,8 +187,8 @@ RETURN task, result"""
                 "progress": 0.80,
                 "retriesLeft": 0,
                 "state": "RUNNING",
-                "name": "namespaced_hello_world",
-                "namespace": "hello",
+                "name": "grouped_hello_world",
+                "group": "hello",
                 "createdAt": datetime.now(),
             },
             False,
@@ -245,20 +245,20 @@ async def test_save_task(
 
 
 @pytest.mark.parametrize(
-    "populate_tasks,expected_namespace",
-    [(None, None), ("some_namespace", "some_namespace")],
+    "populate_tasks,expected_group",
+    [(None, None), ("some_group", "some_group")],
     indirect=["populate_tasks"],
 )
-async def test_get_task_namespace(
+async def test_get_task_group(
     populate_tasks,
     neo4j_task_manager: TestableNeo4JTaskManager,
-    expected_namespace: str,
+    expected_group,
 ):
     # pylint: disable=unused-argument
     # When
-    namespace = await neo4j_task_manager.get_task_namespace("task-0")
+    group = await neo4j_task_manager.get_task_group("task-0")
     # Then
-    assert namespace == expected_namespace
+    assert group == expected_group
 
 
 async def test_task_manager_get_task(
@@ -304,13 +304,13 @@ async def test_task_manager_get_completed_task(
 
 
 @pytest.mark.parametrize(
-    "populate_tasks,namespace,states,task_name,expected_ix",
+    "populate_tasks,group,states,task_name,expected_ix",
     [
         (None, None, None, None, [0, 1]),
         (None, None, [], None, [0, 1]),
         (None, None, None, "hello_word", []),
         (None, None, None, "i_dont_exists", []),
-        ("some-namespace", "some-namespace", TaskState.QUEUED, None, [0]),
+        ("some-group", "some-group", TaskState.QUEUED, None, [0]),
         (None, None, TaskState.QUEUED, None, [0]),
         (None, None, [TaskState.QUEUED], None, [0]),
         (None, None, TaskState.RUNNING, None, [1]),
@@ -321,14 +321,14 @@ async def test_task_manager_get_completed_task(
 async def test_task_manager_get_tasks(
     neo4j_task_manager: TestableNeo4JTaskManager,
     populate_tasks: List[Task],
-    namespace: Optional[str],
+    group: Optional[str],
     states: Optional[List[TaskState]],
     task_name,
     expected_ix: List[int],
 ):
     # When
     tasks = await neo4j_task_manager.get_tasks(
-        state=states, task_name=task_name, namespace=namespace
+        state=states, task_name=task_name, group=group
     )
     tasks = sorted(tasks, key=lambda t: t.id)
 
@@ -443,11 +443,11 @@ async def test_task_manager_enqueue(
     assert queued == expected
 
 
-async def test_task_manager_enqueue_with_namespace(
-    neo4j_task_manager: TestableNeo4JTaskManager, namespaced_hello_world_task: Task
+async def test_task_manager_enqueue_with_group(
+    neo4j_task_manager: TestableNeo4JTaskManager, grouped_hello_world_task: Task
 ):
     # Given
-    task = namespaced_hello_world_task
+    task = grouped_hello_world_task
     driver = neo4j_task_manager.driver
     await neo4j_task_manager.save_task(task)
 
@@ -457,7 +457,7 @@ async def test_task_manager_enqueue_with_namespace(
     recs, _, _ = await driver.execute_query(query)
     assert len(recs) == 1
     task = recs[0]
-    assert task["task"]["namespace"] == "hello"
+    assert task["task"]["group"] == "hello"
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
@@ -537,7 +537,7 @@ async def test_task_manager_consume(
     worker = Neo4jWorker(
         task_manager.app,  # pylint: disable=protected-access
         "test-worker",
-        namespace=None,
+        group=None,
         driver=driver,
         poll_interval_s=0.1,
     )

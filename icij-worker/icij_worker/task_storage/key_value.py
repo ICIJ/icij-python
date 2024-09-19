@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Type
 
-from icij_worker import Namespacing, Task, TaskError, ResultEvent
+from icij_worker import RoutingStrategy, Task, TaskError, ResultEvent
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, TaskUpdate
 from icij_worker.task_storage import TaskStorage
@@ -12,25 +12,22 @@ class KeyValueStorage(TaskStorage, ABC):
     _tasks_db_name = "tasks"
     _results_db_name = "results"
     _errors_db_name = "errors"
-    _namespacing: Namespacing
+    _routing_strategy: RoutingStrategy
 
-    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
+    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
         """When possible override this to be transactional"""
         key = self._key(task.id, obj_cls=ResultEvent)
         new_task = False
         try:
-            ns = await self.get_task_namespace(task_id=task.id)
+            ns = await self.get_task_group(task_id=task.id)
         except UnknownTask:
             new_task = True
             task = task.dict(exclude_unset=True)
-            task["namespace"] = namespace
+            task["group"] = group
             await self._insert(self._tasks_db_name, task, key=key)
         else:
-            if ns != namespace:
-                msg = (
-                    f"DB task namespace ({ns}) differs from"
-                    f" save task namespace: {namespace}"
-                )
+            if ns != group:
+                msg = f"DB task group ({ns}) differs from" f" save task group: {group}"
                 raise ValueError(msg)
             update = TaskUpdate.from_task(task).dict(exclude_none=True)
             await self._update(self._tasks_db_name, update, key=key)
@@ -50,17 +47,17 @@ class KeyValueStorage(TaskStorage, ABC):
             task = await self._read_key(self._tasks_db_name, key=key)
         except KeyError as e:
             raise UnknownTask(task_id) from e
-        task.pop("namespace", None)
+        task.pop("group", None)
         return Task.parse_obj(task)
 
-    async def get_task_namespace(self, task_id: str) -> Optional[str]:
+    async def get_task_group(self, task_id: str) -> Optional[str]:
         key = self._key(task_id, obj_cls=Task)
         try:
             task = await self._read_key(self._tasks_db_name, key=key)
         except KeyError as e:
             raise UnknownTask(task_id) from e
-        namespace = task.get("namespace")
-        return namespace
+        group = task.get("group")
+        return group
 
     async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
         key = self._key(task_id, obj_cls=TaskError)

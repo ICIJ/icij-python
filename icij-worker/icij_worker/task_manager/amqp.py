@@ -15,7 +15,7 @@ from icij_common.pydantic_utils import safe_copy
 from icij_worker.app import AsyncApp
 from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
-from icij_worker.namespacing import Routing
+from icij_worker.routing_strategy import Routing
 from icij_worker.objects import (
     AsyncBackend,
     CancelEvent,
@@ -68,12 +68,12 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self._worker_evt_x: Optional[AbstractExchange] = None
         self._manager_messages_it: Optional[AbstractQueueIterator] = None
 
-        self._task_namespaces: Dict[str, Optional[str]] = dict()
+        self._task_groups: Dict[str, Optional[str]] = dict()
 
     @classmethod
     def _from_config(cls, config: AMQPTaskManagerConfig, **extras) -> AMQPTaskManager:
         app = config.app
-        storage = config.storage.to_storage(app.namespacing)
+        storage = config.storage.to_storage(app.routing_strategy)
         task_manager = cls(
             app,
             storage,
@@ -106,8 +106,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def get_task(self, task_id: str) -> Task:
         return await self._storage.get_task(task_id)
 
-    async def get_task_namespace(self, task_id: str) -> Optional[str]:
-        return await self._storage.get_task_namespace(task_id)
+    async def get_task_group(self, task_id: str) -> Optional[str]:
+        return await self._storage.get_task_group(task_id)
 
     async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
         return await self._storage.get_task_errors(task_id)
@@ -117,18 +117,16 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def get_tasks(
         self,
-        namespace: Optional[str],
+        group: Optional[str],
         *,
         task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
-        return await self._storage.get_tasks(
-            namespace, task_name=task_name, state=state
-        )
+        return await self._storage.get_tasks(group, task_name=task_name, state=state)
 
-    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
-        return await self._storage.save_task_(task, namespace)
+    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
+        return await self._storage.save_task_(task, group)
 
     async def save_result(self, result: ResultEvent):
         await self._storage.save_result(result)
@@ -144,9 +142,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         return cast(ManagerEvent, Message.parse_raw(msg.body))
 
     async def _enqueue(self, task: Task):
-        namespace = await self._storage.get_task_namespace(task.id)
+        group = await self._storage.get_task_group(task.id)
         await self._ensure_task_queues()
-        routing = self._namespacing.amqp_task_routing(namespace)
+        routing = self._routing_strategy.amqp_task_routing(group)
         try:
             await self._publish_message(
                 task,
@@ -158,8 +156,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             raise TaskQueueIsFull(self.max_task_queue_size) from e
 
     async def _requeue(self, task: Task):
-        namespace = await self._storage.get_task_namespace(task.id)
-        routing = self._namespacing.amqp_task_routing(namespace)
+        group = await self._storage.get_task_group(task.id)
+        routing = self._routing_strategy.amqp_task_routing(group)
         try:
             await self._publish_message(
                 task,
@@ -174,7 +172,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         cancel_event = CancelEvent(
             task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
         )
-        # TODO: for now cancellation is not namespaced, workers from other namespace
+        # TODO: for now cancellation is not groupd, workers from other group
         #  are responsible to ignoring the broadcast. That could be easily implemented
         #  in the future but will need sync with Java
         routing = self.worker_evt_routing().routing_key
@@ -242,9 +240,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         return [worker_events_routing, manager_events_routing]
 
     async def _ensure_task_queues(self):
-        supported_ns = set(t.namespace for t in self._app.registry.values())
-        for namespace in supported_ns:
-            routing = self._namespacing.amqp_task_routing(namespace)
+        supported_groups = set(t.group for t in self._app.registry.values())
+        for group in supported_groups:
+            routing = self._routing_strategy.amqp_task_routing(group)
             if self.max_task_queue_size is not None:
                 queue_args = deepcopy(routing.queue_args)
                 queue_args["x-max-length"] = self.max_task_queue_size

@@ -44,7 +44,7 @@ def populate_tasks(fs_storage: TestableFSKeyValueStorage) -> List[Task]:
     with db:
         t_0 = task_0()
         t_0_as_dict = t_0.dict()
-        t_0_as_dict["namespace"] = "some-namespace"
+        t_0_as_dict["group"] = "some-group"
         db[t_0.id] = t_0_as_dict
         t_1 = task_1()
         db[t_1.id] = t_1.dict()
@@ -73,7 +73,7 @@ async def test_save_task(fs_storage: TestableFSKeyValueStorage, hello_world_task
         db_task = db.get(task.id)
     assert is_new
     assert db_task is not None
-    db_task.pop("namespace", None)
+    db_task.pop("group", None)
     db_task = Task.parse_obj(db_task)
     assert db_task == task
 
@@ -85,11 +85,9 @@ async def test_save_task_with_different_ns_should_fail(
     task = hello_world_task
     await fs_storage.save_task_(task, None)
     # When
-    msg = re.escape(
-        "DB task namespace (None) differs from save task namespace: some-namespace"
-    )
+    msg = re.escape("DB task group (None) differs from save task group: some-group")
     with pytest.raises(ValueError, match=msg):
-        await fs_storage.save_task_(task, "some-namespace")
+        await fs_storage.save_task_(task, "some-group")
 
 
 async def test_save_task_should_not_update_non_updatable_field(
@@ -171,10 +169,10 @@ async def test_get_task(
 
 
 @pytest.mark.parametrize(
-    "namespace,task_name,state,expected_tasks",
+    "group,task_name,state,expected_tasks",
     [
         (None, None, None, [task_0(), task_1()]),
-        ("some-namespace", None, None, [task_0()]),
+        ("some-group", None, None, [task_0()]),
         (None, "task-type-1", None, [task_1()]),
         (None, None, TaskState.CREATED, [task_0()]),
     ],
@@ -182,7 +180,7 @@ async def test_get_task(
 async def test_get_tasks(
     fs_storage: TestableFSKeyValueStorage,
     populate_tasks: List[Task],  # pylint: disable=unused-argument
-    namespace: Optional[str],
+    group: Optional[str],
     task_name: Optional[str],
     state: Optional[Union[List[TaskState], TaskState]],
     expected_tasks: List[Task],
@@ -190,9 +188,7 @@ async def test_get_tasks(
     # Given
     storage = fs_storage
     # When
-    tasks = await storage.get_tasks(
-        namespace=namespace, task_name=task_name, state=state
-    )
+    tasks = await storage.get_tasks(group=group, task_name=task_name, state=state)
     # Then
     assert tasks == expected_tasks
 

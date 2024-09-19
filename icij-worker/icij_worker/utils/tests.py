@@ -38,7 +38,7 @@ from icij_worker import (
     AsyncApp,
     AsyncBackend,
     ManagerEvent,
-    Namespacing,
+    RoutingStrategy,
     ResultEvent,
     Task,
     TaskError,
@@ -83,7 +83,7 @@ if _has_pytest:
         _manager_event_collection = "manager_events"
         _worker_event_collection = "worker_events"
 
-        _namespacing: Namespacing
+        _routing_strategy: RoutingStrategy
 
         def __init__(self, db_path: Path) -> None:
             self._db_path = db_path
@@ -109,7 +109,7 @@ if _has_pytest:
                 task_meta = dict()
                 for k, v in db[self._task_collection].items():
                     (task_id, db) = eval(k)  # pylint: disable=eval-used
-                    task_meta[task_id] = (db, v["namespace"])
+                    task_meta[task_id] = (db, v["group"])
                 self._task_meta = task_meta
             try:
                 return self._task_meta[task_id][0]
@@ -128,7 +128,7 @@ if _has_pytest:
             }
             db_path.write_text(json.dumps(db))
 
-        async def get_task_namespace(self, task_id: str) -> Optional[str]:
+        async def get_task_group(self, task_id: str) -> Optional[str]:
             try:
                 return self._task_meta[task_id][1]
             except KeyError as e:
@@ -150,28 +150,28 @@ if _has_pytest:
             db[self._error_collection][task_key] = errors
             self._write(db)
 
-        async def save_task_(self, task: Task, namespace: Optional[str]):
+        async def save_task_(self, task: Task, group: Optional[str]):
             new_task = False
             ns = None
             try:
-                ns = await self.get_task_namespace(task_id=task.id)
+                ns = await self.get_task_group(task_id=task.id)
             except UnknownTask:
                 new_task = True
-                if namespace is not None:
-                    ns = namespace
-                    db_name = self._namespacing.test_db(namespace)
+                if group is not None:
+                    ns = group
+                    db_name = self._routing_strategy.test_db(group)
                 else:
                     db_name = TEST_DB
             else:
-                if ns != namespace:
+                if ns != group:
                     msg = (
-                        f"DB task namespace ({ns}) differs from"
-                        f" save task namespace: {namespace}"
+                        f"DB task group ({ns}) differs from"
+                        f" save task group: {group}"
                     )
                     raise ValueError(msg)
                 db_name = self._get_task_db_name(task.id)
             update = TaskUpdate.from_task(task).dict(exclude_none=True, by_alias=True)
-            update["namespace"] = namespace
+            update["group"] = group
             task_key = self._task_key(task_id=task.id, db=db_name)
             db = self._read()
             updated = db[self._task_collection].get(
@@ -195,7 +195,7 @@ if _has_pytest:
             collection: str,
             sleep_interval: float,
             factory: Callable[[Any], R],
-            namespace: Optional[str] = None,
+            group: Optional[str] = None,
             select: Optional[Callable[[R], bool]] = None,
             order: Optional[Callable[[R], Any]] = None,
         ) -> R:
@@ -208,14 +208,12 @@ if _has_pytest:
                         for k, v in selected.items()
                         if k not in db[self._lock_collection]
                     }
-                if namespace is not None:
+                if group is not None:
                     selected = [
-                        (k, t)
-                        for k, t in selected.items()
-                        if t.get("namespace") == namespace
+                        (k, t) for k, t in selected.items() if t.get("group") == group
                     ]
                     for k, t in selected:
-                        t.pop("namespace", None)
+                        t.pop("group", None)
                 else:
                     selected = selected.items()
                 selected = [(k, factory(t)) for k, t in selected]
@@ -285,8 +283,8 @@ if _has_pytest:
     async def hello_world(greeted: str, progress: Optional[RateProgress] = None) -> str:
         return await _hello_world(greeted, progress)
 
-    @APP.task(namespace="hello")
-    async def namespaced_hello_world(
+    @APP.task(group="hello")
+    async def grouped_hello_world(
         greeted: str, progress: Optional[RateProgress] = None
     ) -> str:
         return await _hello_world(greeted, progress)
@@ -374,7 +372,7 @@ if _has_pytest:
             key = self._task_key(task.id, db=db_name)
             db = self._read()
             db_task = db[self._task_collection][key]
-            db_task.pop("namespace")
+            db_task.pop("group")
             db_task = Task.parse_obj(db_task)
             update = TaskUpdate(progress=0.0, state=TaskState.QUEUED).dict(
                 exclude_none=True, by_alias=True
@@ -392,7 +390,7 @@ if _has_pytest:
             except KeyError as e:
                 raise UnknownTask(task_id) from e
             task = deepcopy(tasks[key])
-            task.pop("namespace")
+            task.pop("group")
             return Task.parse_obj(task)
 
         async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
@@ -521,12 +519,12 @@ if _has_pytest:
             app: AsyncApp,
             worker_id: Optional[str] = None,
             *,
-            namespace: Optional[str],
+            group: Optional[str],
             db_path: Path,
             poll_interval_s: float,
             **kwargs,
         ):
-            super().__init__(app, worker_id, namespace=namespace, **kwargs)
+            super().__init__(app, worker_id, group=group, **kwargs)
             MockEventPublisher.__init__(self, db_path)
             self._poll_interval_s = poll_interval_s
             self._worker_id = worker_id
@@ -617,7 +615,7 @@ if _has_pytest:
 
         @staticmethod
         def _task_factory(obj: Dict) -> Task:
-            obj.pop("namespace", None)
+            obj.pop("group", None)
             return Task.parse_obj(obj)
 
         async def _consume(self) -> Task:
@@ -625,7 +623,7 @@ if _has_pytest:
                 self._task_collection,
                 self._poll_interval_s,
                 self._task_factory,
-                namespace=self._namespace,
+                group=self._group,
                 select=lambda t: t.state is TaskState.QUEUED,
                 order=lambda t: t.created_at,
             )
@@ -641,7 +639,7 @@ if _has_pytest:
                 self._worker_event_collection,
                 self._poll_interval_s,
                 list,
-                namespace=self._namespace,
+                group=self._group,
                 select=lambda events: bool(  # pylint: disable=unnecessary-lambda
                     events
                 ),

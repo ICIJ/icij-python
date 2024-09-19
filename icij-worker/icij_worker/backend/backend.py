@@ -28,7 +28,7 @@ class WorkerBackend(str, Enum):
         config: WorkerConfig,
         worker_extras: Optional[Dict] = None,
         app_deps_extras: Optional[Dict] = None,
-        namespace: Optional[str],
+        group: Optional[str],
     ):
         run_workers_with_multiprocessing(
             app,
@@ -36,7 +36,7 @@ class WorkerBackend(str, Enum):
             config,
             worker_extras=worker_extras,
             app_deps_extras=app_deps_extras,
-            namespace=namespace,
+            group=group,
         )
 
     # TODO: remove this when the HTTP server doesn't
@@ -51,7 +51,7 @@ class WorkerBackend(str, Enum):
         config: WorkerConfig,
         worker_extras: Optional[Dict] = None,
         app_deps_extras: Optional[Dict] = None,
-        namespace: Optional[str],
+        group: Optional[str],
     ):
         if self is WorkerBackend.MULTIPROCESSING:
             with run_workers_with_multiprocessing_cm(
@@ -60,7 +60,7 @@ class WorkerBackend(str, Enum):
                 config,
                 worker_extras=worker_extras,
                 app_deps_extras=app_deps_extras,
-                namespace=namespace,
+                group=group,
             ):
                 yield
         else:
@@ -72,7 +72,7 @@ def start_workers(
     n_workers: int,
     config_path: Optional[Path],
     backend: WorkerBackend,
-    namespace: Optional[str],
+    group: Optional[str],
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >= 1")
@@ -84,4 +84,4 @@ def start_workers(
         config = WorkerConfig.from_env()
     logger.info("worker config: %s", config.json(indent=2))
 
-    backend.run(app, n_workers=n_workers, config=config, namespace=namespace)
+    backend.run(app, n_workers=n_workers, config=config, group=group)

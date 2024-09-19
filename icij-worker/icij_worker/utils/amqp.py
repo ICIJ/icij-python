@@ -36,7 +36,7 @@ from icij_worker.constants import (
     AMQP_WORKER_EVENTS_ROUTING_KEY,
     AMQP_WORKER_EVENTS_X,
 )
-from icij_worker.namespacing import Exchange, Namespacing, Routing
+from icij_worker.routing_strategy import Exchange, RoutingStrategy, Routing
 
 
 class AMQPConfigMixin(ICIJModel):
@@ -70,7 +70,7 @@ class AMQPConfigMixin(ICIJModel):
 class AMQPMixin:
     _app_id: str
     _channel_: AbstractRobustChannel
-    _namespacing: Namespacing
+    _namespacing: RoutingStrategy
     _task_x: AbstractExchange
     max_task_queue_size: Optional[int]
     _always_include = {"createdAt", "retriesLeft"}

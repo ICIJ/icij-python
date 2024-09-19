@@ -16,7 +16,7 @@ from aio_pika.abc import AbstractRobustConnection
 from icij_common.logging_utils import LogWithNameMixin
 from icij_worker import ManagerEvent
 from . import EventPublisher
-from ..namespacing import Routing
+from ..routing_strategy import Routing
 from ..utils.amqp import AMQPMixin
 
 

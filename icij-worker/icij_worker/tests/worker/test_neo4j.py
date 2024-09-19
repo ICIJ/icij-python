@@ -13,7 +13,7 @@ from icij_common.neo4j.db import Database, NEO4J_COMMUNITY_DB, db_specific_sessi
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import fail_if_exception
 from icij_worker import (
-    Namespacing,
+    RoutingStrategy,
     Neo4JTaskManager,
     Neo4jWorker,
     ResultEvent,
@@ -42,11 +42,11 @@ def worker(neo4j_async_app_driver: neo4j.AsyncDriver, request) -> Neo4jWorker:
     params = getattr(request, "param", dict()) or dict()
     app = params.get("app", "test_async_app")
     app = request.getfixturevalue(app)
-    namespace = params.get("namespace")
+    group = params.get("group")
     worker = Neo4jWorker(
         app,
         "test-worker",
-        namespace=namespace,
+        group=group,
         driver=neo4j_async_app_driver,
         poll_interval_s=0.1,
     )
@@ -55,7 +55,7 @@ def worker(neo4j_async_app_driver: neo4j.AsyncDriver, request) -> Neo4jWorker:
 
 @pytest.mark.parametrize(
     "populate_tasks,worker",
-    [("some-namespace", {"namespace": "some-namespace"}), (None, None)],
+    [("some-group", {"group": "some-group"}), (None, None)],
     indirect=["populate_tasks", "worker"],
 )
 async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWorker):
@@ -75,7 +75,7 @@ async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWork
     assert counts["nLocks"] == 1
 
 
-async def test_should_consume_with_namespace(
+async def test_should_consume_with_group(
     populate_tasks, neo4j_async_app_driver: neo4j.AsyncDriver, monkeypatch
 ):
     # pylint: disable=unused-argument
@@ -87,26 +87,26 @@ async def test_should_consume_with_namespace(
         return [Database(name=mocked_other_db)]
 
     monkeypatch.setattr(neo4j_, "retrieve_dbs", _mocked_retrieved_db)
-    other_namespace = "some-namespace"
+    other_group = "some-group"
 
-    class MockedNamespacing(Namespacing):
+    class MockedRoutingStrategy(RoutingStrategy):
         @staticmethod
-        def db_filter_factory(worker_namespace: str) -> Callable[[str], bool]:
+        def db_filter_factory(worker_group: str) -> Callable[[str], bool]:
             return lambda x: x == mocked_other_db
 
         @staticmethod
-        def neo4j_db(namespace: str) -> str:
-            if namespace == other_namespace:
+        def neo4j_db(group: str) -> str:
+            if group == other_group:
                 return mocked_other_db
-            return super().neo4j_db(namespace)
+            return super().neo4j_db(group)
 
-    namespacing = MockedNamespacing()
-    app = make_app(namespacing)
+    routing_strategy = MockedRoutingStrategy()
+    app = make_app(routing_strategy)
     refresh_interval = 0.1
     worker = Neo4jWorker(
         app,
         "test-worker",
-        namespace=other_namespace,
+        group=other_group,
         driver=neo4j_async_app_driver,
         poll_interval_s=refresh_interval,
     )

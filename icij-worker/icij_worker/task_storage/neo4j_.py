@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import neo4j
+from neo4j import AsyncTransaction
 from neo4j.exceptions import ResultNotSingleError
 
 from icij_common.neo4j.db import db_specific_session
@@ -30,6 +31,7 @@ from icij_worker.constants import (
     NEO4J_TASK_ERROR_OCCURRED_TYPE_RETRIES_LEFT,
     NEO4J_TASK_ERROR_STACKTRACE,
     NEO4J_TASK_ERROR_TITLE_DEPRECATED,
+    NEO4J_TASK_GROUP,
     NEO4J_TASK_HAS_RESULT_TYPE,
     NEO4J_TASK_ID,
     NEO4J_TASK_INPUTS_DEPRECATED,
@@ -40,7 +42,7 @@ from icij_worker.constants import (
     NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT,
     NEO4J_TASK_MAX_RETRIES,
     NEO4J_TASK_NAME,
-    NEO4J_TASK_NAMESPACE,
+    NEO4J_TASK_NAMESPACE_DEPRECATED,
     NEO4J_TASK_NODE,
     NEO4J_TASK_PROGRESS,
     NEO4J_TASK_RESULT_NODE,
@@ -75,21 +77,19 @@ class Neo4jStorage(TaskStorage):
 
     async def get_tasks(
         self,
-        namespace: Optional[str],
+        group: Optional[str],
         *,
         task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
-        db = self._namespacing.neo4j_db(namespace)
+        db = self._routing_strategy.neo4j_db(group)
         async with self._db_session(db) as sess:
-            recs = await _get_tasks(
-                sess, state=state, task_name=task_name, namespace=namespace
-            )
+            recs = await _get_tasks(sess, state=state, task_name=task_name, group=group)
         tasks = [Task.from_neo4j(r) for r in recs]
         return tasks
 
-    async def get_task_namespace(self, task_id: str) -> Optional[str]:
+    async def get_task_group(self, task_id: str) -> Optional[str]:
         if task_id not in self._task_meta:
             await self._refresh_task_meta()
         try:
@@ -97,18 +97,18 @@ class Neo4jStorage(TaskStorage):
         except KeyError as e:
             raise UnknownTask(task_id) from e
 
-    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
-        db = self._namespacing.neo4j_db(namespace)
+    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
+        db = self._routing_strategy.neo4j_db(group)
         async with self._db_session(db) as sess:
             task_props = task.dict(by_alias=True, exclude_unset=True)
             new_task = await sess.execute_write(
                 _save_task_tx,
                 task_id=task.id,
                 task_props=task_props,
-                namespace=namespace,
+                group=group,
             )
 
-        self._task_meta[task.id] = (db, namespace)
+        self._task_meta[task.id] = (db, group)
         return new_task
 
     async def save_result(self, result: ResultEvent):
@@ -172,7 +172,7 @@ class Neo4jStorage(TaskStorage):
 
 async def _get_tasks_meta_tx(tx: neo4j.AsyncTransaction) -> List[neo4j.Record]:
     query = f"""MATCH (task:{NEO4J_TASK_NODE})
-RETURN task.{NEO4J_TASK_ID} as taskId, task.{NEO4J_TASK_NAMESPACE} as taskNs"""
+RETURN task.{NEO4J_TASK_ID} as taskId, task.{NEO4J_TASK_GROUP} as taskNs"""
     res = await tx.run(query)
     meta = [rec async for rec in res]
     return meta
@@ -183,7 +183,7 @@ async def _save_task_tx(
     *,
     task_id: str,
     task_props: Dict,
-    namespace: Optional[str],
+    group: Optional[str],
 ) -> bool:
     query = f"MATCH (task:{NEO4J_TASK_NODE} {{{NEO4J_TASK_ID}: $taskId }}) RETURN task"
     res = await tx.run(query, taskId=task_id)
@@ -195,7 +195,7 @@ async def _save_task_tx(
         task_props[NEO4J_TASK_ARGS] = json.dumps(
             task_props.get(NEO4J_TASK_ARGS, dict())
         )
-        task_props[NEO4J_TASK_NAMESPACE] = namespace
+        task_props[NEO4J_TASK_GROUP] = group
     else:
         task_obj = {"id": task_id}
         task_obj.update(task_props)
@@ -203,10 +203,10 @@ async def _save_task_tx(
             by_alias=True, exclude_unset=True
         )
     task_props.pop("@type", None)
-    if existing is not None and existing["task"]["namespace"] != namespace:
+    if existing is not None and existing["task"]["group"] != group:
         msg = (
-            f"DB task namespace ({existing['task']['namespace']}) differs from"
-            f" save task namespace: {namespace}"
+            f"DB task group ({existing['task']['group']}) differs from"
+            f" save task group: {group}"
         )
         raise ValueError(msg)
     query = f"""MERGE (t:{NEO4J_TASK_NODE} {{{NEO4J_TASK_ID}: $taskId }})
@@ -307,14 +307,14 @@ async def _get_tasks(
     sess: neo4j.AsyncSession,
     state: Optional[Union[List[TaskState], TaskState]],
     task_name: Optional[str],
-    namespace: Optional[str],
+    group: Optional[str],
 ) -> List[neo4j.Record]:
     if isinstance(state, TaskState):
         state = [state]
     if state is not None:
         state = [s.value for s in state]
     return await sess.execute_read(
-        _get_tasks_tx, state=state, task_name=task_name, namespace=namespace
+        _get_tasks_tx, state=state, task_name=task_name, group=group
     )
 
 
@@ -332,17 +332,17 @@ async def _get_tasks_tx(
     state: Optional[List[str]],
     *,
     task_name: Optional[str],
-    namespace: Optional[str],
+    group: Optional[str],
 ) -> List[neo4j.Record]:
     where = ""
     if task_name:
         where = f"WHERE task.{NEO4J_TASK_NAME} = $type"
-    if namespace is not None:
+    if group is not None:
         if not where:
             where = "WHERE "
         else:
             where += " AND "
-        where += f"task.{NEO4J_TASK_NAMESPACE} = $namespace"
+        where += f"task.{NEO4J_TASK_GROUP} = $group"
     all_labels = [(NEO4J_TASK_NODE,)]
     if isinstance(state, str):
         state = (state,)
@@ -360,7 +360,7 @@ async def _get_tasks_tx(
         query = f"""MATCH (task:{NEO4J_TASK_NODE})
 RETURN task
 ORDER BY task.{NEO4J_TASK_CREATED_AT} DESC"""
-    res = await tx.run(query, type=task_name, namespace=namespace)
+    res = await tx.run(query, type=task_name, group=group)
     recs = [rec async for rec in res]
     return recs
 
@@ -417,8 +417,8 @@ RETURN event
 async def migrate_add_index_to_task_namespace_v0_tx(tx: neo4j.AsyncTransaction):
     create_index = f"""
 CREATE INDEX index_task_namespace IF NOT EXISTS
-FOR (task:{NEO4J_TASK_NAMESPACE})
-ON (task.{NEO4J_TASK_NAMESPACE})
+FOR (task:{NEO4J_TASK_NAMESPACE_DEPRECATED})
+ON (task.{NEO4J_TASK_NAMESPACE_DEPRECATED})
 """
     await tx.run(create_index)
 
@@ -443,7 +443,7 @@ RETURN task
 
 
 async def migrate_task_type_to_name_v0(sess: neo4j.AsyncSession):
-    drop_index = "DROP INDEX index_task_tyoe IF EXISTS"
+    drop_index = "DROP INDEX index_task_type IF EXISTS"
     await sess.run(drop_index)
     create_index = f"""CREATE INDEX index_task_name IF NOT EXISTS
 FOR (task:{NEO4J_TASK_NODE})
@@ -508,6 +508,27 @@ RETURN task
     await tx.run(query)
 
 
+async def migrate_task_namespace_into_group_v0(sess: neo4j.AsyncSession):
+    drop_index = "DROP INDEX index_task_namespace IF EXISTS"
+    await sess.run(drop_index)
+    create_index = f"""CREATE INDEX index_task_group IF NOT EXISTS
+FOR (task:{NEO4J_TASK_NODE})
+ON (task.{NEO4J_TASK_GROUP})
+"""
+    await sess.run(create_index)
+    await sess.execute_write(_rename_namespace_into_group_v0_tx)
+
+
+async def _rename_namespace_into_group_v0_tx(tx: AsyncTransaction):
+    query = f"""MATCH (task:{NEO4J_TASK_NODE})
+WHERE task.{NEO4J_TASK_NAMESPACE_DEPRECATED} IS NOT NULL
+SET task.{NEO4J_TASK_GROUP} = task.{NEO4J_TASK_NAMESPACE_DEPRECATED}  
+REMOVE task.{NEO4J_TASK_NAMESPACE_DEPRECATED}
+RETURN task
+"""
+    await tx.run(query)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = [
     add_support_for_async_task_tx,
@@ -520,4 +541,5 @@ MIGRATIONS = [
     migrate_index_event_dates_v0_tx,
     migrate_task_retries_and_error_v0_tx,
     migrate_task_arguments_into_args_v0_tx,
+    migrate_task_namespace_into_group_v0,
 ]

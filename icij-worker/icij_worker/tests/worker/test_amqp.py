@@ -28,7 +28,7 @@ from icij_worker import (
     Worker,
     WorkerConfig,
 )
-from icij_worker.namespacing import Namespacing
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import (
     CancelEvent,
     ErrorEvent,
@@ -62,7 +62,7 @@ class TestableAMQPWorker(AMQPWorker):
         app: AsyncApp,
         worker_id: str,
         *,
-        namespace: Optional[str],
+        group: Optional[str],
         broker_url: str,
         inactive_after_s: Optional[float] = None,
         handle_signals: bool = True,
@@ -72,7 +72,7 @@ class TestableAMQPWorker(AMQPWorker):
         super().__init__(
             app,
             worker_id,
-            namespace=namespace,
+            group=group,
             broker_url=broker_url,
             inactive_after_s=inactive_after_s,
             handle_signals=handle_signals,
@@ -132,7 +132,7 @@ def amqp_worker(
         app=app,
         worker_id="test-worker",
         teardown_dependencies=True,
-        namespace=params.get("namespace"),
+        group=params.get("group"),
     )
     return worker
 
@@ -140,9 +140,9 @@ def amqp_worker(
 @pytest.fixture
 async def populate_tasks(rabbit_mq: str, request):
     connection = await connect_robust(rabbit_mq)
-    namespacing = Namespacing()
-    namespace = getattr(request, "param", None)
-    task_routing = namespacing.amqp_task_routing(namespace)
+    namespacing = RoutingStrategy()
+    group = getattr(request, "param", None)
+    task_routing = namespacing.amqp_task_routing(group)
     tasks = [
         Task(
             id="task-0",
@@ -220,8 +220,8 @@ async def test_worker_work_forever(
     "populate_tasks,amqp_worker",
     [
         (
-            "some-ignored-namespace",
-            {"namespace": "some-ignored-namespace"},
+            "some-ignored-group",
+            {"group": "some-ignored-group"},
         ),
         (None, None),
     ],
@@ -281,10 +281,10 @@ async def test_worker_should_nack_queue_unregistered_task(
 
 @pytest.mark.parametrize(
     "populate_tasks,amqp_worker",
-    [("some-namespace", None), (None, {"namespace": "some-namespace"})],
+    [("some-group", None), (None, {"group": "some-group"})],
     indirect=["populate_tasks", "amqp_worker"],
 )
-async def test_should_not_consume_task_from_other_namespace(
+async def test_should_not_consume_task_from_other_group(
     populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
     # pylint: disable=protected-access,unused-argument
@@ -295,7 +295,7 @@ async def test_should_not_consume_task_from_other_namespace(
         consume_timeout = 0.5
         done, _ = await asyncio.wait([consume_task], timeout=consume_timeout)
         if done:
-            pytest.fail("namespaced task was consumed!")
+            pytest.fail("groupd task was consumed!")
 
 
 @pytest.mark.parametrize(
@@ -581,7 +581,7 @@ async def test_worker_connection_workflow(
     route_creator = _RouteCreator(rabbit_mq)
     worker_id = "test-worker"
     worker = AMQPWorker._from_config(
-        amqp_worker_config, app=test_async_app, worker_id=worker_id, namespace=None
+        amqp_worker_config, app=test_async_app, worker_id=worker_id, group=None
     )
     async with route_creator:
         # These are supposed to be created by the TM

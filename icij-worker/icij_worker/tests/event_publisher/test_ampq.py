@@ -6,7 +6,7 @@ from icij_worker import Task, ManagerEvent
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
-from icij_worker.namespacing import Exchange, Routing
+from icij_worker.routing_strategy import Exchange, Routing
 from icij_worker.objects import ProgressEvent
 from icij_worker.tests.conftest import (
     TestableAMQPPublisher,
