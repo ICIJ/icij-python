@@ -83,7 +83,7 @@ class AMQPWorker(Worker, AMQPMixin):
         self._task_routing: Optional[Routing] = None
         self._delivered: Dict[str, AbstractIncomingMessage] = dict()
 
-        self._declare_exchanges = False
+        self._declare_exchanges = True
 
     @property
     def _app_id(self) -> str:
