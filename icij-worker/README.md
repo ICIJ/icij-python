@@ -78,6 +78,14 @@ icij-worker workers start -c worker_config.json -n 2 --backend multiprocessing "
 - [Neo4j](https://neo4j.com/docs/api/python-driver/current/)
 - [AMQP](https://www.amqp.org/) (`v0.9.1` based on [RabbitMQ](https://www.rabbitmq.com/))
 
+### Feature matrix
+
+| Feature          | RabbitMQ | Neo4j |
+|------------------|----------|-------|
+| Late / early ack |     ✅    |   ✅   |
+| Task groups      |     ✅    |   ✅   |
+| Consumer timeout |     ✅    |   ❌   |
+
 ## Worker asynchronous backends
 
 ### Implemented
