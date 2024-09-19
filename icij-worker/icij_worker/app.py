@@ -19,7 +19,7 @@ PROGRESS_HANDLER_ARG = "progress"
 
 
 class AsyncAppConfig(ICIJSettings):
-    late_ack: bool = False
+    late_ack: bool = True
     max_task_queue_size: Optional[int] = None
 
     class Config:
