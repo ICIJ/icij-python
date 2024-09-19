@@ -15,7 +15,7 @@ from psycopg_pool import AsyncConnectionPool
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
-    Namespacing,
+    RoutingStrategy,
     PostgresConnectionInfo,
     PostgresStorage,
     PostgresStorageConfig,
@@ -48,9 +48,9 @@ async def test_postgres_config() -> PostgresStorageConfig:
     )
 
 
-class _TestNamespacing(Namespacing):
+class _TestRoutingStrategy(RoutingStrategy):
     @classmethod
-    def postgres_db(cls, namespace: str) -> str:
+    def postgres_db(cls, group: str) -> str:
         return TEST_DB
 
 
@@ -58,7 +58,7 @@ class _TestNamespacing(Namespacing):
 async def test_postgres_storage(
     test_postgres_config: PostgresStorageConfig,
 ) -> PostgresStorage:
-    namespacing = _TestNamespacing()
+    namespacing = _TestRoutingStrategy()
     storage = test_postgres_config.to_storage(namespacing=namespacing)
     async with storage:
         yield storage
@@ -110,7 +110,7 @@ _TASK_COLS_LEGACY_V0 = [
 _TASK_COLS = [
     "id",
     "name",
-    "namespace",
+    "group",
     "state",
     "progress",
     "created_at",
@@ -229,10 +229,14 @@ async def populate_task(test_postgres_conn: AsyncConnection) -> List[Task]:
     task_tuples = [t.dict() for t in tasks]
     for i, t in enumerate(task_tuples):
         t["args"] = json.dumps(t["args"])
-        t["namespace"] = "some-namespace" if i % 2 == 0 else None
+        t["group"] = "some-group" if i % 2 == 0 else None
     task_tuples = [tuple(t[col] for col in _TASK_COLS) for t in task_tuples]
     async with test_postgres_conn.cursor() as cur:
-        query = f"INSERT INTO tasks ({', '.join(_TASK_COLS)}) VALUES\n"
+        col_names = sql.SQL(", ").join(sql.Identifier(c) for c in _TASK_COLS)
+        query = sql.SQL("INSERT INTO tasks ({col_names}) VALUES\n").format(
+            col_names=col_names
+        )
+        query = query.as_string()
         values_placeholder = f"({','.join('%s' for _ in range(len(_TASK_COLS)))})"
         query += ",\n".join(cur.mogrify(values_placeholder, t) for t in task_tuples)
         query += ";"
@@ -256,8 +260,8 @@ async def test_save_task(
         await cur.execute(query, (task.id,))
         db_task = await cur.fetchone()
     db_task["args"] = json.loads(db_task["args"])
-    namespace = db_task.pop("namespace")
-    assert namespace is None
+    group = db_task.pop("group")
+    assert group is None
     db_task = Task(**db_task)
     assert db_task == task
 
@@ -285,8 +289,8 @@ async def test_save_existing_task(
         await cur.execute(query, (task.id,))
         db_task = await cur.fetchone()
     db_task["args"] = json.loads(db_task["args"])
-    namespace = db_task.pop("namespace")
-    assert namespace == "some-namespace"
+    group = db_task.pop("group")
+    assert group == "some-group"
     db_task = Task(**db_task)
     assert db_task == task
 
@@ -411,10 +415,10 @@ async def test_get_task_should_raise_for_unknown_task(
 
 
 @pytest.mark.parametrize(
-    "namespace,task_name,state,expected_tasks",
+    "group,task_name,state,expected_tasks",
     [
         (None, None, None, [task_1(), task_0()]),
-        ("some-namespace", None, None, [task_0()]),
+        ("some-group", None, None, [task_0()]),
         (None, "task-type-1", None, [task_1()]),
         (None, None, TaskState.CREATED, [task_0()]),
     ],
@@ -422,7 +426,7 @@ async def test_get_task_should_raise_for_unknown_task(
 async def test_get_tasks(
     populate_task: List[Task],
     test_postgres_storage: PostgresStorage,
-    namespace: Optional[str],
+    group: Optional[str],
     task_name: Optional[str],
     state: Optional[TaskState],
     expected_tasks: List[Task],
@@ -431,9 +435,7 @@ async def test_get_tasks(
     # Given
     storage = test_postgres_storage
     # When
-    db_tasks = await storage.get_tasks(
-        namespace=namespace, state=state, task_name=task_name
-    )
+    db_tasks = await storage.get_tasks(group=group, state=state, task_name=task_name)
     # Then
     assert db_tasks == expected_tasks
 
@@ -520,7 +522,7 @@ async def test_get_task_errors_should_raise_for_unknown_task(
         await storage.get_task_errors("unknown_id")
 
 
-async def test_get_task_namespace(
+async def test_get_task_group(
     populate_task: List[Task],
     test_postgres_storage: PostgresStorage,
 ) -> None:
@@ -528,9 +530,9 @@ async def test_get_task_namespace(
     # Given
     storage = test_postgres_storage
     # When
-    ns_0 = await storage.get_task_namespace("task-0")
-    ns_1 = await storage.get_task_namespace("task-1")
-    assert ns_0 == "some-namespace"
+    ns_0 = await storage.get_task_group("task-0")
+    ns_1 = await storage.get_task_group("task-1")
+    assert ns_0 == "some-group"
     assert ns_1 is None
 
 
@@ -589,6 +591,37 @@ WHERE table_name = 'tasks' AND column_name = 'arguments';
         arguments_col_query = """SELECT column_name
 FROM information_schema.columns 
 WHERE table_name = 'tasks' AND column_name = 'args';
+"""
+        await cur.execute(arguments_col_query)
+        args_cols = await cur.fetchone()
+        assert args_cols is not None
+
+
+async def test_migrate_rename_task_namespace_into_group(
+    test_postgres_conn: AsyncConnection,
+):
+    # Given
+    conn = test_postgres_conn
+    # When
+    async with conn.cursor() as cur:
+        migration_query = (
+            "SELECT * FROM schema_migrations WHERE version = '20240919114022';"
+        )
+        await cur.execute(migration_query)
+        migration = await cur.fetchone()
+        assert migration is not None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'namespace';
+"""
+        await cur.execute(arguments_col_query)
+        arguments_cols = await cur.fetchone()
+        assert arguments_cols is None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'group';
 """
         await cur.execute(arguments_col_query)
         args_cols = await cur.fetchone()

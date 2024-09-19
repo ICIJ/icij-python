@@ -9,7 +9,7 @@ import ujson
 from sqlitedict import SqliteDict
 
 from icij_common.pydantic_utils import ICIJModel
-from icij_worker import Namespacing, Task, TaskState
+from icij_worker import RoutingStrategy, Task, TaskState
 from icij_worker.exceptions import UnknownTask
 from icij_worker.task_storage import TaskStorageConfig
 from icij_worker.task_storage.key_value import KeyValueStorage
@@ -18,7 +18,7 @@ from icij_worker.task_storage.key_value import KeyValueStorage
 class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
     db_path: Path
 
-    def to_storage(self, namespacing: Optional[Namespacing]) -> FSKeyValueStorage:
+    def to_storage(self, namespacing: Optional[RoutingStrategy]) -> FSKeyValueStorage:
         return FSKeyValueStorage(self.db_path, namespacing)
 
 
@@ -33,15 +33,15 @@ class FSKeyValueStorage(KeyValueStorage):
 
     # pylint: enable=c-extension-no-member
 
-    def __init__(self, db_path: Path, namespacing: Optional[Namespacing] = None):
+    def __init__(self, db_path: Path, namespacing: Optional[RoutingStrategy] = None):
         super().__init__()
         if namespacing is None:
-            namespacing = Namespacing()
+            namespacing = RoutingStrategy()
         self._namespacing = namespacing
         self._db_path = str(db_path)
         self._exit_stack = AsyncExitStack()
         self._dbs = dict()
-        # TODO: add support for 1 DB / namespace
+        # TODO: add support for 1 DB / group
         self._dbs = self._make_ns_dbs()
 
     async def __aenter__(self):
@@ -89,7 +89,7 @@ class FSKeyValueStorage(KeyValueStorage):
 
     async def get_tasks(
         self,
-        namespace: Optional[str],
+        group: Optional[str],
         *,
         task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
@@ -101,15 +101,15 @@ class FSKeyValueStorage(KeyValueStorage):
                 states = {state}
             states = set(states)
         tasks = self._dbs[self._tasks_db_name].values()
-        if namespace is not None:
-            tasks = (t for t in tasks if t.get("namespace") == namespace)
+        if group is not None:
+            tasks = (t for t in tasks if t.get("group") == group)
         if task_name is not None:
             tasks = (t for t in tasks if t["name"] == task_name)
         if states:
             tasks = (t for t in tasks if t["state"] in states)
         tasks = list(tasks)
         for t in tasks:
-            t.pop("namespace", None)
+            t.pop("group", None)
         task = [Task.parse_obj(t) for t in tasks]
         return task
 

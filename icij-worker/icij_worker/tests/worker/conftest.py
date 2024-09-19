@@ -5,7 +5,7 @@ from typing import Optional
 
 import pytest
 
-from icij_worker import AsyncApp, Namespacing
+from icij_worker import AsyncApp, RoutingStrategy
 
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
@@ -15,8 +15,8 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
 )
 
 
-def make_app(namespacing: Optional[Namespacing] = None):
-    app = AsyncApp(name="test-app", dependencies=[], namespacing=namespacing)
+def make_app(namespacing: Optional[RoutingStrategy] = None):
+    app = AsyncApp(name="test-app", dependencies=[], routing_strategy=namespacing)
 
     @app.task
     async def hello_word(greeted: str):

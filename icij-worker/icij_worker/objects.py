@@ -311,8 +311,8 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             node["completedAt"] = node["completedAt"].to_native()
         if "args" in node:
             node["args"] = json.loads(node["args"])
-        if "namespace" in node:
-            node.pop("namespace")
+        if "group" in node:
+            node.pop("group")
         node["state"] = state
         return cls(**node)
 
@@ -323,7 +323,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             as_dict = {
                 k.name: v
                 for k, v in zip(cursor.description, values)
-                if k.name != "namespace"
+                if k.name != "group"
             }
             return cls(**as_dict)
 

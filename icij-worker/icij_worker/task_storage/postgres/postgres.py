@@ -29,7 +29,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from icij_common.pydantic_utils import jsonable_encoder
-from icij_worker import Namespacing, ResultEvent, Task, TaskState
+from icij_worker import RoutingStrategy, ResultEvent, Task, TaskState
 from icij_worker.constants import (
     POSTGRES_TASKS_TABLE,
     POSTGRES_TASK_DBS_TABLE,
@@ -41,7 +41,7 @@ from icij_worker.constants import (
     TASK_ERRORS_TASK_ID,
     TASK_ID,
     TASK_NAME,
-    TASK_NAMESPACE,
+    TASK_GROUP,
     TASK_RESULT_CREATED_AT,
     TASK_RESULT_RESULT,
     TASK_RESULT_TASK_ID,
@@ -69,7 +69,7 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
     migration_timeout_s: float = 60.0
     migration_throttle_s: float = 0.1
 
-    def to_storage(self, namespacing: Optional[Namespacing]) -> PostgresStorage:
+    def to_storage(self, namespacing: Optional[RoutingStrategy]) -> PostgresStorage:
         storage = PostgresStorage(
             connection_info=self.as_connection_info,
             namespacing=namespacing,
@@ -127,12 +127,12 @@ class PostgresStorage(TaskStorage):
         connection_info: PostgresConnectionInfo,
         max_connections: int,
         registry_db_name: str,
-        namespacing: Namespacing = None,
+        namespacing: RoutingStrategy = None,
         migration_timeout_s: float = 60,
         migration_throttle_s: float = 0.1,
     ):
         if namespacing is None:
-            namespacing = Namespacing()
+            namespacing = RoutingStrategy()
         self._namespacing = namespacing
         self._connection_info = connection_info
         self._max_connections = max_connections
@@ -162,8 +162,8 @@ class PostgresStorage(TaskStorage):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool:
-        db_name = self._namespacing.postgres_db(namespace)
+    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
+        db_name = self._namespacing.postgres_db(group)
         if db_name not in self._known_dbs:
             await self._ensure_db(db_name)
         pool = await self._pool_manager.get_pool(db_name)
@@ -174,8 +174,8 @@ class PostgresStorage(TaskStorage):
                     if task_exists:
                         await _update_task(cur, task)
                     else:
-                        await _insert_task(cur, task, namespace)
-        self._task_meta[task.id] = (db_name, namespace)
+                        await _insert_task(cur, task, group)
+        self._task_meta[task.id] = (db_name, group)
         is_new = not task_exists
         return is_new
 
@@ -213,20 +213,20 @@ class PostgresStorage(TaskStorage):
 
     async def get_tasks(
         self,
-        namespace: Optional[str],
+        group: Optional[str],
         *,
         task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
-        tasks_db = self._namespacing.postgres_db(namespace)
+        tasks_db = self._namespacing.postgres_db(group)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:
                 tasks = [
                     t
                     async for t in _get_tasks(
-                        cur, namespace=namespace, task_name=task_name, state=state
+                        cur, group=group, task_name=task_name, state=state
                     )
                 ]
         return tasks
@@ -249,12 +249,12 @@ class PostgresStorage(TaskStorage):
                 res = await cur.fetchone()
         return res
 
-    async def get_task_namespace(self, task_id: str) -> Optional[str]:
+    async def get_task_group(self, task_id: str) -> Optional[str]:
         tasks_db = await self._get_task_db(task_id)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(_GET_TASK_NAMESPACE_QUERY, (task_id,))
+                await cur.execute(_GET_TASK_GROUP_QUERY, (task_id,))
                 ns = await cur.fetchone()
         if ns is None:
             raise UnknownTask(task_id)
@@ -286,7 +286,7 @@ class PostgresStorage(TaskStorage):
             db_meta = dict()
             async with pool.connection() as conn:
                 async for task_meta in _tasks_meta(conn):
-                    db_meta[task_meta[TASK_ID]] = (db_name, task_meta[TASK_NAMESPACE])
+                    db_meta[task_meta[TASK_ID]] = (db_name, task_meta[TASK_GROUP])
             self._task_meta.update(db_meta)
 
     async def _pool_factory(
@@ -335,9 +335,9 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
     return count > 0
 
 
-async def _insert_task(cur: AsyncClientCursor, task: Task, namespace: Optional[str]):
+async def _insert_task(cur: AsyncClientCursor, task: Task, group: Optional[str]):
     task_as_dict = task.dict(exclude={Task.registry_key.default})
-    task_as_dict[TASK_NAMESPACE] = namespace
+    task_as_dict[TASK_GROUP] = group
     task_as_dict[TASK_ARGS] = ujson.dumps(jsonable_encoder(task.args))
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
     col_value_placeholders = sql.SQL(", ").join(
@@ -354,16 +354,16 @@ async def _insert_task(cur: AsyncClientCursor, task: Task, namespace: Optional[s
 async def _get_tasks(
     cur: AsyncCursor,
     *,
-    namespace: Optional[str],
+    group: Optional[str],
     task_name: Optional[str],
     state: Optional[Union[List[TaskState], TaskState]],
     chunk_size=10,
 ) -> AsyncGenerator[Task, None]:
     # pylint: disable=unused-argument
     where = []
-    if namespace is not None:
+    if group is not None:
         where_ns = sql.SQL("task.{} = {}").format(
-            sql.Identifier(TASK_NAMESPACE), sql.Literal(namespace)
+            sql.Identifier(TASK_GROUP), sql.Literal(group)
         )
         where.append(where_ns)
     if task_name is not None:
@@ -582,14 +582,14 @@ _TASK_META_QUERY = sql.SQL(
     "SELECT t.{task_id}, t.{task_ns} FROM {task_table} AS t;"
 ).format(
     task_id=sql.Identifier(TASK_ID),
-    task_ns=sql.Identifier(TASK_NAMESPACE),
+    task_ns=sql.Identifier(TASK_GROUP),
     task_table=sql.Identifier(POSTGRES_TASKS_TABLE),
 )
 
-_GET_TASK_NAMESPACE_QUERY = sql.SQL(
+_GET_TASK_GROUP_QUERY = sql.SQL(
     "SELECT t.{} AS task_ns FROM {} AS t WHERE t.{} = %s;"
 ).format(
-    sql.Identifier(TASK_NAMESPACE),
+    sql.Identifier(TASK_GROUP),
     sql.Identifier(POSTGRES_TASKS_TABLE),
     sql.Identifier(TASK_ID),
 )

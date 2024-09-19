@@ -200,12 +200,12 @@ async def test_save_task(mock_manager: MockManager):
     assert db_task == expected_task
 
 
-async def test_save_task_to_namespace(
-    mock_manager: MockManager, namespaced_hello_world_task: Task
+async def test_save_task_to_group(
+    mock_manager: MockManager, grouped_hello_world_task: Task
 ):
     # Given
     task_manager = mock_manager
-    task = namespaced_hello_world_task
+    task = grouped_hello_world_task
 
     # When
     await task_manager.save_task(task)
@@ -214,7 +214,7 @@ async def test_save_task_to_namespace(
     # Then
     expected_task = safe_copy(task, update={"max_retries": 3, "retries_left": 3})
     assert db_task == expected_task
-    ns = await task_manager.get_task_namespace(task.id)
+    ns = await task_manager.get_task_group(task.id)
     assert ns == "hello"
 
 

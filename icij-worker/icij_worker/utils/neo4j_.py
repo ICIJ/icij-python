@@ -35,8 +35,8 @@ class Neo4jConsumerMixin(Neo4jStorage, ABC):
             for db in dbs:
                 async with self._db_session(db.name) as sess:
                     received = await sess.execute_write(consume_tx)
-                    if "namespace" in received:
-                        self._task_meta[received.id] = (db.name, received["namespace"])
+                    if "group" in received:
+                        self._task_meta[received.id] = (db.name, received["group"])
                     if received is not None:
                         return received
             await asyncio.sleep(refresh_interval_s)

@@ -3,24 +3,24 @@ from typing import List
 
 import pytest
 
-from icij_worker import AsyncApp, Namespacing
+from icij_worker import AsyncApp, RoutingStrategy
 
 
-class DummyNamespacing(Namespacing):
+class DummyNamespacing(RoutingStrategy):
 
-    def app_tasks_filter(self, *, task_namespace: str, app_namespace: str) -> bool:
-        return task_namespace.endswith(app_namespace)
+    def app_tasks_filter(self, *, task_group: str, app_group: str) -> bool:
+        return task_group.endswith(app_group)
 
 
 @pytest.fixture()
-def namespaced_app() -> AsyncApp:
-    app = AsyncApp("namespaced-app")
+def grouped_app() -> AsyncApp:
+    app = AsyncApp("grouped-app")
 
-    @app.task(namespace="namespaced-a")
+    @app.task(group="grouped-a")
     def i_m_a():
         return "I'm a"
 
-    @app.task(namespace="namespaced-b")
+    @app.task(group="grouped-b")
     def i_m_b():
         return "I'm b"
 
@@ -28,18 +28,16 @@ def namespaced_app() -> AsyncApp:
 
 
 @pytest.mark.parametrize(
-    "namespace,expected_keys",
+    "group,expected_keys",
     [("", ["i_m_a", "i_m_b"]), ("a", ["i_m_a"]), ("b", ["i_m_b"])],
 )
-def test_filter_tasks(
-    namespaced_app: AsyncApp, namespace: str, expected_keys: List[str]
-):
+def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: List[str]):
     # Given
-    app = namespaced_app
+    app = grouped_app
     namespacing = DummyNamespacing()
 
     # When
-    app = app.with_namespacing(namespacing).filter_tasks(namespace)
+    app = app.with_routing_strategy(namespacing).filter_tasks(group)
 
     # Then
     assert app.registered_keys == expected_keys

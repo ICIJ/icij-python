@@ -59,13 +59,13 @@ async def test_task_manager_enqueue(
     assert amqp_task == task
 
 
-async def test_task_manager_enqueue_with_namespace(
-    namespaced_hello_world_task: Task, test_amqp_task_manager: TestableAMQPTaskManager
+async def test_task_manager_enqueue_with_group(
+    grouped_hello_world_task: Task, test_amqp_task_manager: TestableAMQPTaskManager
 ):
     # Given
-    namespace = "hello"
+    group = "hello"
     task_manager = test_amqp_task_manager
-    task = namespaced_hello_world_task
+    task = grouped_hello_world_task
     await task_manager.save_task(task)
 
     # When
@@ -74,7 +74,7 @@ async def test_task_manager_enqueue_with_namespace(
     # Then
     assert queued.state is TaskState.QUEUED
     channel = task_manager.channel
-    res_queue = await channel.get_queue(f"TASK.{namespace}")
+    res_queue = await channel.get_queue(f"TASK.{group}")
     receive_timeout = 1.0
     async with res_queue.iterator(timeout=receive_timeout) as messages:
         try:
@@ -90,7 +90,7 @@ async def test_task_manager_enqueue_with_namespace(
         "@type": "Task",
         "id": "some-id",
         "state": "CREATED",
-        "name": "namespaced_hello_world",
+        "name": "grouped_hello_world",
         "args": {"greeted": "world"},
         "retriesLeft": 3,
         "maxRetries": 3,

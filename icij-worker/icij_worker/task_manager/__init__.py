@@ -11,7 +11,7 @@ from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.app import AsyncAppConfig
 from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
-from icij_worker.namespacing import Namespacing
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import (
     AsyncBackend,
     CancelledEvent,
@@ -75,8 +75,8 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
         return self._app.config.max_task_queue_size
 
     @cached_property
-    def _namespacing(self) -> Namespacing:
-        return self._app.namespacing
+    def _routing_strategy(self) -> RoutingStrategy:
+        return self._app.routing_strategy
 
     @cached_property
     def app_name(self) -> str:
@@ -107,10 +107,10 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     async def save_task(self, task: Task) -> bool:
         max_retries = None
         try:
-            ns = await self.get_task_namespace(task_id=task.id)
+            ns = await self.get_task_group(task_id=task.id)
         except UnknownTask as e:
             try:
-                ns = self._app.registry[task.name].namespace
+                ns = self._app.registry[task.name].group
                 max_retries = self._app.registry[task.name].max_retries
             except KeyError:
                 available_tasks = list(self._app.registry)

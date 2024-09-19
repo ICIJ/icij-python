@@ -8,7 +8,7 @@ from inspect import iscoroutinefunction, signature
 from typing import Callable, Dict, List, Optional, Tuple, Type, final
 
 from icij_common.pydantic_utils import ICIJModel, ICIJSettings
-from icij_worker.namespacing import Namespacing
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.typing_ import Dependency
 from icij_worker.utils import run_deps
 from icij_worker.utils.imports import import_variable
@@ -30,7 +30,7 @@ class RegisteredTask(ICIJModel):
     task: Callable
     recover_from: Tuple[Type[Exception], ...] = tuple()
     max_retries: Optional[int]
-    namespace: Optional[str]
+    group: Optional[str]
 
 
 class AsyncApp:
@@ -39,7 +39,7 @@ class AsyncApp:
         name: str,
         config: AsyncAppConfig = None,
         dependencies: Optional[List[Dependency]] = None,
-        namespacing: Optional[Namespacing] = None,
+        routing_strategy: Optional[RoutingStrategy] = None,
     ):
         self._name = name
         if config is None:
@@ -49,9 +49,9 @@ class AsyncApp:
         if dependencies is None:
             dependencies = []
         self._dependencies = dependencies
-        if namespacing is None:
-            namespacing = Namespacing()
-        self._namespacing = namespacing
+        if routing_strategy is None:
+            routing_strategy = RoutingStrategy()
+        self._routing_strategy = routing_strategy
 
     @property
     def config(self) -> AsyncAppConfig:
@@ -76,11 +76,11 @@ class AsyncApp:
         return self._name
 
     @functools.cached_property
-    def namespacing(self) -> Namespacing:
-        return self._namespacing
+    def routing_strategy(self) -> RoutingStrategy:
+        return self._routing_strategy
 
-    def with_namespacing(self, ns: Namespacing) -> AsyncApp:
-        self._namespacing = ns
+    def with_routing_strategy(self, ns: RoutingStrategy) -> AsyncApp:
+        self._routing_strategy = ns
         return self
 
     def task(
@@ -89,13 +89,13 @@ class AsyncApp:
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
         *,
-        namespace: Optional[str] = None,
+        group: Optional[str] = None,
     ) -> Callable:
         if callable(name) and not recover_from and max_retries is None:
             f = name
-            return functools.partial(
-                self._register_task, name=f.__name__, namespace=namespace
-            )(f)
+            return functools.partial(self._register_task, name=f.__name__, group=group)(
+                f
+            )
         if max_retries is None:
             max_retries = 3
         return functools.partial(
@@ -103,7 +103,7 @@ class AsyncApp:
             name=name,
             recover_from=recover_from,
             max_retries=max_retries,
-            namespace=namespace,
+            group=group,
         )
 
     @final
@@ -120,7 +120,7 @@ class AsyncApp:
         name: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
-        namespace: Optional[str],
+        group: Optional[str],
     ) -> Callable:
         if not iscoroutinefunction(f) and supports_progress(f):
             msg = (
@@ -138,7 +138,7 @@ class AsyncApp:
             task=f,
             max_retries=max_retries,
             recover_from=recover_from,
-            namespace=namespace,
+            group=group,
         )
 
         @functools.wraps(f)
@@ -154,17 +154,17 @@ class AsyncApp:
             app.with_config(config)
         return app
 
-    def filter_tasks(self, namespace: str) -> AsyncApp:
+    def filter_tasks(self, group: str) -> AsyncApp:
         kept = {
             t_name
             for t_name, t in self._registry.items()
-            if self._namespacing.app_tasks_filter(
-                task_namespace=t.namespace, app_namespace=namespace
+            if self._routing_strategy.app_tasks_filter(
+                task_group=t.group, app_group=group
             )
         }
         discarded = set(self._registry) - kept
         logger.info(
-            "Applied namespace filtering:\n- running: %s\n- discarded: %s",
+            "Applied group filtering:\n- running: %s\n- discarded: %s",
             ", ".join(sorted(kept)),
             ", ".join(sorted(discarded)),
         )
@@ -177,7 +177,7 @@ class AsyncApp:
             name=self.name,
             config=deepcopy(self.config),
             dependencies=list(self._dependencies),
-            namespacing=self.namespacing,
+            routing_strategy=self.routing_strategy,
         )
         app._registry = deepcopy(self._registry)
         return app

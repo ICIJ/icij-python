@@ -4,18 +4,18 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
-from icij_worker.namespacing import Namespacing
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import ErrorEvent, ProgressEvent
 
 
 class TaskStorageConfig(ABC):
     @abstractmethod
-    def to_storage(self, namespacing: Optional[Namespacing]) -> TaskStorage:
+    def to_storage(self, namespacing: Optional[RoutingStrategy]) -> TaskStorage:
         pass
 
 
 class TaskStorage(ABC):
-    _namespacing: Namespacing
+    _routing_strategy: RoutingStrategy
 
     @abstractmethod
     async def get_task(self, task_id: str) -> Task: ...
@@ -27,12 +27,12 @@ class TaskStorage(ABC):
     async def get_task_result(self, task_id: str) -> ResultEvent: ...
 
     @abstractmethod
-    async def get_task_namespace(self, task_id: str) -> Optional[str]: ...
+    async def get_task_group(self, task_id: str) -> Optional[str]: ...
 
     @abstractmethod
     async def get_tasks(
         self,
-        namespace: Optional[str],
+        group: Optional[str],
         *,
         task_name: Optional[str] = None,
         state: Optional[Union[List[TaskState], TaskState]] = None,
@@ -44,11 +44,11 @@ class TaskStorage(ABC):
         # when possible
         task = await self.get_task(event.task_id)
         task = task.as_resolved(event)
-        namespace = await self.get_task_namespace(event.task_id)
-        await self.save_task_(task, namespace=namespace)
+        group = await self.get_task_group(event.task_id)
+        await self.save_task_(task, group=group)
 
     @abstractmethod
-    async def save_task_(self, task: Task, namespace: Optional[str]) -> bool: ...
+    async def save_task_(self, task: Task, group: Optional[str]) -> bool: ...
 
     @abstractmethod
     async def save_result(self, result: ResultEvent): ...
