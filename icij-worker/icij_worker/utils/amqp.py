@@ -19,12 +19,7 @@ from aio_pika.abc import (
     AbstractRobustConnection,
     ExchangeType,
 )
-from aiohttp import (
-    BasicAuth,
-    ClientResponse,
-    ClientResponseError,
-    ClientSession,
-)
+from aiohttp import BasicAuth, ClientResponse, ClientResponseError, ClientSession
 from aiohttp.client import _RequestOptions
 from aiohttp.typedefs import StrOrURL
 from aiormq.abc import ConfirmationFrameType
@@ -52,6 +47,8 @@ from icij_worker.constants import (
     AMQP_WORKER_EVENTS_ROUTING_KEY,
     AMQP_WORKER_EVENTS_X,
 )
+from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
+from icij_worker.task_storage.postgres.postgres import logger
 from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
 from icij_worker.task_storage.postgres.postgres import logger
 

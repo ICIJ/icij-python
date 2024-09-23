@@ -39,6 +39,7 @@ class RegisteredTask(ICIJModel):
     recover_from: Tuple[Type[Exception], ...] = tuple()
     max_retries: Optional[int]
     group: Optional[TaskGroup]
+    timeout_s: Optional[int]
 
     @validator("group", pre=True)
     def validate_group_instance(cls, v):  # pylint: disable=no-self-argument
