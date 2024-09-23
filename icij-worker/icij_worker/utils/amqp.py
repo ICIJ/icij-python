@@ -70,7 +70,7 @@ class AMQPConfigMixin(ICIJModel):
 class AMQPMixin:
     _app_id: str
     _channel_: AbstractRobustChannel
-    _namespacing: RoutingStrategy
+    _routing_strategy: RoutingStrategy
     _task_x: AbstractExchange
     max_task_queue_size: Optional[int]
     _always_include = {"createdAt", "retriesLeft"}

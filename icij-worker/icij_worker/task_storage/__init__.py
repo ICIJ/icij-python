@@ -3,14 +3,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
-from icij_worker import AsyncApp, ResultEvent, Task, TaskState
-from icij_worker.routing_strategy import RoutingStrategy
+from icij_worker import ResultEvent, Task, TaskState
 from icij_worker.objects import ErrorEvent, ProgressEvent
+from icij_worker.routing_strategy import RoutingStrategy
 
 
 class TaskStorageConfig(ABC):
     @abstractmethod
-    def to_storage(self, namespacing: Optional[RoutingStrategy]) -> TaskStorage:
+    def to_storage(self, routing_strategy: Optional[RoutingStrategy]) -> TaskStorage:
         pass
 
 

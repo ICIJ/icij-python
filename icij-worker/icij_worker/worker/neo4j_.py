@@ -84,7 +84,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
         super().__init__(app, worker_id, group=group, **kwargs)
         super(Worker, self).__init__(driver)
         if self._group is not None:
-            db_filter = self._namespacing.db_filter_factory(self._group)
+            db_filter = self._routing_strategy.db_filter_factory(self._group)
         else:
             db_filter = _no_filter
         self._db_filter: Callable[[str], bool] = db_filter

@@ -140,9 +140,9 @@ def amqp_worker(
 @pytest.fixture
 async def populate_tasks(rabbit_mq: str, request):
     connection = await connect_robust(rabbit_mq)
-    namespacing = RoutingStrategy()
+    routing_strategy = RoutingStrategy()
     group = getattr(request, "param", None)
-    task_routing = namespacing.amqp_task_routing(group)
+    task_routing = routing_strategy.amqp_task_routing(group)
     tasks = [
         Task(
             id="task-0",

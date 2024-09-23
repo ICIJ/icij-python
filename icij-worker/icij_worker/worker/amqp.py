@@ -202,7 +202,7 @@ class AMQPWorker(Worker, AMQPMixin):
 
     @lru_cache()
     def task_routing(self, group: Optional[str]) -> Routing:
-        routing = self._namespacing.amqp_task_routing(group)
+        routing = self._routing_strategy.amqp_task_routing(group)
         return routing
 
     def _create_publisher(self) -> AMQPPublisher:

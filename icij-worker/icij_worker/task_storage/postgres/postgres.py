@@ -69,10 +69,12 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
     migration_timeout_s: float = 60.0
     migration_throttle_s: float = 0.1
 
-    def to_storage(self, namespacing: Optional[RoutingStrategy]) -> PostgresStorage:
+    def to_storage(
+        self, routing_strategy: Optional[RoutingStrategy]
+    ) -> PostgresStorage:
         storage = PostgresStorage(
             connection_info=self.as_connection_info,
-            namespacing=namespacing,
+            routing_strategy=routing_strategy,
             registry_db_name=self.registry_db_name,
             max_connections=self.max_connections,
             migration_timeout_s=self.migration_timeout_s,
@@ -127,13 +129,13 @@ class PostgresStorage(TaskStorage):
         connection_info: PostgresConnectionInfo,
         max_connections: int,
         registry_db_name: str,
-        namespacing: RoutingStrategy = None,
+        routing_strategy: RoutingStrategy = None,
         migration_timeout_s: float = 60,
         migration_throttle_s: float = 0.1,
     ):
-        if namespacing is None:
-            namespacing = RoutingStrategy()
-        self._namespacing = namespacing
+        if routing_strategy is None:
+            routing_strategy = RoutingStrategy()
+        self._routing_strategy = routing_strategy
         self._connection_info = connection_info
         self._max_connections = max_connections
         self._registry_db_name = registry_db_name
@@ -163,7 +165,7 @@ class PostgresStorage(TaskStorage):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def save_task_(self, task: Task, group: Optional[str]) -> bool:
-        db_name = self._namespacing.postgres_db(group)
+        db_name = self._routing_strategy.postgres_db(group)
         if db_name not in self._known_dbs:
             await self._ensure_db(db_name)
         pool = await self._pool_manager.get_pool(db_name)
@@ -219,7 +221,7 @@ class PostgresStorage(TaskStorage):
         state: Optional[Union[List[TaskState], TaskState]] = None,
         **kwargs,
     ) -> List[Task]:
-        tasks_db = self._namespacing.postgres_db(group)
+        tasks_db = self._routing_strategy.postgres_db(group)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:

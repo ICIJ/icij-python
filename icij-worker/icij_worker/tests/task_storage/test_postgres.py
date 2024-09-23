@@ -58,8 +58,8 @@ class _TestRoutingStrategy(RoutingStrategy):
 async def test_postgres_storage(
     test_postgres_config: PostgresStorageConfig,
 ) -> PostgresStorage:
-    namespacing = _TestRoutingStrategy()
-    storage = test_postgres_config.to_storage(namespacing=namespacing)
+    routing_strategy = _TestRoutingStrategy()
+    storage = test_postgres_config.to_storage(routing_strategy=routing_strategy)
     async with storage:
         yield storage
 

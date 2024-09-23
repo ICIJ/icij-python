@@ -100,7 +100,7 @@ class Worker(
         return self._cancel_lock
 
     @property
-    def _namespacing(self) -> RoutingStrategy:
+    def _routing_strategy(self) -> RoutingStrategy:
         return self._app.routing_strategy
 
     @functools.cached_property

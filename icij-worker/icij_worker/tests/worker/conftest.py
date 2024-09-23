@@ -15,8 +15,8 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
 )
 
 
-def make_app(namespacing: Optional[RoutingStrategy] = None):
-    app = AsyncApp(name="test-app", dependencies=[], routing_strategy=namespacing)
+def make_app(routing_strategy: Optional[RoutingStrategy] = None):
+    app = AsyncApp(name="test-app", dependencies=[], routing_strategy=routing_strategy)
 
     @app.task
     async def hello_word(greeted: str):

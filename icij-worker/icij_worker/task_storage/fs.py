@@ -18,8 +18,10 @@ from icij_worker.task_storage.key_value import KeyValueStorage
 class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
     db_path: Path
 
-    def to_storage(self, namespacing: Optional[RoutingStrategy]) -> FSKeyValueStorage:
-        return FSKeyValueStorage(self.db_path, namespacing)
+    def to_storage(
+        self, routing_strategy: Optional[RoutingStrategy]
+    ) -> FSKeyValueStorage:
+        return FSKeyValueStorage(self.db_path, routing_strategy)
 
 
 class FSKeyValueStorage(KeyValueStorage):
@@ -33,11 +35,13 @@ class FSKeyValueStorage(KeyValueStorage):
 
     # pylint: enable=c-extension-no-member
 
-    def __init__(self, db_path: Path, namespacing: Optional[RoutingStrategy] = None):
+    def __init__(
+        self, db_path: Path, routing_strategy: Optional[RoutingStrategy] = None
+    ):
         super().__init__()
-        if namespacing is None:
-            namespacing = RoutingStrategy()
-        self._namespacing = namespacing
+        if routing_strategy is None:
+            routing_strategy = RoutingStrategy()
+        self._routing_strategy = routing_strategy
         self._db_path = str(db_path)
         self._exit_stack = AsyncExitStack()
         self._dbs = dict()

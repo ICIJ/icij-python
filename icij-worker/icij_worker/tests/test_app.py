@@ -6,7 +6,7 @@ import pytest
 from icij_worker import AsyncApp, RoutingStrategy
 
 
-class DummyNamespacing(RoutingStrategy):
+class DummyRouting(RoutingStrategy):
 
     def app_tasks_filter(self, *, task_group: str, app_group: str) -> bool:
         return task_group.endswith(app_group)
@@ -34,10 +34,10 @@ def grouped_app() -> AsyncApp:
 def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: List[str]):
     # Given
     app = grouped_app
-    namespacing = DummyNamespacing()
+    routing = DummyRouting()
 
     # When
-    app = app.with_routing_strategy(namespacing).filter_tasks(group)
+    app = app.with_routing_strategy(routing).filter_tasks(group)
 
     # Then
     assert app.registered_keys == expected_keys
