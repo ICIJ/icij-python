@@ -8,10 +8,7 @@ from functools import cached_property, lru_cache
 from typing import Any, AsyncContextManager, Dict, List, Optional, Tuple, cast
 from urllib import parse
 
-from aio_pika import (
-    DeliveryMode,
-    Message as AioPikaMessage,
-)
+from aio_pika import DeliveryMode, Message as AioPikaMessage
 from aio_pika.abc import (
     AbstractExchange,
     AbstractQueueIterator,
@@ -55,6 +52,24 @@ from icij_worker.task_storage.postgres.postgres import logger
 _DELIVERY_ACK_TIMEOUT_RE = re.compile(
     r"delivery acknowledgement on channel .+ timed out", re.MULTILINE
 )
+
+
+@unique
+class ApplyTo(str, Enum):
+    EXCHANGES = "exchanges"
+    QUEUES = "queues"
+    CLASSIC_QUEUES = "classic_queues"
+    QUORUM_QUEUES = "quorum_queues"
+    STREAMS = "streams"
+    ALL = "all"
+
+
+class AMQPPolicy(NoEnumModel):
+    name: str
+    pattern: str
+    definition: Dict[str, Any]
+    apply_to: Optional[ApplyTo] = None
+    priority: Optional[int] = None
 
 
 @unique
