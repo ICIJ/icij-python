@@ -15,7 +15,6 @@ from aio_pika import (
 )
 from pydantic import Field
 
-from conftest import RABBITMQ_MANAGEMENT_PORT
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import (
