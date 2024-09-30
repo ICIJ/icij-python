@@ -19,7 +19,6 @@ services:
   icij-python-test-postgres:
     image: postgres
     container_name: icij-python-test-postgres
-    restart: always
     environment:
       POSTGRES_PASSWORD: changeme
     healthcheck:
