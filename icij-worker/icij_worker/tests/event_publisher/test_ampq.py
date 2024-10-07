@@ -31,7 +31,6 @@ _RESULT_ROUTING = Routing(
 )
 
 
-@pytest.mark.asyncio
 async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     # Given
     task = hello_world_task

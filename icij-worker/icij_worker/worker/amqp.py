@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from copy import deepcopy
 from functools import lru_cache
 from typing import ClassVar, Dict, Optional, cast
 
@@ -27,9 +26,14 @@ from icij_worker import (
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
-from icij_worker.routing_strategy import Routing
 from icij_worker.objects import Message, TaskState, WorkerEvent
-from icij_worker.utils.amqp import AMQPConfigMixin, AMQPMixin
+from icij_worker.routing_strategy import Routing
+from icij_worker.utils.amqp import (
+    AMQPConfigMixin,
+    AMQPManagementClient,
+    AMQPMixin,
+    amqp_task_group_policy,
+)
 
 # TODO: remove this when project information is inside the tasks
 _PROJECT_PLACEHOLDER = "placeholder_project_amqp"
@@ -46,6 +50,7 @@ class AMQPWorker(Worker, AMQPMixin):
     def __init__(
         self,
         app: AsyncApp,
+        management_client: AMQPManagementClient,
         worker_id: Optional[str] = None,
         *,
         group: Optional[str],
@@ -70,6 +75,7 @@ class AMQPWorker(Worker, AMQPMixin):
             reconnection_wait_s=reconnection_wait_s,
             inactive_after_s=inactive_after_s,
         )
+        self._management_client = management_client
         cancel_evt_queue_name = f"{self.worker_evt_routing().queue_name}-{self._id}"
         self._worker_evt_routing = safe_copy(
             self.worker_evt_routing(), update={"queue_name": cancel_evt_queue_name}
@@ -91,12 +97,12 @@ class AMQPWorker(Worker, AMQPMixin):
 
     async def _aenter__(self):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
+        await self._exit_stack.enter_async_context(self._management_client)
         self._publisher = self._create_publisher()
         await self._exit_stack.enter_async_context(self._publisher)
         self._connection_ = self._publisher.connection
         self._channel_ = await self._connection.channel(
-            publisher_confirms=True,
-            on_return_raises=False,
+            publisher_confirms=True, on_return_raises=False
         )
         await self._channel.set_qos(prefetch_count=1, global_=False)
         await self._exit_stack.enter_async_context(self._channel)
@@ -112,10 +118,6 @@ class AMQPWorker(Worker, AMQPMixin):
 
     async def _bind_task_queue(self):
         task_routing = self.task_routing(self._group)
-        if self._app.config.max_task_queue_size is not None:
-            queue_args = deepcopy(task_routing.queue_args)
-            queue_args["x-max-length"] = self._app.config.max_task_queue_size
-            task_routing = safe_copy(task_routing, update={"queue_args": queue_args})
         self._task_routing = task_routing
         self._task_queue_iterator, _, _ = await self._get_queue_iterator(
             self._task_routing,
@@ -126,6 +128,11 @@ class AMQPWorker(Worker, AMQPMixin):
             AbstractAsyncContextManager, self._task_queue_iterator
         )
         await self._exit_stack.enter_async_context(self._task_queue_iterator)
+        task_group = self._app.task_group(self._group)
+        group_policy = amqp_task_group_policy(
+            self._task_routing, task_group, self._app.config.max_task_queue_size
+        )
+        await self._management_client.set_policy(group_policy)
 
     async def _bind_worker_event_queue(self):
         self._worker_evt_queue_iterator, _, _ = await self._get_queue_iterator(
@@ -140,10 +147,10 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.enter_async_context(self._worker_evt_queue_iterator)
 
     async def _consume(self) -> Task:
+        # TODO: remove this now that task groups exist
         while "I'm waiting to get a known task":
-            message: AbstractIncomingMessage = (
-                await self._task_messages_it.__anext__()  # pylint: disable=unnecessary-dunder-call
-            )
+            # pylint: disable=unnecessary-dunder-call
+            message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
             task = Task.parse_raw(message.body)
             self._delivered[task.id] = message
             # This behavior is not shared with other implems, it's AMQP specific and
@@ -154,9 +161,8 @@ class AMQPWorker(Worker, AMQPMixin):
             return task
 
     async def _consume_worker_events(self) -> WorkerEvent:
-        message: AbstractIncomingMessage = (
-            await self._worker_events_it.__anext__()  # pylint: disable=unnecessary-dunder-call
-        )
+        # pylint: disable=unnecessary-dunder-call
+        message: AbstractIncomingMessage = await self._worker_events_it.__anext__()
         await message.ack()
         event = cast(WorkerEvent, Message.parse_raw(message.body))
         return event
@@ -216,7 +222,9 @@ class AMQPWorker(Worker, AMQPMixin):
 
     @classmethod
     def _from_config(cls, config: AMQPWorkerConfig, **extras) -> AMQPWorker:
+        management_client = config.to_management_client()
         worker = cls(
+            management_client=management_client,
             broker_url=config.broker_url,
             connection_timeout_s=config.connection_timeout_s,
             reconnection_wait_s=config.reconnection_wait_s,

@@ -16,7 +16,7 @@ import neo4j
 import pika
 import pytest
 from aio_pika.abc import AbstractRobustChannel
-from aiohttp import ClientResponseError, ClientTimeout
+from aiohttp import BasicAuth, ClientResponseError, ClientTimeout
 
 import icij_worker
 from icij_common.logging_utils import (
@@ -58,6 +58,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_task_type_to_name_v0,
 )
 from icij_worker.typing_ import RateProgress
+from icij_worker.utils.amqp import AMQPManagementClient
 
 # noinspection PyUnresolvedReferences
 from icij_worker.utils.tests import (  # pylint: disable=unused-import
@@ -71,14 +72,17 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
     test_async_app_late,
 )
 
+RABBITMQ_MANAGEMENT_PORT = 15673
 RABBITMQ_TEST_PORT = 5673
 RABBITMQ_TEST_HOST = "localhost"
-_RABBITMQ_MANAGEMENT_PORT = 15673
-TEST_MANAGEMENT_URL = f"http://localhost:{_RABBITMQ_MANAGEMENT_PORT}"
+RABBITMQ_TEST_USER = "guest"
+RABBITMQ_TEST_PASSWORD = "guest"
+TEST_MANAGEMENT_URL = f"http://localhost:{RABBITMQ_MANAGEMENT_PORT}"
 DEFAULT_VHOST = "%2F"
 
 _DEFAULT_BROKER_URL = (
-    f"amqp://guest:guest@{RABBITMQ_TEST_HOST}:{RABBITMQ_TEST_PORT}/{DEFAULT_VHOST}"
+    f"amqp://{RABBITMQ_TEST_USER}:{RABBITMQ_TEST_PASSWORD}@"
+    f"{RABBITMQ_TEST_HOST}:{RABBITMQ_TEST_PORT}/{DEFAULT_VHOST}"
 )
 _DEFAULT_AUTH = aiohttp.BasicAuth(login="guest", password="guest", encoding="utf-8")
 
@@ -304,7 +308,11 @@ def get_test_management_url(url: str) -> str:
 async def _wipe_rabbit_mq():
     async with rabbit_mq_test_session() as session:
         await _delete_all_connections(session)
-        tasks = [_delete_all_exchanges(session), _delete_all_queues(session)]
+        tasks = [
+            _delete_all_exchanges(session),
+            _delete_all_queues(session),
+            _delete_all_policies(session),
+        ]
         await asyncio.gather(*tasks)
 
 
@@ -345,8 +353,22 @@ async def _delete_all_queues(session: aiohttp.ClientSession):
     await asyncio.gather(*tasks)
 
 
+async def _delete_all_policies(session: aiohttp.ClientSession):
+    url = f"/api/policies/{DEFAULT_VHOST}"
+    async with session.get(get_test_management_url(url)) as res:
+        policies = await res.json()
+    tasks = [_delete_policy(session, q["name"]) for q in policies]
+    await asyncio.gather(*tasks)
+
+
 async def _delete_queue(session: aiohttp.ClientSession, name: str):
     url = f"/api/queues/{DEFAULT_VHOST}/{name}"
+    async with session.delete(get_test_management_url(url)) as res:
+        res.raise_for_status()
+
+
+async def _delete_policy(session: aiohttp.ClientSession, name: str):
+    url = f"/api/policies/{DEFAULT_VHOST}/{name}"
     async with session.delete(get_test_management_url(url)) as res:
         res.raise_for_status()
 
@@ -467,8 +489,15 @@ async def fs_storage(fs_storage_path: Path) -> TestableFSKeyValueStorage:
 
 
 class TestableAMQPTaskManager(AMQPTaskManager):
-    def __init__(self, app: AsyncApp, task_store: TaskStorage, *, broker_url: str):
-        super().__init__(app, task_store, broker_url=broker_url)
+    def __init__(
+        self,
+        app: AsyncApp,
+        task_store: TaskStorage,
+        management_client: AMQPManagementClient,
+        *,
+        broker_url: str,
+    ):
+        super().__init__(app, task_store, management_client, broker_url=broker_url)
         self.consumed: List[ManagerEvent] = []
 
     @cached_property
@@ -485,12 +514,26 @@ class TestableAMQPTaskManager(AMQPTaskManager):
         return self._app
 
 
+@pytest.fixture
+async def management_client() -> AMQPManagementClient:
+    management_url = TEST_MANAGEMENT_URL
+    auth = BasicAuth(RABBITMQ_TEST_USER, RABBITMQ_TEST_PASSWORD, encoding="utf-8")
+    management_client = AMQPManagementClient(
+        management_url, rabbitmq_vhost=DEFAULT_VHOST, rabbitmq_auth=auth
+    )
+    return management_client
+
+
 @pytest.fixture()
 async def test_amqp_task_manager(
-    fs_storage: TestableFSKeyValueStorage, rabbit_mq: str, test_async_app: AsyncApp
+    fs_storage: TestableFSKeyValueStorage,
+    management_client: AMQPManagementClient,
+    rabbit_mq: str,
+    test_async_app: AsyncApp,
 ) -> TestableAMQPTaskManager:
+
     task_manager = TestableAMQPTaskManager(
-        test_async_app, fs_storage, broker_url=rabbit_mq
+        test_async_app, fs_storage, management_client, broker_url=rabbit_mq
     )
     async with task_manager:
         yield task_manager

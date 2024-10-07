@@ -46,7 +46,7 @@ from icij_worker import (
     Worker,
     WorkerConfig,
 )
-from icij_worker.app import AsyncAppConfig
+from icij_worker.app import AsyncAppConfig, TaskGroup
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
 from icij_worker.objects import (
@@ -294,8 +294,7 @@ if _has_pytest:
         greeting = f"Hello {greeted} !"
         return greeting
 
-    @APP.task(max_retries=1)
-    async def sleep_for(
+    async def _sleep_for(
         duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
     ):
         start = datetime.now()
@@ -306,6 +305,21 @@ if _has_pytest:
             if progress is not None:
                 p = min(elapsed / duration, 1.0)
                 await progress(p)
+
+    @APP.task(max_retries=1)
+    async def sleep_for(
+        duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
+    ):
+        await _sleep_for(duration, s, progress)
+
+    short_timeout = 1
+    short_tasks_group = TaskGroup(name="short", timeout_s=short_timeout)
+
+    @APP.task(max_retries=3, group=short_tasks_group)
+    async def sleep_for_short(
+        duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
+    ):
+        await _sleep_for(duration, s, progress)
 
     @APP.task(max_retries=666)
     async def often_retriable() -> str:

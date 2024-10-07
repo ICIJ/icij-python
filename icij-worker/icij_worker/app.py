@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 import functools
 import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from inspect import iscoroutinefunction, signature
-from typing import Callable, Dict, List, Optional, Tuple, Type, final
+from typing import Callable, Dict, List, Optional, Tuple, Type, Union, final
+
+from pydantic import validator
+from typing_extensions import Self
 
 from icij_common.pydantic_utils import ICIJModel, ICIJSettings
 from icij_worker.routing_strategy import RoutingStrategy
@@ -18,8 +19,15 @@ logger = logging.getLogger(__name__)
 PROGRESS_HANDLER_ARG = "progress"
 
 
+class TaskGroup(ICIJModel):
+    name: str
+    timeout_s: Optional[int] = None
+    max_task_queue_size: Optional[int] = None
+
+
 class AsyncAppConfig(ICIJSettings):
     late_ack: bool = True
+    recover_from_worker_timeout: bool = False
     max_task_queue_size: Optional[int] = None
 
     class Config:
@@ -30,7 +38,13 @@ class RegisteredTask(ICIJModel):
     task: Callable
     recover_from: Tuple[Type[Exception], ...] = tuple()
     max_retries: Optional[int]
-    group: Optional[str]
+    group: Optional[TaskGroup]
+
+    @validator("group", pre=True)
+    def validate_group_instance(cls, v):  # pylint: disable=no-self-argument
+        if isinstance(v, str):
+            v = TaskGroup(name=v)
+        return v
 
 
 class AsyncApp:
@@ -46,6 +60,7 @@ class AsyncApp:
             config = AsyncAppConfig()  # This will load from the env
         self._config = config
         self._registry = dict()
+        self._groups = dict()
         if dependencies is None:
             dependencies = []
         self._dependencies = dependencies
@@ -57,7 +72,7 @@ class AsyncApp:
     def config(self) -> AsyncAppConfig:
         return self._config
 
-    def with_config(self, value: AsyncAppConfig) -> AsyncApp:
+    def with_config(self, value: AsyncAppConfig) -> Self:
         if not isinstance(value, AsyncAppConfig):
             raise TypeError(f"Expected {AsyncAppConfig.__name__}, got {value}")
         self._config = value
@@ -79,7 +94,7 @@ class AsyncApp:
     def routing_strategy(self) -> RoutingStrategy:
         return self._routing_strategy
 
-    def with_routing_strategy(self, ns: RoutingStrategy) -> AsyncApp:
+    def with_routing_strategy(self, ns: RoutingStrategy) -> Self:
         self._routing_strategy = ns
         return self
 
@@ -89,7 +104,7 @@ class AsyncApp:
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
         *,
-        group: Optional[str] = None,
+        group: Optional[Union[str, TaskGroup]] = None,
     ) -> Callable:
         if callable(name) and not recover_from and max_retries is None:
             f = name
@@ -106,6 +121,13 @@ class AsyncApp:
             group=group,
         )
 
+    def task_group(self, name: str) -> Optional[TaskGroup]:
+        return self._groups.get(name)
+
+    @property
+    def task_groups(self) -> List[TaskGroup]:
+        return list(self._groups.values())
+
     @final
     @asynccontextmanager
     async def lifetime_dependencies(self, **kwargs):
@@ -120,7 +142,7 @@ class AsyncApp:
         name: Optional[str] = None,
         recover_from: Tuple[Type[Exception]] = tuple(),
         max_retries: Optional[int] = None,
-        group: Optional[str],
+        group: Optional[Union[str, TaskGroup]] = None,
     ) -> Callable:
         if not iscoroutinefunction(f) and supports_progress(f):
             msg = (
@@ -134,12 +156,13 @@ class AsyncApp:
         registered = self._registry.get(name)
         if registered is not None:
             raise ValueError(f'Task "{name}" is already registered: {registered}')
-        self._registry[name] = RegisteredTask(
-            task=f,
-            max_retries=max_retries,
-            recover_from=recover_from,
-            group=group,
+        registered = RegisteredTask(
+            task=f, max_retries=max_retries, recover_from=recover_from, group=group
         )
+        self._validate_group(registered)
+        self._registry[name] = registered
+        if registered.group is not None:
+            self._groups[registered.group.name] = registered.group
 
         @functools.wraps(f)
         def wrapped(*args, **kwargs):
@@ -147,19 +170,32 @@ class AsyncApp:
 
         return wrapped
 
+    def _validate_group(self, task: RegisteredTask):
+        if task.group is None:
+            return
+        existing = self._groups.get(task.group.name)
+        if existing is not None and existing.name != task.group:
+            msg = (
+                f"invalid task group {task.group}, it has the same name as registered "
+                f"group {existing}, use {existing} directly or specify a different name"
+            )
+            raise ValueError(msg)
+
     @classmethod
-    def load(cls, app_path: str, config: Optional[AsyncAppConfig] = None) -> AsyncApp:
+    def load(cls, app_path: str, config: Optional[AsyncAppConfig] = None) -> Self:
         app = deepcopy(import_variable(app_path))
         if config is not None:
             app.with_config(config)
         return app
 
-    def filter_tasks(self, group: str) -> AsyncApp:
+    def filter_tasks(self, group: Optional[str]) -> Self:
+        if group is None:
+            return self
         kept = {
             t_name
             for t_name, t in self._registry.items()
             if self._routing_strategy.app_tasks_filter(
-                task_group=t.group, app_group=group
+                task_group=t.group.name, app_group=group
             )
         }
         discarded = set(self._registry) - kept
@@ -171,7 +207,7 @@ class AsyncApp:
         self._registry = {k: self._registry[k] for k in kept}
         return self
 
-    def __deepcopy__(self, memodict={}) -> AsyncApp:
+    def __deepcopy__(self, memodict={}) -> Self:
         # pylint: disable=dangerous-default-value
         app = AsyncApp(
             name=self.name,
@@ -180,6 +216,7 @@ class AsyncApp:
             routing_strategy=self.routing_strategy,
         )
         app._registry = deepcopy(self._registry)
+        app._groups = deepcopy(self._groups)
         return app
 
 

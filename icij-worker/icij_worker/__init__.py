@@ -23,7 +23,7 @@ try:
     from icij_worker.worker.neo4j_ import Neo4jWorker, Neo4jWorkerConfig
     from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
     from icij_worker.task_manager.neo4j_ import Neo4JTaskManager, Neo4JTaskManagerConfig
-except ImportError as e:
+except ImportError:
     pass
 
 try:
