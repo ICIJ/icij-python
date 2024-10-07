@@ -1,11 +1,11 @@
 import importlib.metadata
+import os
 from typing import Annotated, Optional
 
 import typer
 
-from icij_common.logging_utils import setup_loggers
-
 import icij_worker
+from icij_common.logging_utils import setup_loggers
 from icij_worker.cli.workers import worker_app
 
 cli_app = typer.Typer(context_settings={"help_option_names": ["-h", "--help"]})
@@ -19,6 +19,11 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
+def pretty_exc_callback(value: bool):
+    if not value:
+        os.environ["_TYPER_STANDARD_TRACEBACK"] = "1"
+
+
 @cli_app.callback(name="icij-worker")
 def main(
     version: Annotated[  # pylint: disable=unused-argument
@@ -27,6 +32,12 @@ def main(
             "--version", callback=version_callback, is_eager=True
         ),
     ] = None,
+    pretty_exceptions: Annotated[  # pylint: disable=unused-argument
+        bool,
+        typer.Option(  # pylint: disable=unused-argument
+            "--pretty-exceptions", callback=pretty_exc_callback, is_eager=True
+        ),
+    ] = False,
 ):
     """Python async worker pool CLI 🧑‍🏭"""
     setup_loggers(["__main__", icij_worker.__name__])
