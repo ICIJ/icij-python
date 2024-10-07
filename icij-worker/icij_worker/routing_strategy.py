@@ -49,7 +49,7 @@ class RoutingStrategy:
         routing_key = default_task_routing.routing_key
         queue_name = default_task_routing.queue_name
         if task_group is not None:
-            routing_key += f".{task_group}"
+            routing_key = task_group
             queue_name += f".{task_group}"
 
         return Routing(
