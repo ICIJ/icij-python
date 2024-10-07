@@ -1,6 +1,4 @@
-[![Test for icij-worker](https://github.com/ICIJ/icij-python/actions/workflows/tests-worker.yml/badge.svg)](https://github.com/ICIJ/icij-python/actions/workflows/tests-worker.yml)
-
-# ICIJ's async worker library
+# ICIJ's async worker library [![Test for icij-worker](https://github.com/ICIJ/icij-python/actions/workflows/tests-worker.yml/badge.svg)](https://github.com/ICIJ/icij-python/actions/workflows/tests-worker.yml)
 
 ## Installation
 
@@ -47,10 +45,15 @@ Optionally add progress handlers for a better task monitoring:
 
 ```python
 @my_app.task
-def long_running_task(greeted: str, progress: Callable[[float], None]) -> str:
-    progress(0.0)
+async def long_running_task(
+    greeted: str,
+    progress: Optional[Callable[[float], Awaitable]] = None
+) -> str:
+    if progress is not None:
+        await progress(0.0)
     greeting = f"Hello {greeted} !"
-    progress(100.0)
+    if progress is not None:
+        await progress(100.0)
     return greeting
 ```
 
@@ -71,8 +74,6 @@ icij-worker workers start -c worker_config.json -n 2 --backend multiprocessing "
 **depending on the worker configuration additional setup might be required**.
 
 ## Async worker implementations
-
-
 
 - [Neo4j](https://neo4j.com/docs/api/python-driver/current/)
 - [AMQP](https://www.amqp.org/) (`v0.9.1` based on [RabbitMQ](https://www.rabbitmq.com/))

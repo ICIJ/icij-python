@@ -41,8 +41,7 @@ def _mp_work_forever(
             app_deps_extras = dict()
         # For multiprocessing, lifespan dependencies need to be run once per process
         app = AsyncApp.load(app)
-        if worker_group is not None:
-            app.filter_tasks(worker_group)
+        app.filter_tasks(worker_group)
         worker = Worker.from_config(
             config,
             app=app,

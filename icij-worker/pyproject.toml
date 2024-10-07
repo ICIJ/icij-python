@@ -34,9 +34,11 @@ icij-worker = "icij_worker.__main__:cli_app"
 python = "^3.10"
 icij_common = "^0.5.1"
 typer = { extras = ["all"], version = "^0.12.3" }
+typing-extensions = "^4.12.2"
 
 # amqp
 aio-pika = { version = "^9.4.0", optional = true }
+aiohttp =  { version = "^3.9.3", optional = true }
 # fs
 sqlitedict = { version = "^2.1.0", optional = true }
 ujson = { version = "^5.10.0", optional = true }
@@ -46,7 +48,7 @@ neo4j = { version = "^5.0.0", optional = true }
 psycopg = { extras = ["binary", "pool"], version = "^3.2.1", optional = true }
 
 [tool.poetry.extras]
-amqp = ["aio-pika", "psycopg", "sqlitedict", "ujson"]
+amqp = ["aio-pika", "aiohttp", "psycopg", "sqlitedict", "ujson"]
 neo4j = ["neo4j"]
 
 [tool.poetry.group.fs.dependencies]
@@ -60,7 +62,6 @@ pylint = "^3.1.0"
 pytest = "^7.2.1"
 pytest-asyncio = "^0.20.3"
 icij-common = { path = "../icij-common", develop = true, extras = ["neo4j"] }
-aiohttp = "^3.9.3"
 
 
 [build-system]

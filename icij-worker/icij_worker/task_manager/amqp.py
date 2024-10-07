@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import ClassVar, Dict, List, Optional, TypeVar, Union, cast
@@ -11,11 +10,9 @@ from aio_pika.abc import AbstractExchange, AbstractQueueIterator
 from aiormq import DeliveryError
 from pydantic import Field
 
-from icij_common.pydantic_utils import safe_copy
 from icij_worker.app import AsyncApp
 from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
-from icij_worker.routing_strategy import Routing
 from icij_worker.objects import (
     AsyncBackend,
     CancelEvent,
@@ -26,15 +23,21 @@ from icij_worker.objects import (
     Task,
     TaskState,
 )
+from icij_worker.routing_strategy import Routing
 from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.task_storage import TaskStorage
 from icij_worker.task_storage.fs import FSKeyValueStorageConfig
 from icij_worker.task_storage.postgres import PostgresStorageConfig
-from icij_worker.utils.amqp import AMQPConfigMixin, AMQPMixin
-
-S = TypeVar("S", bound=TaskStorage)
+from icij_worker.utils.amqp import (
+    AMQPConfigMixin,
+    AMQPManagementClient,
+    AMQPMixin,
+    amqp_task_group_policy,
+)
 
 logger = logging.getLogger(__name__)
+
+S = TypeVar("S", bound=TaskStorage)
 
 
 @TaskManagerConfig.register()
@@ -50,6 +53,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self,
         app: AsyncApp,
         task_store: TaskStorage,
+        management_client: AMQPManagementClient,
         *,
         broker_url: str,
         connection_timeout_s: float = 1.0,
@@ -63,6 +67,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             reconnection_wait_s=reconnection_wait_s,
             inactive_after_s=inactive_after_s,
         )
+        self._management_client = management_client
         self._storage = task_store
         self._task_x: Optional[AbstractExchange] = None
         self._worker_evt_x: Optional[AbstractExchange] = None
@@ -74,9 +79,11 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     def _from_config(cls, config: AMQPTaskManagerConfig, **extras) -> AMQPTaskManager:
         app = config.app
         storage = config.storage.to_storage(app.routing_strategy)
+        management_client = config.to_management_client()
         task_manager = cls(
             app,
             storage,
+            management_client,
             broker_url=config.broker_url,
             connection_timeout_s=config.connection_timeout_s,
             reconnection_wait_s=config.reconnection_wait_s,
@@ -88,7 +95,6 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
         await self._exit_stack.enter_async_context(self._storage)
         await self._connection_workflow()
-        await self._ensure_task_queues()
         self._manager_messages_it = (
             await self._get_queue_iterator(
                 self.manager_evt_routing(), declare_exchanges=False
@@ -135,15 +141,13 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._storage.save_error(error)
 
     async def _consume(self) -> ManagerEvent:
-        msg = (
-            await self._manager_messages_it.__anext__()  # pylint: disable=unnecessary-dunder-call
-        )
+        # pylint: disable=unnecessary-dunder-call
+        msg = await self._manager_messages_it.__anext__()
         await msg.ack()
         return cast(ManagerEvent, Message.parse_raw(msg.body))
 
     async def _enqueue(self, task: Task):
         group = await self._storage.get_task_group(task.id)
-        await self._ensure_task_queues()
         routing = self._routing_strategy.amqp_task_routing(group)
         try:
             await self._publish_message(
@@ -184,6 +188,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         )
 
     async def _connection_workflow(self):
+        await self._exit_stack.enter_async_context(self._management_client)
         logger.debug("creating connection...")
         self._connection_ = await connect_robust(
             self._broker_url,
@@ -199,18 +204,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._exit_stack.enter_async_context(self._channel)
         await self._channel.set_qos(prefetch_count=1, global_=False)
         logger.info("channel opened !")
-        task_routing = self.default_task_routing()
-        if self.max_task_queue_size is not None:
-            queue_args = deepcopy(task_routing.queue_args)
-            queue_args.update({"x-max-length": self.max_task_queue_size})
-            task_routing = safe_copy(task_routing, update={"queue_args": queue_args})
-        logger.debug("(re)declaring routing %s...", task_routing)
-        await self._create_routing(
-            task_routing,
-            declare_exchanges=True,
-            declare_queues=True,
-            durable_queues=True,
-        )
+        logger.info("creating task queues opened !")
+        await self._ensure_task_queues()
         for routing in self._other_routings:
             logger.debug("(re)declaring routing %s...", routing)
             await self._create_routing(
@@ -240,13 +235,20 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         return [worker_events_routing, manager_events_routing]
 
     async def _ensure_task_queues(self):
-        supported_groups = set(t.group for t in self._app.registry.values())
-        for group in supported_groups:
-            routing = self._routing_strategy.amqp_task_routing(group)
-            if self.max_task_queue_size is not None:
-                queue_args = deepcopy(routing.queue_args)
-                queue_args["x-max-length"] = self.max_task_queue_size
-                routing = safe_copy(routing, update={"queue_args": queue_args})
+        default_routing = AMQPMixin.default_task_routing()
+        group_policy = amqp_task_group_policy(
+            default_routing, None, self.max_task_queue_size
+        )
+        await self._create_routing(
+            default_routing, declare_exchanges=True, declare_queues=True
+        )
+        await self._management_client.set_policy(group_policy)
+        for group in self._app.task_groups:
+            routing = self._routing_strategy.amqp_task_routing(group.name)
+            group_policy = amqp_task_group_policy(
+                routing, group, self.max_task_queue_size
+            )
+            await self._management_client.set_policy(group_policy)
             await self._create_routing(
                 routing,
                 declare_exchanges=True,

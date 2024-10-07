@@ -21,6 +21,8 @@ AMQP_WORKER_EVENTS_X = "exchangeWorkerEvents"
 AMQP_WORKER_EVENTS_QUEUE = "WORKER_EVENT"
 AMQP_WORKER_EVENTS_ROUTING_KEY = "routingKeyWorkerEvents"
 
+AMQP_TASK_QUEUE_PRIORITY = 1000
+
 _CREATED_AT = "created_at"
 _TASK_ID = "task_id"
 

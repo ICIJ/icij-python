@@ -1,11 +1,11 @@
 # pylint: disable=redefined-outer-name
 import asyncio
 import functools
+import itertools
 import json
 from datetime import datetime
 from typing import ClassVar, Dict, List, Optional, Type
 
-import itertools
 import pytest
 from aio_pika import (
     ExchangeType,
@@ -28,7 +28,6 @@ from icij_worker import (
     Worker,
     WorkerConfig,
 )
-from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import (
     CancelEvent,
     ErrorEvent,
@@ -37,14 +36,16 @@ from icij_worker.objects import (
     StacktraceItem,
     TaskUpdate,
 )
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
+    RABBITMQ_MANAGEMENT_PORT,
     RABBITMQ_TEST_HOST,
     RABBITMQ_TEST_PORT,
     TestableAMQPPublisher,
     get_queue_size,
 )
-from icij_worker.utils.amqp import AMQPMixin
+from icij_worker.utils.amqp import AMQPManagementClient, AMQPMixin
 from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
 from icij_worker.worker.worker import WE
 
@@ -60,6 +61,7 @@ class TestableAMQPWorker(AMQPWorker):
     def __init__(
         self,
         app: AsyncApp,
+        management_client: AMQPManagementClient,
         worker_id: str,
         *,
         group: Optional[str],
@@ -71,6 +73,7 @@ class TestableAMQPWorker(AMQPWorker):
     ):
         super().__init__(
             app,
+            management_client,
             worker_id,
             group=group,
             broker_url=broker_url,
@@ -84,6 +87,10 @@ class TestableAMQPWorker(AMQPWorker):
     @property
     def publisher(self):
         return self._publisher
+
+    @property
+    def app(self) -> AsyncApp:
+        return self._app
 
     @property
     def worker_events(self) -> Dict[Type[WE], Dict[str, WE]]:
@@ -111,6 +118,7 @@ def amqp_worker_config() -> TestableAMQPWorkerConfig:
     config = TestableAMQPWorkerConfig(
         rabbitmq_host=RABBITMQ_TEST_HOST,
         rabbitmq_port=RABBITMQ_TEST_PORT,
+        rabbitmq_management_port=RABBITMQ_MANAGEMENT_PORT,
         rabbitmq_vhost=DEFAULT_VHOST,
         rabbitmq_user="guest",
         rabbitmq_password="guest",
@@ -169,9 +177,7 @@ async def populate_tasks(rabbit_mq: str, request):
         arguments = {
             "x-dead-letter-exchange": dl_ex,
             "x-dead-letter-routing-key": dl_routing_key,
-            "x-overflow": "reject-publish",
             "x-queue-type": "quorum",
-            "x-delivery-limit": 10,
         }
         task_queue = await channel.declare_queue(
             task_routing.queue_name, durable=True, arguments=arguments
@@ -267,7 +273,7 @@ async def test_worker_should_nack_queue_unregistered_task(
         expected = functools.partial(
             _assert_has_size, queue_name=task_routing.queue_name, n=0
         )
-        failure = f"Failed to definitely nack task in less than {timeout} seconds."
+        failure = f"Failed to consume task in less than {timeout} seconds."
         assert await async_true_after(expected, after_s=timeout), failure
         expected = functools.partial(
             _assert_has_size,
@@ -541,7 +547,7 @@ async def test_amqp_config_uri():
     # When
     url = config.broker_url
     # Then
-    assert url == "amqp://127.0.0.1:5672/%2F"
+    assert url == "amqp://guest:guest@127.0.0.1:5672/%2F"
 
 
 async def test_worker_should_share_publisher_connection(amqp_worker: AMQPWorker):

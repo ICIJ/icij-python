@@ -1,7 +1,12 @@
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from __future__ import annotations
+
+import re
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import deepcopy
+from enum import Enum, unique
 from functools import cached_property, lru_cache
-from typing import Optional, Tuple, cast
+from typing import Any, AsyncContextManager, Dict, List, Optional, Tuple, cast
+from urllib import parse
 
 from aio_pika import (
     DeliveryMode,
@@ -14,11 +19,21 @@ from aio_pika.abc import (
     AbstractRobustConnection,
     ExchangeType,
 )
+from aiohttp import (
+    BasicAuth,
+    ClientResponse,
+    ClientResponseError,
+    ClientSession,
+)
+from aiohttp.client import _RequestOptions
+from aiohttp.typedefs import StrOrURL
 from aiormq.abc import ConfirmationFrameType
 from pamqp.commands import Basic
+from typing_extensions import Unpack
 
-from icij_common.pydantic_utils import ICIJModel
+from icij_common.pydantic_utils import ICIJModel, NoEnumModel
 from icij_worker import Message
+from icij_worker.app import TaskGroup
 from icij_worker.constants import (
     AMQP_MANAGER_EVENTS_DL_QUEUE,
     AMQP_MANAGER_EVENTS_DL_ROUTING_KEY,
@@ -32,31 +47,53 @@ from icij_worker.constants import (
     AMQP_TASKS_QUEUE,
     AMQP_TASKS_ROUTING_KEY,
     AMQP_TASKS_X,
+    AMQP_TASK_QUEUE_PRIORITY,
     AMQP_WORKER_EVENTS_QUEUE,
     AMQP_WORKER_EVENTS_ROUTING_KEY,
     AMQP_WORKER_EVENTS_X,
 )
-from icij_worker.routing_strategy import Exchange, RoutingStrategy, Routing
+from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
+from icij_worker.task_storage.postgres.postgres import logger
+
+_DELIVERY_ACK_TIMEOUT_RE = re.compile(
+    r"delivery acknowledgement on channel .+ timed out", re.MULTILINE
+)
+
+
+@unique
+class ApplyTo(str, Enum):
+    EXCHANGES = "exchanges"
+    QUEUES = "queues"
+    CLASSIC_QUEUES = "classic_queues"
+    QUORUM_QUEUES = "quorum_queues"
+    STREAMS = "streams"
+    ALL = "all"
+
+
+class AMQPPolicy(NoEnumModel):
+    name: str
+    pattern: str
+    definition: Dict[str, Any]
+    apply_to: Optional[ApplyTo] = None
+    priority: Optional[int] = None
 
 
 class AMQPConfigMixin(ICIJModel):
     connection_timeout_s: float = 5.0
     reconnection_wait_s: float = 5.0
     rabbitmq_host: str = "127.0.0.1"
-    rabbitmq_password: Optional[str] = None
+    rabbitmq_password: str = "guest"
     rabbitmq_port: Optional[int] = 5672
-    rabbitmq_user: Optional[str] = None
+    rabbitmq_management_port: Optional[int] = 15672
+    rabbitmq_user: Optional[str] = "guest"
     rabbitmq_vhost: Optional[str] = "%2F"
 
     @cached_property
     def broker_url(self) -> str:
-        amqp_userinfo = None
-        if self.rabbitmq_user is not None:
-            amqp_userinfo = self.rabbitmq_user
-            if self.rabbitmq_password is not None:
-                amqp_userinfo += f":{self.rabbitmq_password}"
-            if amqp_userinfo:
-                amqp_userinfo += "@"
+        amqp_userinfo = self.rabbitmq_user
+        amqp_userinfo += f":{self.rabbitmq_password}"
+        if amqp_userinfo:
+            amqp_userinfo += "@"
         amqp_authority = (
             f"{amqp_userinfo or ''}{self.rabbitmq_host}"
             f"{f':{self.rabbitmq_port}' or ''}"
@@ -65,6 +102,23 @@ class AMQPConfigMixin(ICIJModel):
         if self.rabbitmq_vhost is not None:
             amqp_uri += f"/{self.rabbitmq_vhost}"
         return amqp_uri
+
+    @cached_property
+    def management_url(self) -> str:
+        management_url = f"http://{self.rabbitmq_host}:{self.rabbitmq_management_port}"
+        return management_url
+
+    @cached_property
+    def basic_auth(self) -> BasicAuth:
+        return BasicAuth(self.rabbitmq_user, self.rabbitmq_password)
+
+    def to_management_client(self) -> AMQPManagementClient:
+        client = AMQPManagementClient(
+            self.management_url,
+            rabbitmq_vhost=self.rabbitmq_vhost,
+            rabbitmq_auth=self.basic_auth,
+        )
+        return client
 
 
 class AMQPMixin:
@@ -146,11 +200,7 @@ class AMQPMixin:
             exchange=Exchange(name=AMQP_TASKS_X, type=ExchangeType.DIRECT),
             routing_key=AMQP_TASKS_ROUTING_KEY,
             queue_name=AMQP_TASKS_QUEUE,
-            queue_args={
-                "x-overflow": "reject-publish",
-                "x-queue-type": "quorum",
-                "x-delivery-limit": 10,
-            },
+            queue_args={"x-queue-type": "quorum"},
             dead_letter_routing=Routing(
                 exchange=Exchange(name=AMQP_TASKS_DL_X, type=ExchangeType.DIRECT),
                 routing_key=AMQP_TASKS_DL_ROUTING_KEY,
@@ -236,6 +286,7 @@ class AMQPMixin:
                 queue_args = dict()
             dlx_name = routing.dead_letter_routing.exchange.name
             dl_routing_key = routing.dead_letter_routing.routing_key
+            # TODO: this could be passed through policy
             update = {
                 "x-dead-letter-exchange": dlx_name,
                 "x-dead-letter-routing-key": dl_routing_key,
@@ -243,10 +294,105 @@ class AMQPMixin:
             queue_args.update(update)
         if declare_queues:
             queue = await self._channel.declare_queue(
-                routing.queue_name,
-                durable=durable_queues,
-                arguments=queue_args,
+                routing.queue_name, durable=durable_queues, arguments=queue_args
             )
         else:
             queue = await self._channel.get_queue(routing.queue_name, ensure=True)
         await queue.bind(x, routing_key=routing.routing_key)
+
+
+class AMQPManagementClient(AsyncContextManager):
+    def __init__(
+        self,
+        rabbitmq_management_url: str,
+        *,
+        rabbitmq_vhost: str,
+        rabbitmq_auth: BasicAuth,
+    ):
+        self._management_url = rabbitmq_management_url
+        self._vhost = rabbitmq_vhost
+        self._auth = rabbitmq_auth
+        self._session: Optional[ClientSession]
+
+    async def __aenter__(self):
+        self._session = ClientSession(self._management_url, auth=self._auth)
+        await self._session.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self._session.__aexit__(exc_type, exc_value, traceback)
+
+    @asynccontextmanager
+    async def _put(self, url: StrOrURL, *, data: Any = None, **kwargs: Any):
+        async with self._session.put(url, data=data, **kwargs) as res:
+            _raise_for_status(res)
+            yield res
+
+    @asynccontextmanager
+    async def _get(self, url: StrOrURL, *, allow_redirects: bool = True, **kwargs: Any):
+        async with self._session.get(
+            url, allow_redirects=allow_redirects, **kwargs
+        ) as res:
+            _raise_for_status(res)
+            yield res
+
+    @asynccontextmanager
+    async def _delete(self, url: StrOrURL, **kwargs: Unpack[_RequestOptions]):
+        async with self._session.delete(url, **kwargs) as res:
+            _raise_for_status(res)
+            yield res
+
+    async def set_policy(self, policy: AMQPPolicy):
+        url = f"/api/policies/{self._vhost}/{parse.quote(policy.name)}"
+        data = {"pattern": policy.pattern, "definition": policy.definition}
+        if policy.apply_to is not None:
+            data["apply-to"] = policy.apply_to.value
+        if policy.priority is not None:
+            data["priority"] = policy.priority
+        async with self._put(url, json=data):
+            pass
+
+    async def list_policies(self) -> List[Dict]:
+        url = f"/api/policies/{self._vhost}"
+        async with self._get(url) as res:
+            return await res.json()
+
+    async def clear_policies(self):
+        policies = await self.list_policies()
+        for p in policies:
+            url = f"/api/policies/{self._vhost}/{p['name']}"
+            async with self._delete(url):
+                pass
+
+
+def amqp_task_group_policy(
+    task_routing: Routing,
+    group: Optional[TaskGroup],
+    app_max_task_queue_size: Optional[int],
+) -> AMQPPolicy:
+    pattern = rf"^{re.escape(task_routing.queue_name)}$"
+    name = f"task-group-policy-{task_routing.queue_name}"
+    definition = {"overflow": "reject-publish", "delivery-limit": 10}
+    max_task_queue_size = app_max_task_queue_size
+    if group is not None and group.max_task_queue_size is not None:
+        max_task_queue_size = group.max_task_queue_size
+    if max_task_queue_size is not None:
+        definition["max-length"] = max_task_queue_size
+    if group is not None and group.timeout_s is not None:
+        definition["consumer-timeout"] = group.timeout_s * 1000
+    return AMQPPolicy(
+        name=name,
+        pattern=pattern,
+        definition=definition,
+        apply_to=ApplyTo.QUEUES,
+        priority=AMQP_TASK_QUEUE_PRIORITY,
+    )
+
+
+def _raise_for_status(res: ClientResponse):
+    try:
+        res.raise_for_status()
+    except ClientResponseError as e:
+        msg = "request to %s, failed with reason %s"
+        logger.exception(msg, res.request_info, res.reason)
+        raise e

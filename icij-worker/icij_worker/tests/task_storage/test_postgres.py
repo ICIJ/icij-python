@@ -536,7 +536,7 @@ async def test_get_task_group(
     assert ns_1 is None
 
 
-def test_task_manager_with_postgres_storage_from_config(reset_env):
+async def test_task_manager_with_postgres_storage_from_config(reset_env):
     # pylint: disable=unused-argument
     # Given
     class _MySettings(SettingsWithTM, Generic[TM]):

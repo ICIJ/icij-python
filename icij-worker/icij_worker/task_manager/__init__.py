@@ -11,7 +11,6 @@ from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.app import AsyncAppConfig
 from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
-from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import (
     AsyncBackend,
     CancelledEvent,
@@ -19,6 +18,7 @@ from icij_worker.objects import (
     ManagerEvent,
     ProgressEvent,
 )
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.task_storage import TaskStorage
 from icij_worker.utils import RegistrableConfig
 from icij_worker.utils.registrable import RegistrableFromConfig
@@ -107,16 +107,18 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     async def save_task(self, task: Task) -> bool:
         max_retries = None
         try:
-            ns = await self.get_task_group(task_id=task.id)
+            group = await self.get_task_group(task_id=task.id)
         except UnknownTask as e:
             try:
-                ns = self._app.registry[task.name].group
+                group = self._app.registry[task.name].group
+                if group is not None:
+                    group = group.name
                 max_retries = self._app.registry[task.name].max_retries
             except KeyError:
                 available_tasks = list(self._app.registry)
                 raise UnregisteredTask(task.name, available_tasks) from e
         task = task.with_max_retries(max_retries)
-        return await self.save_task_(task, ns)
+        return await self.save_task_(task, group)
 
     async def _save_cancelled_event(self, event: CancelledEvent):
         task = await self.get_task(event.task_id)

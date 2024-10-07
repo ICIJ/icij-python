@@ -18,6 +18,7 @@ from icij_worker.tests.conftest import (
     TestableAMQPTaskManager,
     TestableFSKeyValueStorage,
 )
+from icij_worker.utils.amqp import AMQPManagementClient
 
 
 async def test_task_manager_enqueue(
@@ -118,6 +119,7 @@ async def test_task_manager_enqueue_should_raise_for_existing_task(
 
 async def test_task_manager_enqueue_should_raise_when_queue_full(
     fs_storage: TestableFSKeyValueStorage,
+    management_client: AMQPManagementClient,
     rabbit_mq: str,
     hello_world_task: Task,
     test_async_app: AsyncApp,
@@ -127,7 +129,9 @@ async def test_task_manager_enqueue_should_raise_when_queue_full(
     app._registry = deepcopy(  # pylint: disable=protected-access
         test_async_app.registry
     )
-    task_manager = TestableAMQPTaskManager(app, fs_storage, broker_url=rabbit_mq)
+    task_manager = TestableAMQPTaskManager(
+        app, fs_storage, management_client, broker_url=rabbit_mq
+    )
     task = hello_world_task
     other_task = safe_copy(task, update={"id": "some-other-id"})
     yet_another_task = safe_copy(task, update={"id": "yet-another-id"})
