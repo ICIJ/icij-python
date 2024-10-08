@@ -11,7 +11,6 @@ from aiormq import DeliveryError
 from pydantic import Field
 
 from icij_worker.app import AsyncApp
-from icij_worker.event_publisher.amqp import RobustConnection
 from icij_worker.exceptions import TaskQueueIsFull
 from icij_worker.objects import (
     AsyncBackend,
@@ -32,6 +31,7 @@ from icij_worker.utils.amqp import (
     AMQPConfigMixin,
     AMQPManagementClient,
     AMQPMixin,
+    RobustConnection,
     amqp_task_group_policy,
 )
 

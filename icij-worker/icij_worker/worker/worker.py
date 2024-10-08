@@ -9,6 +9,7 @@ import socket
 import threading
 import traceback
 from abc import abstractmethod
+from asyncio import TimerHandle
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -24,6 +25,8 @@ from typing import (
     final,
 )
 
+from typing_extensions import Self
+
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskError, TaskState
 from icij_worker.app import RegisteredTask, supports_progress
@@ -35,8 +38,8 @@ from icij_worker.exceptions import (
     TaskAlreadyReserved,
     UnknownTask,
     UnregisteredTask,
+    WorkerTimeoutError,
 )
-from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.objects import (
     CancelEvent,
     CancelledEvent,
@@ -45,6 +48,7 @@ from icij_worker.objects import (
     TaskUpdate,
     WorkerEvent,
 )
+from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.utils import RegistrableFromConfig
 from icij_worker.worker.process import HandleSignalsMixin
 
@@ -90,6 +94,8 @@ class Worker(
         self._cancel_lock = asyncio.Lock()
         self._current_lock = asyncio.Lock()
         self._successful_exit = False
+        self._timeout_exc: Optional[WorkerTimeoutError] = None
+        self._timeout_callback_handle: Optional[TimerHandle] = None
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -201,15 +207,16 @@ class Worker(
             yield
             current_id = self._current.id
             async with self._current_lock:
-                self._current = None
+                self._clear_current()
             self.info('Task(id="%s") successful !', current_id)
         except asyncio.CancelledError as e:
-            await self._handle_task_cancellation(e)
+            async with self.cancel_lock, self._cancel_lock:
+                await self._handle_task_cancellation(e)
         except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
             # Let this bubble up and the worker continue without recording anything
             raise e
         except RecoverableError as e:
-            async with self._current_lock, self._cancel_lock:
+            async with self.cancel_lock, self._current_lock:
                 if self._current is not None:
                     await self._handle_error(e, fatal=False)
                 else:
@@ -238,10 +245,11 @@ class Worker(
             current_id = self._current.id
             async with self._current_lock:
                 await self.acknowledge(self._current)
-                self._current = None
+                self._clear_current()
             self.info('Task(id="%s") successful !', current_id)
         except asyncio.CancelledError as e:
-            await self._handle_task_cancellation(e)
+            async with self.cancel_lock, self._current_lock:
+                await self._handle_task_cancellation(e)
         except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
             # Let this bubble up and the worker continue without recording anything
             raise e
@@ -284,7 +292,7 @@ class Worker(
                 await self._negatively_acknowledge_(self._current)
             else:
                 await self._acknowledge(self._current)
-        self._current = None
+        self._clear_current()
 
     async def _handle_cancel_event(self, cancel_event: CancelEvent):
         async with self.cancel_lock, self._current_lock:
@@ -311,25 +319,29 @@ class Worker(
         await self._work_once_task
 
     async def _handle_task_cancellation(self, e: asyncio.CancelledError):
-        async with self.cancel_lock:
-            if self._worker_cancelled:
-                # we just raise and the Worker.__aexit__ will take care of
-                # handling worker shutdown gracefully
-                raise e
-            if self._current is None:
-                logger.info(
-                    "task cancellation was ask but task was acked or nacked"
-                    " in between, discarding cancel event !"
-                )
-                return
-            event = self._get_worker_event(self._current, CancelEvent)
-            update = {
-                "state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED
-            }
-            self._current = safe_copy(self._current, update=update)
-            self.info('Task(id="%s") cancellation requested !', self._current.id)
-            await self._publish_cancelled_event(event)
-            self._current = None
+        if self._timeout_exc is not None:
+            self.exception(
+                'Task(id="%s") consumer exceeded allocated timeout', self._current.id
+            )
+            fatal = not self._app.config.recover_from_worker_timeout
+            await self._handle_error(self._timeout_exc, fatal=fatal)
+            return
+        if self._worker_cancelled:
+            # we just raise and the Worker.__aexit__ will take care of
+            # handling worker shutdown gracefully
+            raise e
+        if self._current is None:
+            logger.info(
+                "task cancellation was ask but task was acked or nacked"
+                " in between, discarding cancel event !"
+            )
+            return
+        event = self._get_worker_event(self._current, CancelEvent)
+        update = {"state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED}
+        self._current = safe_copy(self._current, update=update)
+        self.info('Task(id="%s") cancellation requested !', self._current.id)
+        await self._publish_cancelled_event(event)
+        self._clear_current()
 
     @property
     def _late_ack(self) -> bool:
@@ -353,7 +365,7 @@ class Worker(
         # This is ugly but makes tests easier
         # (shutdown doesn't try to requeue the task again)
         if task is self._current:
-            self._current = None
+            self._clear_current()
         self.info("Task(id=%s) negatively acknowledged !", task.id)
 
     @abstractmethod
@@ -456,10 +468,35 @@ class Worker(
         self._loop.run_until_complete(self.__aenter__())
 
     @final
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         await self._aenter__()
         # Start watching cancelled tasks
         self._watch_cancelled_task = self._loop.create_task(self._watch_worker_events())
+        return self
+
+    @final
+    def bind_worker_timeout(self):
+        registered = _retrieve_registered_task(self._current, self._app)
+        group = registered.group
+        if group is None:
+            return
+        group = self._app.task_group(group.name)
+        if group is None:
+            return
+        timeout = group.timeout_s
+        if timeout is None:
+            return
+        msg = f'Task(id="{self._current}") exceeded allocated timeout of {timeout}s'
+        exc = WorkerTimeoutError(msg)
+        self._timeout_callback_handle = self.loop.call_later(
+            timeout, self.worker_timeout_callback, exc
+        )
+
+    @final
+    def worker_timeout_callback(self, exc: WorkerTimeoutError):
+        self._timeout_exc = exc
+        if self._work_once_task is not None:
+            self._work_once_task.cancel()
 
     async def _aenter__(self):
         pass
@@ -504,7 +541,7 @@ class Worker(
             if self._current is not None:
                 cancel_event = CancelEvent.from_task(self._current, requeue=True)
                 await self._publish_cancelled_event(cancel_event)
-                self._current = None
+                self._clear_current()
 
     @final
     async def shutdown(self):
@@ -522,6 +559,12 @@ class Worker(
         # TODO: this might not be unique when using asyncio
         return f"{self._app.name}-worker-{hostname}-{pid}-{threadid}"
 
+    def _clear_current(self):
+        if self._timeout_callback_handle is not None:
+            self._timeout_callback_handle.cancel()
+            self._timeout_callback_handle = None
+        self._current = None
+
 
 def _retrieve_registered_task(
     task: Task,
@@ -535,6 +578,7 @@ def _retrieve_registered_task(
 
 
 async def task_wrapper(worker: Worker, task: Task) -> Task:
+    worker.bind_worker_timeout()
     # Skips if already reserved
     if task.state is TaskState.CANCELLED:
         worker.info('Task(id="%s") already cancelled skipping it !', task.id)
