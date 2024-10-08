@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import functools
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from signal import Signals
 from typing import Any, Dict, Optional
@@ -13,8 +14,8 @@ import pytest
 
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
-from icij_worker import Task, TaskError, ResultEvent, TaskState
-from icij_worker.exceptions import TaskAlreadyCancelled
+from icij_worker import ResultEvent, Task, TaskError, TaskState
+from icij_worker.exceptions import TaskAlreadyCancelled, WorkerTimeoutError
 from icij_worker.objects import ErrorEvent, ProgressEvent
 from icij_worker.utils.tests import MockManager, MockWorker
 from icij_worker.worker.worker import add_missing_args
@@ -667,3 +668,37 @@ async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
         mocked_consume.side_effect = _fatal_error_during_consuming
         with pytest.raises(_FatalError):
             await worker.work_once()
+
+
+@pytest.mark.parametrize("mock_worker", [{"group": "short"}], indirect=["mock_worker"])
+async def test_worker_should_handle_worker_timeout(mock_worker: MockWorker):
+    # Given
+    worker = mock_worker
+    task_manager = MockManager(worker.app, worker.db_path)
+    long_duration = 5
+    args = {"duration": long_duration}
+    task = Task.create(task_id="task_id", task_name="sleep_for_short", args=args)
+
+    # When
+    async with task_manager:
+        await task_manager.save_task(task)
+        await task_manager.enqueue(task)
+
+        async def _assert_has_state(state: TaskState) -> bool:
+            saved = await task_manager.get_task(task_id=task.id)
+            return saved.state is state
+
+        async with worker:
+            t = asyncio.create_task(worker.work_forever_async())
+
+            # Then
+            after_s = 20.0
+            failure_msg = f"Failed to get task in error state in less than {after_s}"
+            expected = partial(_assert_has_state, state=TaskState.ERROR)
+            assert await async_true_after(expected, after_s=after_s), failure_msg
+
+            errors = await task_manager.get_task_errors(task_id=task.id)
+            assert len(errors) == 1
+            error = errors[0].error
+            assert error.name == WorkerTimeoutError.__name__
+            t.cancel()

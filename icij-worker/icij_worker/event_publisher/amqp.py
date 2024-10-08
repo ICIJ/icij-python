@@ -8,7 +8,6 @@ from typing import List, Optional
 from aio_pika import (
     Exchange as AioPikaExchange,
     RobustChannel,
-    RobustConnection as _RobustConnection,
     connect_robust,
 )
 from aio_pika.abc import AbstractRobustConnection
@@ -17,20 +16,7 @@ from icij_common.logging_utils import LogWithNameMixin
 from icij_worker import ManagerEvent
 from . import EventPublisher
 from ..routing_strategy import Routing
-from ..utils.amqp import AMQPMixin
-
-
-# TODO: move these to a upper level
-
-
-class RobustConnection(_RobustConnection):
-    # Defined async context manager attributes to be able to enter and exit this
-    # in ExitStack
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
+from ..utils.amqp import AMQPMixin, RobustConnection
 
 
 class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):

@@ -5,10 +5,15 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from copy import deepcopy
 from enum import Enum, unique
 from functools import cached_property, lru_cache
-from typing import Any, AsyncContextManager, Dict, List, Optional, Tuple, cast
+from typing import Any, AsyncContextManager, Dict, List, Optional, Tuple, Type, cast
 from urllib import parse
 
-from aio_pika import DeliveryMode, Message as AioPikaMessage
+from aio_pika import (
+    DeliveryMode,
+    Message as AioPikaMessage,
+    RobustChannel as RobustChannel_,
+    RobustConnection as RobustConnection_,
+)
 from aio_pika.abc import (
     AbstractExchange,
     AbstractQueueIterator,
@@ -16,7 +21,13 @@ from aio_pika.abc import (
     AbstractRobustConnection,
     ExchangeType,
 )
-from aiohttp import BasicAuth, ClientResponse, ClientResponseError, ClientSession
+from aio_pika.exceptions import ChannelPreconditionFailed
+from aiohttp import (
+    BasicAuth,
+    ClientResponse,
+    ClientResponseError,
+    ClientSession,
+)
 from aiohttp.client import _RequestOptions
 from aiohttp.typedefs import StrOrURL
 from aiormq.abc import ConfirmationFrameType
@@ -44,8 +55,7 @@ from icij_worker.constants import (
     AMQP_WORKER_EVENTS_ROUTING_KEY,
     AMQP_WORKER_EVENTS_X,
 )
-from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
-from icij_worker.task_storage.postgres.postgres import logger
+from icij_worker.exceptions import WorkerTimeoutError
 from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
 from icij_worker.task_storage.postgres.postgres import logger
 
@@ -72,22 +82,9 @@ class AMQPPolicy(NoEnumModel):
     priority: Optional[int] = None
 
 
-@unique
-class ApplyTo(str, Enum):
-    EXCHANGES = "exchanges"
-    QUEUES = "queues"
-    CLASSIC_QUEUES = "classic_queues"
-    QUORUM_QUEUES = "quorum_queues"
-    STREAMS = "streams"
-    ALL = "all"
-
-
-class AMQPPolicy(NoEnumModel):
-    name: str
-    pattern: str
-    definition: Dict[str, Any]
-    apply_to: Optional[ApplyTo] = None
-    priority: Optional[int] = None
+_DELIVERY_ACK_TIMEOUT_RE = re.compile(
+    r"delivery acknowledgement on channel .+ timed out", re.MULTILINE
+)
 
 
 class AMQPConfigMixin(ICIJModel):
@@ -390,8 +387,6 @@ def amqp_task_group_policy(
         max_task_queue_size = group.max_task_queue_size
     if max_task_queue_size is not None:
         definition["max-length"] = max_task_queue_size
-    if group is not None and group.timeout_s is not None:
-        definition["consumer-timeout"] = group.timeout_s * 1000
     return AMQPPolicy(
         name=name,
         pattern=pattern,
@@ -408,3 +403,35 @@ def _raise_for_status(res: ClientResponse):
         msg = "request to %s, failed with reason %s"
         logger.exception(msg, res.request_info, res.reason)
         raise e
+
+
+class RobustChannel(RobustChannel_):
+    async def __close_callback(self, _: Any, exc: BaseException) -> None:
+        # pylint: disable=unused-private-member
+        timeout_exc = parse_consumer_timeout(exc)
+        if timeout_exc is not None:
+            logger.error("channel closing due to consumer timeout: %s", exc)
+            raise timeout_exc from exc
+
+
+class RobustConnection(RobustConnection_):
+    CHANNEL_CLASS: Type[RobustChannel] = RobustChannel
+
+    # Defined async context manager attributes to be able to enter and exit this
+    # in ExitStack
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+
+def parse_consumer_timeout(exc: BaseException) -> Optional[WorkerTimeoutError]:
+    if not isinstance(exc, ChannelPreconditionFailed):
+        return None
+    if not exc.args:
+        return None
+    msg = exc.args[0]
+    if _DELIVERY_ACK_TIMEOUT_RE.search(msg):
+        return WorkerTimeoutError(msg)
+    return None

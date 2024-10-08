@@ -64,3 +64,6 @@ class MissingTaskResult(ICIJWorkerError, LookupError):
     def __init__(self, task_id: str):
         msg = f'Result of task "{task_id}" couldn\'t be found, did it complete ?'
         super().__init__(msg)
+
+
+class WorkerTimeoutError(ICIJWorkerError, RuntimeError): ...

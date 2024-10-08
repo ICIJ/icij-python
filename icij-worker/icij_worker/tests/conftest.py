@@ -579,10 +579,11 @@ async def count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
 def mock_worker(mock_db: Path, request) -> MockWorker:
     param = getattr(request, "param", dict()) or dict()
     app = request.getfixturevalue(param.get("app", "test_async_app"))
+    group = param.get("group")
     worker = MockWorker(
         app,
         "test-worker",
-        group=param.get("group"),
+        group=group,
         db_path=mock_db,
         poll_interval_s=0.1,
         teardown_dependencies=False,
