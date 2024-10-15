@@ -7,12 +7,15 @@ from concurrent.futures import (
     Future,
     InvalidStateError,
     ProcessPoolExecutor,
+    ThreadPoolExecutor,
     as_completed,
 )
 from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import sys
+
+from pydantic.class_validators import partial
 
 import icij_worker
 from icij_common.logging_utils import setup_loggers
@@ -23,6 +26,8 @@ logger = logging.getLogger(__name__)
 _HANDLED_SIGNALS = [signal.SIGTERM, signal.SIGINT]
 if sys.platform == "win32":
     _HANDLED_SIGNALS += [signal.CTRL_C_EVENT, signal.CTRL_BREAK_EVENT]
+
+TerminationCallback = Callable[[], None]
 
 
 def _mp_work_forever(
@@ -90,15 +95,18 @@ def _get_mp_async_runner(
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
     group: Optional[str],
-) -> Tuple[ProcessPoolExecutor, List[Callable]]:
-    # This function is here to avoid code duplication, it will be removed
+) -> Tuple[TerminationCallback, List[Callable]]:
+    if n_workers == 1:
+        executor = ThreadPoolExecutor(max_workers=n_workers)
+    else:
+        # This function is here to avoid code duplication, it will be removed
 
-    # Here we set maxtasksperchild to 1. Each worker has a single never ending task
-    # which consists in working forever. Additionally, in some cases using
-    # maxtasksperchild=1 seems to help to terminate the worker pull
-    # (cpython bug: https://github.com/python/cpython/pull/8009)
-    mp_ctx = multiprocessing.get_context("spawn")
-    executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
+        # Here we set maxtasksperchild to 1. Each worker has a single never ending task
+        # which consists in working forever. Additionally, in some cases using
+        # maxtasksperchild=1 seems to help to terminate the worker pull
+        # (cpython bug: https://github.com/python/cpython/pull/8009)
+        mp_ctx = multiprocessing.get_context("spawn")
+        executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
     kwds = {
         "app": app,
         "config": config,
@@ -109,7 +117,7 @@ def _get_mp_async_runner(
     futures = []
     for _ in range(n_workers):
         futures.append(functools.partial(executor.submit, _mp_work_forever, **kwds))
-    return executor, futures
+    return partial(executor.shutdown, wait=False, cancel_futures=True), futures
 
 
 def _cancel_other_callback(errored: Future, others: List[Future]):
@@ -130,7 +138,7 @@ def _cancel_other_callback(errored: Future, others: List[Future]):
 
 @contextmanager
 def _handle_executor_termination(
-    executor: ProcessPoolExecutor, futures: Set[Future], handle_signals: bool
+    termination_cb: TerminationCallback, futures: Set[Future], handle_signals: bool
 ):
     try:
         yield
@@ -153,7 +161,7 @@ def _handle_executor_termination(
             if not f.done():
                 f.set_exception(exc)
         logger.info("Sending termination signal to workers (SIGTERM)...")
-        executor.shutdown(wait=False, cancel_futures=True)
+        termination_cb()
         logger.info("Terminated worker executor !")
 
 
@@ -170,7 +178,7 @@ def run_workers_with_multiprocessing_cm(
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
     logger.info("Creating multiprocessing executor with %s workers", n_workers)
-    executor, worker_runners = _get_mp_async_runner(
+    termination_cb, worker_runners = _get_mp_async_runner(
         app,
         config,
         n_workers,
@@ -186,7 +194,7 @@ def run_workers_with_multiprocessing_cm(
         f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
     logger.info("started %s workers for app %s", n_workers, app)
     original_error = None
-    with _handle_executor_termination(executor, futures, True):
+    with _handle_executor_termination(termination_cb, futures, True):
         for f in as_completed(futures):
             try:
                 f.result()
@@ -211,7 +219,7 @@ def run_workers_with_multiprocessing(
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
     logger.info("Creating multiprocessing executor with %s workers", n_workers)
-    executor, worker_runners = _get_mp_async_runner(
+    termination_cb, worker_runners = _get_mp_async_runner(
         app,
         config,
         n_workers,
@@ -228,7 +236,7 @@ def run_workers_with_multiprocessing(
         f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
     logger.info("started %s workers for app %s", n_workers, app)
     original_error = None
-    with _handle_executor_termination(executor, futures, True):
+    with _handle_executor_termination(termination_cb, futures, True):
         for f in as_completed(futures):
             try:
                 f.result()
