@@ -108,6 +108,9 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._exit_stack.enter_async_context(self._channel)
         await self._bind_task_queue()
         await self._bind_worker_event_queue()
+        await self._create_routing(
+            self.manager_evt_routing(), declare_queues=True, declare_exchanges=True
+        )
 
     async def _aexit__(self, exc_type, exc_val, exc_tb):
         event_transient_queue = await self._channel.get_queue(
