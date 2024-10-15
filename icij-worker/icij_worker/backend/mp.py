@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import logging
 import multiprocessing
@@ -12,7 +11,7 @@ from concurrent.futures import (
     as_completed,
 )
 from contextlib import contextmanager
-from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from pydantic.class_validators import partial
 
@@ -93,23 +92,8 @@ def _get_mp_async_runner(
     *,
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
-    group: Optional[str],
-) -> Tuple[Optional[TerminationCallback], List[Callable[[], Awaitable]]]:
-    kwds = {
-        "app": app,
-        "config": config,
-        "worker_extras": worker_extras,
-        "worker_group": group,
-        "app_deps_extras": app_deps_extras,
-    }
-    if n_workers == 1:
-
-        async def async_wrapper(f, *args, **kwargs):
-            return f(*args, **kwargs)
-
-        future = partial(async_wrapper, _mp_work_forever, **kwds)
-        futures = [future]
-        return None, futures
+    worker_group: Optional[str],
+) -> Tuple[Optional[TerminationCallback], List[Callable[[], Future]]]:
     # This function is here to avoid code duplication, it will be removed
 
     # Here we set maxtasksperchild to 1. Each worker has a single never ending task
@@ -118,7 +102,13 @@ def _get_mp_async_runner(
     # (cpython bug: https://github.com/python/cpython/pull/8009)
     mp_ctx = multiprocessing.get_context("spawn")
     executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
-
+    kwds = {
+        "app": app,
+        "config": config,
+        "worker_extras": worker_extras,
+        "worker_group": worker_group,
+        "app_deps_extras": app_deps_extras,
+    }
     futures = []
     for _ in range(n_workers):
         futures.append(functools.partial(executor.submit, _mp_work_forever, **kwds))
@@ -185,6 +175,16 @@ def run_workers_with_multiprocessing_cm(
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
+    if n_workers == 1:
+        logger.info("starting 1 worker for app %s", app)
+        _mp_work_forever(
+            app,
+            config,
+            worker_group=group,
+            worker_extras=worker_extras,
+            app_deps_extras=app_deps_extras,
+        )
+        return
     logger.info("Creating multiprocessing executor with %s workers", n_workers)
     termination_cb, worker_runners = _get_mp_async_runner(
         app,
@@ -192,11 +192,11 @@ def run_workers_with_multiprocessing_cm(
         n_workers,
         worker_extras=worker_extras,
         app_deps_extras=app_deps_extras,
-        group=group,
+        worker_group=group,
     )
     futures = set()
     for process_runner in worker_runners:
-        future = asyncio.ensure_future(process_runner())
+        future = process_runner()
         futures.add(future)
     for f in futures:
         f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
@@ -226,6 +226,16 @@ def run_workers_with_multiprocessing(
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
+    if n_workers == 1:
+        logger.info("starting 1 worker for app %s", app)
+        _mp_work_forever(
+            app,
+            config,
+            worker_group=group,
+            worker_extras=worker_extras,
+            app_deps_extras=app_deps_extras,
+        )
+        return
     logger.info("Creating multiprocessing executor with %s workers", n_workers)
     termination_cb, worker_runners = _get_mp_async_runner(
         app,
@@ -233,12 +243,12 @@ def run_workers_with_multiprocessing(
         n_workers,
         worker_extras=worker_extras,
         app_deps_extras=app_deps_extras,
-        group=group,
+        worker_group=group,
     )
     setup_main_process_signal_handlers()
     futures = set()
     for process_runner in worker_runners:
-        future = asyncio.ensure_future(process_runner())
+        future = process_runner()
         futures.add(future)
     for f in futures:
         f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
