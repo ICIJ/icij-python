@@ -2,18 +2,16 @@ import functools
 import logging
 import multiprocessing
 import signal
+import sys
 from concurrent.futures import (
     CancelledError,
     Future,
     InvalidStateError,
     ProcessPoolExecutor,
-    ThreadPoolExecutor,
     as_completed,
 )
 from contextlib import contextmanager
-from typing import Callable, Dict, List, Optional, Set, Tuple
-
-import sys
+from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 from pydantic.class_validators import partial
 
@@ -95,18 +93,7 @@ def _get_mp_async_runner(
     worker_extras: Optional[Dict] = None,
     app_deps_extras: Optional[Dict] = None,
     group: Optional[str],
-) -> Tuple[TerminationCallback, List[Callable]]:
-    if n_workers == 1:
-        executor = ThreadPoolExecutor(max_workers=n_workers)
-    else:
-        # This function is here to avoid code duplication, it will be removed
-
-        # Here we set maxtasksperchild to 1. Each worker has a single never ending task
-        # which consists in working forever. Additionally, in some cases using
-        # maxtasksperchild=1 seems to help to terminate the worker pull
-        # (cpython bug: https://github.com/python/cpython/pull/8009)
-        mp_ctx = multiprocessing.get_context("spawn")
-        executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
+) -> Tuple[Optional[TerminationCallback], List[Callable[[], Awaitable]]]:
     kwds = {
         "app": app,
         "config": config,
@@ -114,6 +101,23 @@ def _get_mp_async_runner(
         "worker_group": group,
         "app_deps_extras": app_deps_extras,
     }
+    if n_workers == 1:
+
+        async def async_wrapper(f, *args, **kwargs):
+            return f(*args, **kwargs)
+
+        future = partial(async_wrapper, _mp_work_forever, **kwds)
+        futures = [future]
+        return None, futures
+    # This function is here to avoid code duplication, it will be removed
+
+    # Here we set maxtasksperchild to 1. Each worker has a single never ending task
+    # which consists in working forever. Additionally, in some cases using
+    # maxtasksperchild=1 seems to help to terminate the worker pull
+    # (cpython bug: https://github.com/python/cpython/pull/8009)
+    mp_ctx = multiprocessing.get_context("spawn")
+    executor = ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx)
+
     futures = []
     for _ in range(n_workers):
         futures.append(functools.partial(executor.submit, _mp_work_forever, **kwds))
@@ -131,14 +135,16 @@ def _cancel_other_callback(errored: Future, others: List[Future]):
         if task is errored:
             continue
         try:
-            task.cancel(f"cancelled by {errored}")
+            task.cancel()
         except InvalidStateError:
             pass
 
 
 @contextmanager
 def _handle_executor_termination(
-    termination_cb: TerminationCallback, futures: Set[Future], handle_signals: bool
+    termination_cb: Optional[TerminationCallback],
+    futures: Set[Future],
+    handle_signals: bool,
 ):
     try:
         yield
@@ -155,14 +161,15 @@ def _handle_executor_termination(
             )
             raise RuntimeError(msg) from e
     finally:
-        msg = "Worker terminated by the executor"
-        exc = CancelledError(msg)
-        for f in futures:
-            if not f.done():
-                f.set_exception(exc)
-        logger.info("Sending termination signal to workers (SIGTERM)...")
-        termination_cb()
-        logger.info("Terminated worker executor !")
+        if termination_cb is not None:
+            msg = "Worker terminated by the executor"
+            exc = CancelledError(msg)
+            for f in futures:
+                if not f.done():
+                    f.set_exception(exc)
+            logger.info("Sending termination signal to workers (SIGTERM)...")
+            termination_cb()
+            logger.info("Terminated worker executor !")
 
 
 @contextmanager
