@@ -43,7 +43,7 @@ def test_workers_start(
         # since the CLI is running forever, launching a failing worker enables returning
         # and not hanging forever. Another option would have been to use different
         # threads here
-        assert "started 1 workers for app icij_worker.utils.tests.APP" in result.stderr
+        assert "starting 1 worker for app icij_worker.utils.tests.APP" in result.stderr
 
 
 @pytest.mark.parametrize("help_command", ["-h", "--help"])
