@@ -27,6 +27,7 @@ from typing import (
 
 from pydantic import BaseModel, Field
 from pydantic.parse import load_file
+from typing_extensions import Self
 
 from icij_common.pydantic_utils import ICIJSettings
 from icij_worker.utils.imports import VariableNotFound, import_variable
@@ -196,7 +197,7 @@ class FromConfig(ABC):
 
 class RegistrableFromConfig(RegistrableMixin, FromConfig, ABC):
     @classmethod
-    def from_config(cls, config: RegistrableConfig, **extras) -> FromConfig:
+    def from_config(cls, config: RegistrableConfig, **extras) -> Self:
         name = getattr(config, config.registry_key.default).default
         subcls = cls.resolve_class_name(name)
         return subcls._from_config(config, **extras)  # pylint: disable=protected-access
