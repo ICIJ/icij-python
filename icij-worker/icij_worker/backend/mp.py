@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import logging
 import multiprocessing
@@ -195,7 +196,7 @@ def run_workers_with_multiprocessing_cm(
     )
     futures = set()
     for process_runner in worker_runners:
-        future = process_runner()
+        future = asyncio.ensure_future(process_runner())
         futures.add(future)
     for f in futures:
         f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
@@ -237,7 +238,7 @@ def run_workers_with_multiprocessing(
     setup_main_process_signal_handlers()
     futures = set()
     for process_runner in worker_runners:
-        future = process_runner()
+        future = asyncio.ensure_future(process_runner())
         futures.add(future)
     for f in futures:
         f.add_done_callback(functools.partial(_cancel_other_callback, others=futures))
