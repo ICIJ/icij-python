@@ -152,8 +152,8 @@ class PostgresStorage(TaskStorage):
     async def __aenter__(self):
         await self._exit_stack.enter_async_context(self._pool_manager)
         await self._refresh_dbs()
-        for db in self._known_dbs:
-            await self._ensure_db(db)
+        for db_name in self._known_dbs:
+            await self.init_database(db_name)
 
     async def _refresh_dbs(self):
         base_pool = await self._pool_manager.get_pool("")
