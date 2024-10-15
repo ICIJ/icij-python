@@ -152,6 +152,8 @@ class PostgresStorage(TaskStorage):
     async def __aenter__(self):
         await self._exit_stack.enter_async_context(self._pool_manager)
         await self._refresh_dbs()
+        for db in self._known_dbs:
+            await self._ensure_db(db)
 
     async def _refresh_dbs(self):
         base_pool = await self._pool_manager.get_pool("")
@@ -167,6 +169,7 @@ class PostgresStorage(TaskStorage):
     async def save_task_(self, task: Task, group: Optional[str]) -> bool:
         db_name = self._routing_strategy.postgres_db(group)
         if db_name not in self._known_dbs:
+            await self._refresh_dbs()
             await self._ensure_db(db_name)
         pool = await self._pool_manager.get_pool(db_name)
         async with pool.connection() as conn:
@@ -312,7 +315,6 @@ class PostgresStorage(TaskStorage):
         return pool
 
     async def _ensure_db(self, db_name):
-        await self._refresh_dbs()
         if db_name not in self._known_dbs:
             await self.init_database(db_name)
             self._known_dbs.add(db_name)
