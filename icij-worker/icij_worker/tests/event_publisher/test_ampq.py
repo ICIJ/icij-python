@@ -57,10 +57,13 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     assert received_event == event
 
 
-async def test_publisher_not_create_and_bind_exchanges_and_queues(rabbit_mq: str):
+async def test_publisher_should_not_create_and_bind_exchanges_and_queues(
+    rabbit_mq: str,
+):
     # Given
     broker_url = rabbit_mq
     publisher = AMQPPublisher(broker_url=broker_url)
+    publisher._declare_and_bind = False  # pylint: disable=protected-access
 
     # When
     msg = "NOT_FOUND - no exchange 'exchangeManagerEvents' in vhost '/'"

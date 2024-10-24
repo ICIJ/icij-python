@@ -46,9 +46,7 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         self._connection_timeout_s = connection_timeout_s
         self._reconnection_wait_s = reconnection_wait_s
         self._exit_stack = AsyncExitStack()
-        # We don't declare and bind anything here, the task manager is in charge of it.
-        # We use this flag only for testing where we want to set everything up easily
-        self._declare_and_bind = False
+        self._declare_and_bind = True
 
     async def __aenter__(self) -> AMQPPublisher:
         self.info("starting publisher connection workflow...")
