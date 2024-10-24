@@ -97,7 +97,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._connection_workflow()
         self._manager_messages_it = (
             await self._get_queue_iterator(
-                self.manager_evt_routing(), declare_exchanges=False
+                self.manager_evt_routing(),
+                declare_exchanges=False,
+                declare_queues=False,
             )
         )[0]
         return self
@@ -215,7 +217,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
                 durable_queues=True,
             )
         await self._create_routing(
-            AMQPMixin.worker_evt_routing(), declare_exchanges=True, declare_queues=False
+            self.worker_evt_routing(), declare_exchanges=True, declare_queues=False
+        )
+        await self._create_routing(
+            self.manager_evt_routing(), declare_exchanges=True, declare_queues=True
         )
         self._task_x = await self._channel.get_exchange(
             self.default_task_routing().exchange.name, ensure=True
