@@ -8,11 +8,7 @@ import pytest
 from icij_worker import AsyncApp, RoutingStrategy
 
 # noinspection PyUnresolvedReferences
-from icij_worker.utils.tests import (  # pylint: disable=unused-import
-    MockWorker,
-    mock_db,
-    mock_db_session,
-)
+from icij_worker.utils.tests import MockWorker  # pylint: disable=unused-import
 
 
 def make_app(routing_strategy: Optional[RoutingStrategy] = None):

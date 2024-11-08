@@ -66,8 +66,6 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
     MockWorker,
     app_config,
     late_ack_app_config,
-    mock_db,
-    mock_db_session,
     test_async_app,
     test_async_app_late,
 )
@@ -576,7 +574,7 @@ async def count_locks(driver: neo4j.AsyncDriver, db: str) -> int:
     scope="function",
     params=[{"app": "test_async_app"}, {"app": "test_async_app_late"}],
 )
-def mock_worker(mock_db: Path, request) -> MockWorker:
+def mock_worker(fs_storage_path: Path, request) -> MockWorker:
     param = getattr(request, "param", dict()) or dict()
     app = request.getfixturevalue(param.get("app", "test_async_app"))
     group = param.get("group")
@@ -584,7 +582,7 @@ def mock_worker(mock_db: Path, request) -> MockWorker:
         app,
         "test-worker",
         group=group,
-        db_path=mock_db,
+        db_path=fs_storage_path,
         poll_interval_s=0.1,
         teardown_dependencies=False,
     )

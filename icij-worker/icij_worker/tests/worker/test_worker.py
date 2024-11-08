@@ -25,13 +25,13 @@ from icij_worker.worker.worker import add_missing_args
     scope="function",
     params=["test_failing_async_app_late_ack", "test_failing_async_app"],
 )
-def mock_failing_worker(mock_db: Path, request) -> MockWorker:
+def mock_failing_worker(fs_storage_path: Path, request) -> MockWorker:
     app = request.getfixturevalue(request.param)
     worker = MockWorker(
         app,
         "test-worker",
         group=None,
-        db_path=mock_db,
+        db_path=fs_storage_path,
         poll_interval_s=0.1,
     )
     return worker

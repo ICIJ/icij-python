@@ -23,7 +23,7 @@ def test_workers_help(cli_runner: CliRunner, help_command: str):
 @pytest.fixture()
 def mock_worker_in_env(tmp_path):  # pylint: disable=unused-argument
     os.environ["ICIJ_WORKER_TYPE"] = "mock"
-    db_path = tmp_path / "mock-db.json"
+    db_path = tmp_path
     os.environ["ICIJ_WORKER_DB_PATH"] = str(db_path)
 
 
