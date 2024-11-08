@@ -14,10 +14,10 @@ from icij_worker.utils.tests import MockManager, MockWorker
 
 
 @pytest.fixture
-def mock_manager(mock_db, request) -> MockManager:
+def mock_manager(fs_storage_path, request) -> MockManager:
     app = getattr(request, "param", "test_async_app")
     app = request.getfixturevalue(app)
-    task_manager = MockManager(app, mock_db)
+    task_manager = MockManager(app, fs_storage_path)
     return task_manager
 
 

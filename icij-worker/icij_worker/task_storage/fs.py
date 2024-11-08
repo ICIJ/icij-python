@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 from contextlib import AsyncExitStack
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional, Type, Union
 
@@ -9,19 +10,17 @@ import ujson
 from sqlitedict import SqliteDict
 
 from icij_common.pydantic_utils import ICIJModel
-from icij_worker import RoutingStrategy, Task, TaskState
+from icij_worker import Task, TaskState
 from icij_worker.exceptions import UnknownTask
 from icij_worker.task_storage import TaskStorageConfig
-from icij_worker.task_storage.key_value import KeyValueStorage
+from icij_worker.task_storage.key_value import DBItem, KeyValueStorage
 
 
 class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
     db_path: Path
 
-    def to_storage(
-        self, routing_strategy: Optional[RoutingStrategy]
-    ) -> FSKeyValueStorage:
-        return FSKeyValueStorage(self.db_path, routing_strategy)
+    def to_storage(self) -> FSKeyValueStorage:
+        return FSKeyValueStorage(self.db_path)
 
 
 class FSKeyValueStorage(KeyValueStorage):
@@ -35,18 +34,12 @@ class FSKeyValueStorage(KeyValueStorage):
 
     # pylint: enable=c-extension-no-member
 
-    def __init__(
-        self, db_path: Path, routing_strategy: Optional[RoutingStrategy] = None
-    ):
-        super().__init__()
-        if routing_strategy is None:
-            routing_strategy = RoutingStrategy()
-        self._routing_strategy = routing_strategy
+    def __init__(self, db_path: Path):
         self._db_path = str(db_path)
         self._exit_stack = AsyncExitStack()
         self._dbs = dict()
         # TODO: add support for 1 DB / group
-        self._dbs = self._make_ns_dbs()
+        self._dbs = self._make_group_dbs()
 
     async def __aenter__(self):
         for db in self._dbs.values():
@@ -62,7 +55,7 @@ class FSKeyValueStorage(KeyValueStorage):
         except KeyError as e:
             raise UnknownTask(key) from e
 
-    async def _insert(self, db: str, obj: Dict, *, key: str):
+    async def _insert(self, db: str, obj: DBItem, *, key: str):
         db = self._dbs[db]
         try:
             db[key] = obj
@@ -70,7 +63,7 @@ class FSKeyValueStorage(KeyValueStorage):
             raise UnknownTask(key) from e
         db.commit()
 
-    async def _update(self, db: str, update: Dict, *, key: str):
+    async def _update(self, db: str, update: DBItem, *, key: str):
         db = self._dbs[db]
         try:
             task = db[key]
@@ -80,9 +73,9 @@ class FSKeyValueStorage(KeyValueStorage):
         db[key] = task
         db.commit()
 
-    async def _add_to_array(self, db: str, obj: Dict, *, key: str):
+    async def _add_to_array(self, db: str, obj: DBItem, *, key: str):
         db = self._dbs[db]
-        values = obj.get(key, [])
+        values = deepcopy(db.get(key, []))
         values.append(obj)
         db[key] = values
         db.commit()
@@ -126,7 +119,7 @@ class FSKeyValueStorage(KeyValueStorage):
             journal_mode="DEFAULT",
         )
 
-    def _make_ns_dbs(self) -> Dict:
+    def _make_group_dbs(self) -> Dict[str, SqliteDict]:
         return {
             self._tasks_db_name: self._make_db(self._db_path, name=self._tasks_db_name),
             self._results_db_name: self._make_db(

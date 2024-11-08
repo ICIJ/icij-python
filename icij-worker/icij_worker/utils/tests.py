@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import signal
-import tempfile
 from abc import ABC
-from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
@@ -20,7 +17,6 @@ from typing import (
     Optional,
     Tuple,
     TypeVar,
-    Union,
     cast,
 )
 
@@ -30,18 +26,14 @@ import icij_worker
 from icij_common.pydantic_utils import (
     ICIJModel,
     IgnoreExtraModel,
-    jsonable_encoder,
-    safe_copy,
 )
-from icij_common.test_utils import TEST_DB
 from icij_worker import (
     AsyncApp,
     AsyncBackend,
+    FSKeyValueStorage,
     ManagerEvent,
-    ResultEvent,
     RoutingStrategy,
     Task,
-    TaskError,
     TaskState,
     Worker,
     WorkerConfig,
@@ -51,9 +43,7 @@ from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
 from icij_worker.objects import (
     CancelEvent,
-    ErrorEvent,
     Message,
-    TaskUpdate,
     WorkerEvent,
 )
 from icij_worker.task_manager import TaskManager, TaskManagerConfig
@@ -75,113 +65,33 @@ except ImportError:
 if _has_pytest:
 
     # TODO: make this one a MockStorage
-    class DBMixin(ABC):
-        _task_collection = "tasks"
-        _result_collection = "results"
-        _error_collection = "errors"
-        _lock_collection = "locks"
-        _manager_event_collection = "manager_events"
-        _worker_event_collection = "worker_events"
+    class DBMixin(FSKeyValueStorage, ABC):
+        _locks_db_name = "locks"
+        _manager_events_db_name = "manager_events"
+        _worker_events_db_name = "worker_events"
 
         _routing_strategy: RoutingStrategy
 
         def __init__(self, db_path: Path) -> None:
-            self._db_path = db_path
+            super().__init__(db_path)
             self._task_meta: Dict[str, Tuple[str, str]] = dict()
+
+        def _make_group_dbs(self) -> Dict:
+            dbs = dict()
+            for k in [
+                self._tasks_db_name,
+                self._results_db_name,
+                self._errors_db_name,
+                self._locks_db_name,
+                self._manager_events_db_name,
+                self._worker_events_db_name,
+            ]:
+                dbs[k] = self._make_db(self._db_path, name=k)
+            return dbs
 
         @property
         def db_path(self) -> Path:
             return self._db_path
-
-        def _write(self, data: Dict):
-            self._db_path.write_text(json.dumps(jsonable_encoder(data)))
-
-        def _read(self):
-            return json.loads(self._db_path.read_text())
-
-        @staticmethod
-        def _task_key(task_id: str, db: Optional[str]) -> str:
-            return str((task_id, db))
-
-        def _get_task_db_name(self, task_id) -> str:
-            if task_id not in self._task_meta:
-                db = self._read()
-                task_meta = dict()
-                for k, v in db[self._task_collection].items():
-                    (task_id, db) = eval(k)  # pylint: disable=eval-used
-                    task_meta[task_id] = (db, v["group"])
-                self._task_meta = task_meta
-            try:
-                return self._task_meta[task_id][0]
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
-
-        @classmethod
-        def fresh_db(cls, db_path: Path):
-            db = {
-                cls._task_collection: dict(),
-                cls._lock_collection: dict(),
-                cls._error_collection: dict(),
-                cls._result_collection: dict(),
-                cls._manager_event_collection: dict(),
-                cls._worker_event_collection: dict(),
-            }
-            db_path.write_text(json.dumps(db))
-
-        async def get_task_group(self, task_id: str) -> Optional[str]:
-            try:
-                return self._task_meta[task_id][1]
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
-
-        async def save_result(self, result: ResultEvent):
-            db = self._get_task_db_name(result.task_id)
-            task_key = self._task_key(task_id=result.task_id, db=db)
-            db = self._read()
-            db[self._result_collection][task_key] = result
-            self._write(db)
-
-        async def save_error(self, error: ErrorEvent):
-            db = self._get_task_db_name(task_id=error.task_id)
-            task_key = self._task_key(task_id=error.task_id, db=db)
-            db = self._read()
-            errors = db[self._error_collection].get(task_key, [])
-            errors.append(error)
-            db[self._error_collection][task_key] = errors
-            self._write(db)
-
-        async def save_task_(self, task: Task, group: Optional[str]):
-            new_task = False
-            ns = None
-            try:
-                ns = await self.get_task_group(task_id=task.id)
-            except UnknownTask:
-                new_task = True
-                if group is not None:
-                    ns = group
-                    db_name = self._routing_strategy.test_db(group)
-                else:
-                    db_name = TEST_DB
-            else:
-                if ns != group:
-                    msg = (
-                        f"DB task group ({ns}) differs from"
-                        f" save task group: {group}"
-                    )
-                    raise ValueError(msg)
-                db_name = self._get_task_db_name(task.id)
-            update = TaskUpdate.from_task(task).dict(exclude_none=True, by_alias=True)
-            update["group"] = group
-            task_key = self._task_key(task_id=task.id, db=db_name)
-            db = self._read()
-            updated = db[self._task_collection].get(
-                task_key, task.dict(exclude_none=True, by_alias=True)
-            )
-            updated.update(update)
-            db[self._task_collection][task_key] = updated
-            self._write(db)
-            self._task_meta[task.id] = (db_name, ns)
-            return new_task
 
         @staticmethod
         def _order_events(events: List[Dict]) -> float:
@@ -192,7 +102,7 @@ if _has_pytest:
 
         async def _consume_(
             self,
-            collection: str,
+            db_name: str,
             sleep_interval: float,
             factory: Callable[[Any], R],
             group: Optional[str] = None,
@@ -200,13 +110,12 @@ if _has_pytest:
             order: Optional[Callable[[R], Any]] = None,
         ) -> R:
             while "i'm waiting until I find something interesting":
-                db = self._read()
-                selected = deepcopy(db[collection])
-                if collection == self._task_collection:
+                selected = dict(self._dbs[db_name].items())
+                if db_name == self._tasks_db_name:
                     selected = {
                         k: v
                         for k, v in selected.items()
-                        if k not in db[self._lock_collection]
+                        if k not in self._dbs[self._locks_db_name]
                     }
                 if group is not None:
                     selected = [
@@ -226,19 +135,6 @@ if _has_pytest:
                         k, t = selected[0]
                     return t
                 await asyncio.sleep(sleep_interval)
-
-    @pytest.fixture(scope="session")
-    def mock_db_session() -> Path:
-        with tempfile.NamedTemporaryFile(prefix="mock-db", suffix=".json") as f:
-            db_path = Path(f.name)
-            DBMixin.fresh_db(db_path)
-            yield db_path
-
-    @pytest.fixture
-    def mock_db(mock_db_session: Path) -> Path:
-        # Wipe the DB
-        DBMixin.fresh_db(mock_db_session)
-        return mock_db_session
 
     class MockAppConfig(ICIJModel, LogWithWorkerIDMixin):
         # Just provide logging stuff to be able to see nice logs while doing TDD
@@ -347,106 +243,39 @@ if _has_pytest:
         event_refresh_interval_s: float = 0.1
 
     @TaskManager.register(AsyncBackend.mock)
-    class MockManager(DBMixin, TaskManager):
+    class MockManager(TaskManager, DBMixin):
         def __init__(
             self, app: AsyncApp, db_path: Path, event_refresh_interval_s: float = 0.1
         ):
-            super().__init__(db_path)
-            super(DBMixin, self).__init__(app)
+            super().__init__(app)
+            super(TaskManager, self).__init__(db_path)
             self._event_refresh_interval_s = event_refresh_interval_s
 
         @property
         def app(self) -> AsyncApp:
             return self._app
 
-        async def _ensure_queue_size(self, task: Task):
-            # pylint: disable=arguments-differ
-            db_name = self._get_task_db_name(task.id)
-            key = self._task_key(task.id, db=db_name)
-            db = self._read()
-            tasks = db[self._task_collection]
-            n_queued = sum(
-                1 for t in tasks.values() if t["state"] == TaskState.QUEUED.value
-            )
+        async def _ensure_queue_size(self):
+            tasks = await self.get_tasks(group=None, state=TaskState.QUEUED)
+            n_queued = len(tasks)
             if (
                 self.max_task_queue_size is not None
                 and n_queued > self.max_task_queue_size
             ):
                 raise TaskQueueIsFull(self.max_task_queue_size)
-            db_task = tasks.get(key)
-            if db_task is None:
-                raise UnknownTask(task.id)
 
         async def _enqueue(self, task: Task):
-            await self._ensure_queue_size(task)
+            # pylint: disable=unused-argument
+            await self._ensure_queue_size()
 
         async def _requeue(self, task: Task):
-            await self._ensure_queue_size(task)
-            db_name = self._get_task_db_name(task.id)
-            key = self._task_key(task.id, db=db_name)
-            db = self._read()
-            db_task = db[self._task_collection][key]
-            db_task.pop("group")
-            db_task = Task.parse_obj(db_task)
-            update = TaskUpdate(progress=0.0, state=TaskState.QUEUED).dict(
-                exclude_none=True, by_alias=True
-            )
-            requeued = safe_copy(db_task, update=update)
-            db[self._task_collection][key] = requeued
-            self._write(db)
-
-        async def get_task(self, task_id: str) -> Task:
-            db_name = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db_name)
-            db = self._read()
-            try:
-                tasks = db[self._task_collection]
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
-            task = deepcopy(tasks[key])
-            task.pop("group")
-            return Task.parse_obj(task)
-
-        async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
-            db = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db)
-            db = self._read()
-            errors = db[self._error_collection]
-            errors = errors.get(key, [])
-            errors = [ErrorEvent.parse_obj(err) for err in errors]
-            return errors
-
-        async def get_task_result(self, task_id: str) -> ResultEvent:
-            db = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db)
-            db = self._read()
-            results = db[self._result_collection]
-            try:
-                return ResultEvent.parse_obj(results[key])
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
-
-        async def get_tasks(
-            self,
-            *,
-            task_name: Optional[str] = None,
-            state: Optional[Union[List[TaskState], TaskState]] = None,
-            db: Optional[str] = None,
-            **kwargs,
-        ) -> List[Task]:
-            # pylint: disable=arguments-differ
-            db = self._read()
-            tasks = db.values()
-            if state:
-                if isinstance(state, TaskState):
-                    state = [state]
-                state = set(state)
-                tasks = (t for t in tasks if t.state in state)
-            return list(tasks)
+            await self._ensure_queue_size()
+            group = await self.get_task_group(task.id)
+            await self.save_task_(task, group)
 
         async def _consume(self) -> ManagerEvent:
             events = await self._consume_(
-                self._manager_event_collection,
+                self._manager_events_db_name,
                 self._event_refresh_interval_s,
                 list,
                 select=lambda events: bool(  # pylint: disable=unnecessary-lambda
@@ -459,27 +288,24 @@ if _has_pytest:
                 key=lambda e: datetime.fromisoformat(e["createdAt"]).timestamp(),
             )
             event = events[0]
-            db = self._read()
             task_id = event["taskId"]
-            db_name = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db_name)
-            db[self._manager_event_collection][key] = events[1:]
-            self._write(db)
+            key = self._key(task_id=task_id, obj_cls=ManagerEvent)
+            manager_events_db = self._dbs[self._manager_events_db_name]
+            manager_events_db[key] = events[1:]
+            manager_events_db.commit(blocking=True)
             return cast(ManagerEvent, Message.parse_obj(event))
 
         async def cancel(self, task_id: str, *, requeue: bool):
             cancel_event = CancelEvent(
                 task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
             )
-            db_name = self._get_task_db_name(task_id)
-            key = self._task_key(task_id=task_id, db=db_name)
-            db = self._read()
-            events = db[self._worker_event_collection]
-            if key not in events:
-                events[key] = []
+            key = self._key(task_id=task_id, obj_cls=CancelEvent)
+            worker_events = self._dbs[self._worker_events_db_name]
+            events = worker_events.get(key, [])
             event_dict = cancel_event.dict(exclude_unset=True, by_alias=True)
-            events[key].append(event_dict)
-            self._write(db)
+            events.append(event_dict)
+            worker_events[key] = events
+            worker_events.commit(blocking=True)
 
         @classmethod
         def _from_config(cls, config: MockManagerConfig, **extras) -> MockManager:
@@ -500,22 +326,14 @@ if _has_pytest:
             self.published_events = []
 
         async def _publish_event(self, event: ManagerEvent):
-            db_name = self._get_task_db_name(event.task_id)
-            key = self._task_key(task_id=event.task_id, db=db_name)
-            db = self._read()
+            key = self._key(event.task_id, ManagerEvent)
+            manager_events_db = self._dbs[self._manager_events_db_name]
             event_dict = event.dict(exclude_unset=True, by_alias=True)
-            if key not in db[self._manager_event_collection]:
-                db[self._manager_event_collection][key] = []
-            db[self._manager_event_collection][key].append(event_dict)
-            self._write(db)
+            events = manager_events_db.get(key, [])
+            events.append(event_dict)
+            manager_events_db[key] = events
+            manager_events_db.commit(blocking=True)
             self.published_events.append(event)
-
-        def _get_db_task(self, db: Dict, *, task_id: str, db_name: str) -> Dict:
-            tasks = db[self._task_collection]
-            try:
-                return tasks[self._task_key(task_id=task_id, db=db_name)]
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
 
     @WorkerConfig.register()
     class MockWorkerConfig(WorkerConfig, IgnoreExtraModel):
@@ -538,8 +356,8 @@ if _has_pytest:
             poll_interval_s: float,
             **kwargs,
         ):
-            super().__init__(app, worker_id, group=group, **kwargs)
             MockEventPublisher.__init__(self, db_path)
+            Worker.__init__(self, app, worker_id, group=group, **kwargs)
             self._poll_interval_s = poll_interval_s
             self._worker_id = worker_id
             self._logger_ = logging.getLogger(__name__)
@@ -580,7 +398,7 @@ if _has_pytest:
             await self._signal_handler(signal_name, graceful=graceful)
 
         async def _aenter__(self):
-            if not self._db_path.exists():
+            if not Path(self._db_path).exists():
                 raise OSError(f"worker DB was not initialized ({self._db_path})")
 
         @classmethod
@@ -592,40 +410,20 @@ if _has_pytest:
             )
             return worker
 
-        def _get_db_errors(self, task_id: str, db_name: str) -> List[TaskError]:
-            key = self._task_key(task_id=task_id, db=db_name)
-            db = self._read()
-            errors = db[self._error_collection]
-            try:
-                return errors[key]
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
-
-        def _get_db_result(self, task_id: str, db_name: str) -> ResultEvent:
-            key = self._task_key(task_id=task_id, db=db_name)
-            db = self._read()
-            try:
-                errors = db[self._result_collection]
-                return errors[key]
-            except KeyError as e:
-                raise UnknownTask(task_id) from e
-
         async def _acknowledge(self, task: Task):
-            db_name = self._get_task_db_name(task.id)
-            key = self._task_key(task.id, db_name)
-            db = self._read()
+            key = self._key(task.id, Task)
+            locks = self._dbs[self._locks_db_name]
             try:
-                db[self._lock_collection].pop(key)
+                del locks[key]
             except KeyError as e:
                 raise UnknownTask(task.id) from e
-            self._write(db)
+            locks.commit()
 
         async def _negatively_acknowledge(self, nacked: Task):
-            db_name = self._get_task_db_name(nacked.id)
-            key = self._task_key(nacked.id, db_name)
-            db = self._read()
-            db[self._lock_collection].pop(key)
-            self._write(db)
+            key = self._key(nacked.id, Task)
+            locks = self._dbs[self._locks_db_name]
+            del locks[key]
+            locks.commit()
 
         @staticmethod
         def _task_factory(obj: Dict) -> Task:
@@ -634,23 +432,22 @@ if _has_pytest:
 
         async def _consume(self) -> Task:
             task = await self._consume_(
-                self._task_collection,
+                self._tasks_db_name,
                 self._poll_interval_s,
                 self._task_factory,
                 group=self._group,
                 select=lambda t: t.state is TaskState.QUEUED,
                 order=lambda t: t.created_at,
             )
-            db = self._read()
-            db_name = self._get_task_db_name(task.id)
-            key = self._task_key(task.id, db_name)
-            db[self._lock_collection][key] = self._id
-            self._write(db)
+            locks = self._dbs[self._locks_db_name]
+            key = self._key(task.id, Task)
+            locks[key] = self._id
+            locks.commit()
             return task
 
         async def _consume_worker_events(self) -> WorkerEvent:
             events = await self._consume_(
-                self._worker_event_collection,
+                self._worker_events_db_name,
                 self._poll_interval_s,
                 list,
                 group=self._group,
@@ -665,11 +462,10 @@ if _has_pytest:
             )
             event = events[0]
             event = cast(WorkerEvent, Message.parse_obj(event))
-            db = self._read()
-            db_name = self._get_task_db_name(event.task_id)
-            key = self._task_key(event.task_id, db_name)
-            db[self._worker_event_collection][key] = events[1:]
-            self._write(db)
+            worker_events = self._dbs[self._worker_events_db_name]
+            key = self._key(event.task_id, WorkerEvent)
+            worker_events[key] = events[1:]
+            worker_events.commit(blocking=True)
             return event
 
         async def work_once(self):

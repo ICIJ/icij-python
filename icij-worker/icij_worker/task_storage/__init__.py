@@ -10,7 +10,7 @@ from icij_worker.routing_strategy import RoutingStrategy
 
 class TaskStorageConfig(ABC):
     @abstractmethod
-    def to_storage(self, routing_strategy: Optional[RoutingStrategy]) -> TaskStorage:
+    def to_storage(self) -> TaskStorage:
         pass
 
 
