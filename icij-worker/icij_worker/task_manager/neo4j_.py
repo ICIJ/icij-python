@@ -104,7 +104,7 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
         )
         return cast(ManagerEvent, Message.parse_obj(json.loads(event_as_json)))
 
-    async def cancel(self, task_id: str, *, requeue: bool):
+    async def _cancel(self, task_id: str, *, requeue: bool):
         async with self._task_session(task_id) as sess:
             await sess.execute_write(_cancel_task_tx, task_id=task_id, requeue=requeue)
 

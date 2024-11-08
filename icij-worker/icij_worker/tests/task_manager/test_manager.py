@@ -1,8 +1,8 @@
 # pylint: disable=redefined-outer-name
+import itertools
 from datetime import datetime
 from functools import partial
 
-import itertools
 import pytest
 
 from icij_common.pydantic_utils import safe_copy
@@ -214,8 +214,8 @@ async def test_save_task_to_group(
     # Then
     expected_task = safe_copy(task, update={"max_retries": 3, "retries_left": 3})
     assert db_task == expected_task
-    ns = await task_manager.get_task_group(task.id)
-    assert ns == "hello"
+    group = await task_manager.get_task_group(task.id)
+    assert group == "hello"
 
 
 async def test_save_unknown_task_should_raise_unregistered_task_error(
@@ -234,3 +234,27 @@ async def test_save_unknown_task_should_raise_unregistered_task_error(
     # When/Then
     with pytest.raises(UnregisteredTask):
         await task_manager.save_task(task)
+
+
+def test_consume_progress_event_dag():
+    assert False
+
+
+def test_task_manager_should_consume_error_events_dag():
+    assert False
+
+
+def test_consume_cancel_dag():
+    assert False
+
+
+def test_consume_cancelled_event_dag():
+    assert False
+
+
+def test_save_task_dag():
+    assert False
+
+
+def test_dag_progress():
+    assert False

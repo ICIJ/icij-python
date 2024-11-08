@@ -167,6 +167,20 @@ files = [
 typing-extensions = {version = ">=4.0.0", markers = "python_version < \"3.11\""}
 
 [[package]]
+name = "async-lru"
+version = "2.0.4"
+description = "Simple LRU cache for asyncio"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "async-lru-2.0.4.tar.gz", hash = "sha256:b8a59a5df60805ff63220b2a0c5b5393da5521b113cd5465a44eb037d81a5627"},
+    {file = "async_lru-2.0.4-py3-none-any.whl", hash = "sha256:ff02944ce3c288c5be660c42dbcca0742b32c3b279d6dceda655190240b99224"},
+]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.0.0", markers = "python_version < \"3.11\""}
+
+[[package]]
 name = "async-timeout"
 version = "4.0.3"
 description = "Timeout context manager for asyncio programs"
@@ -338,7 +352,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.5.1"
+version = "0.5.2"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -350,6 +364,7 @@ neo4j = {version = "^5.0.0", optional = true}
 pydantic = "^1.10"
 
 [package.extras]
+elasticsearch = ["elasticsearch[async] (>=7.17.9,<8.0.0)", "tenacity (>=9.0.0,<10.0.0)"]
 fastapi = ["fastapi (>=0.99,<0.111)"]
 neo4j = ["neo4j (>=5.0.0,<6.0.0)"]
 
@@ -1181,4 +1196,4 @@ neo4j = ["neo4j"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "4877788bb2a83b13de512f85f3fc9be65b16fa4c0c3aff53469c380e12f712ab"
+content-hash = "95b15337ef3972c607f43add579756e9408034e3924265ea2bea7d5e352f2b93"

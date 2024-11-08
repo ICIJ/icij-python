@@ -18,7 +18,7 @@ from icij_worker import ResultEvent, Task, TaskError, TaskState
 from icij_worker.exceptions import TaskAlreadyCancelled, WorkerTimeoutError
 from icij_worker.objects import ErrorEvent, ProgressEvent
 from icij_worker.utils.tests import MockManager, MockWorker
-from icij_worker.worker.worker import add_missing_args
+from icij_worker.utils import add_missing_args
 
 
 @pytest.fixture(
@@ -521,7 +521,7 @@ async def test_cancel_running_task(mock_worker: MockWorker, requeue: bool):
         assert await async_true_after(
             functools.partial(_has_state, TaskState.RUNNING), after_s=after_s
         ), failure_msg
-        await task_manager.cancel(task_id=task.id, requeue=requeue)
+        await task_manager._cancel(task_id=task.id, requeue=requeue)
 
         done, _ = await asyncio.wait([t], timeout=after_s)
         if not done:

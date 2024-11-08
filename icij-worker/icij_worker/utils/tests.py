@@ -9,6 +9,7 @@ from abc import ABC
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
+    Annotated,
     Any,
     Callable,
     ClassVar,
@@ -38,7 +39,7 @@ from icij_worker import (
     Worker,
     WorkerConfig,
 )
-from icij_worker.app import AsyncAppConfig, TaskGroup
+from icij_worker.app import AsyncAppConfig, Chunked, Depends, TaskGroup
 from icij_worker.event_publisher import EventPublisher
 from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
 from icij_worker.objects import (
@@ -50,6 +51,7 @@ from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.typing_ import RateProgress
 from icij_worker.utils.dependencies import DependencyInjectionError
 from icij_worker.utils.logging_ import LogWithWorkerIDMixin
+from icij_worker.utils.progress import to_raw_progress
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +79,8 @@ if _has_pytest:
             self._task_meta: Dict[str, Tuple[str, str]] = dict()
 
         def _make_group_dbs(self) -> Dict:
-            dbs = dict()
+            dbs = super()._make_group_dbs()
             for k in [
-                self._tasks_db_name,
-                self._results_db_name,
-                self._errors_db_name,
                 self._locks_db_name,
                 self._manager_events_db_name,
                 self._worker_events_db_name,
@@ -221,6 +220,29 @@ if _has_pytest:
     async def often_retriable() -> str:
         pass
 
+    @APP.task(max_retries=5, progress_weight=3.0)
+    async def preprocess(
+        documents: Annotated[List[str], Chunked(size=2)],
+        progress: Optional[RateProgress] = None,
+    ) -> List[str]:
+        if progress is not None:
+            progress = to_raw_progress(progress, max_progress=len(documents))
+        outputs = []
+        for i, doc in enumerate(documents):
+            processed = f"processed {doc}"
+            outputs.append(processed)
+            if progress is not None:
+                await progress(i)
+        return outputs
+
+    @APP.task
+    def detect(
+        preprocessed: Annotated[List[str], Depends(on=preprocess), Chunked(size=2)],
+        model: str,
+    ) -> List[str]:
+        detected = [f"Model {model} detected {doc}" for doc in preprocessed]
+        return detected
+
     @pytest.fixture(scope="session")
     def test_async_app() -> AsyncApp:
         return AsyncApp.load(f"{__name__}.APP")
@@ -295,7 +317,7 @@ if _has_pytest:
             manager_events_db.commit(blocking=True)
             return cast(ManagerEvent, Message.parse_obj(event))
 
-        async def cancel(self, task_id: str, *, requeue: bool):
+        async def _cancel(self, task_id: str, *, requeue: bool):
             cancel_event = CancelEvent(
                 task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
             )

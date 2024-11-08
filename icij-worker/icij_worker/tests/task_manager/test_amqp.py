@@ -225,7 +225,7 @@ async def test_task_manager_cancel(
     await task_manager.save_task(task)
 
     # When
-    await task_manager.cancel(task_id=task.id, requeue=requeue)
+    await task_manager._cancel(task_id=task.id, requeue=requeue)
 
     # Then
     channel = task_manager.channel

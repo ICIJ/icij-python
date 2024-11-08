@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy
 from functools import cached_property
@@ -36,6 +37,10 @@ from icij_worker.constants import (
     POSTGRES_TASK_DB_IS_LOCKED,
     POSTGRES_TASK_DB_NAME,
     POSTGRES_TASK_ERRORS_TABLE,
+    POSTGRES_TASK_PARENTS_PARENT_ID,
+    POSTGRES_TASK_PARENTS_PROVIDED_ARGUMENT,
+    POSTGRES_TASK_PARENTS_TABLE,
+    POSTGRES_TASK_PARENTS_TASK_ID,
     POSTGRES_TASK_RESULTS_TABLE,
     TASK_ARGS,
     TASK_ERRORS_TASK_ID,
@@ -47,6 +52,7 @@ from icij_worker.constants import (
     TASK_RESULT_TASK_ID,
     TASK_STATE,
 )
+from icij_worker.dag.dag import TaskDAG
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, TaskError, TaskUpdate
 from icij_worker.task_storage import TaskStorage, TaskStorageConfig
@@ -124,6 +130,7 @@ class PoolManager(AbstractAsyncContextManager):
 
 
 class PostgresStorage(TaskStorage):
+
     def __init__(
         self,
         connection_info: PostgresConnectionInfo,
@@ -203,6 +210,14 @@ class PostgresStorage(TaskStorage):
             async with conn.cursor(row_factory=dict_row) as cur:
                 await _insert_error(cur, error)
 
+    async def _save_dag_dependency(
+        self, task_id: str, *, parent_id: str, provided_arg: str
+    ):
+        task_db = await self._get_task_db(task_id)
+        pool = await self._pool_manager.get_pool(task_db)
+        async with pool.connection() as conn:
+            await conn.execute(_INSERT_PARENT_QUERY, (task_id, parent_id, provided_arg))
+
     async def get_task(self, task_id: str) -> Task:
         task_db = await self._get_task_db(task_id)
         pool = await self._pool_manager.get_pool(task_db)
@@ -260,11 +275,18 @@ class PostgresStorage(TaskStorage):
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(_GET_TASK_GROUP_QUERY, (task_id,))
-                ns = await cur.fetchone()
-        if ns is None:
+                group = await cur.fetchone()
+        if group is None:
             raise UnknownTask(task_id)
-        ns = ns["task_ns"]
-        return ns
+        group = group["task_group"]
+        return group
+
+    async def _get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        task_db = await self._get_task_db(task_id)
+        pool = await self._pool_manager.get_pool(task_db)
+        async with pool.connection() as conn:
+            dag = await _get_task_dag(conn, task_id)
+        return dag
 
     async def init_database(self, db_name: str):
         await init_database(
@@ -394,6 +416,46 @@ async def _get_tasks(
     # TODO: pass the above chunksize, when upgrading to a new version of psycopg
     async for task in cur.stream(query, size=1):
         yield task
+
+
+async def _get_task_dag(conn: AsyncConnection, task_id: str) -> Optional[TaskDAG]:
+    unexplored = [task_id]
+    graph = defaultdict(dict)
+    seen = set()
+    async with conn.cursor(row_factory=dict_row) as cur:
+        async with conn.transaction():
+            while unexplored:
+                await cur.execute(_GET_TASK_DAG_QUERY, (unexplored, unexplored))
+                unexplored = set()
+                dag_relationships = await cur.fetchall()
+                if not dag_relationships:
+                    break
+                for dag_rel in dag_relationships:
+                    child_id = dag_rel[POSTGRES_TASK_PARENTS_TASK_ID]
+                    parent_id = dag_rel[POSTGRES_TASK_PARENTS_PARENT_ID]
+                    provided_arg = dag_rel[POSTGRES_TASK_PARENTS_PROVIDED_ARGUMENT]
+                    graph[child_id][parent_id] = provided_arg
+                    if child_id not in seen:
+                        seen.add(child_id)
+                        unexplored.add(child_id)
+                    if parent_id not in seen:
+                        seen.add(parent_id)
+                        unexplored.add(parent_id)
+                unexplored = list(unexplored)
+    if not graph:
+        return None
+    parents = set(p for parents in graph.values() for p in parents)
+    all_tasks = set(graph.keys()).union(parents)
+    root = all_tasks - parents
+    if len(root) != 1:
+        raise ValueError(f"Found several root in DAG {graph}: {sorted(root)}")
+    root = next(iter(root))
+    dag = TaskDAG(dag_task_id=root)
+    for child, parents in graph.items():
+        for parent, provided_arg in parents.items():
+            dag.add_task_dep(child, parent_id=parent, provided_arg=provided_arg)
+    dag.prepare()
+    return dag
 
 
 async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
@@ -555,6 +617,16 @@ _GET_TASK_QUERY = sql.SQL("SELECT * FROM {} AS task WHERE task.{task_id} = %s").
     sql.Identifier(POSTGRES_TASKS_TABLE), task_id=sql.Identifier(TASK_ID)
 )
 
+_GET_TASK_DAG_QUERY = sql.SQL(
+    """SELECT * FROM {parents_table} AS parents 
+WHERE parents.{task_id} = ANY(%s) OR parents.{parent_id} = ANY(%s)
+"""
+).format(
+    parents_table=sql.Identifier(POSTGRES_TASK_PARENTS_TABLE),
+    task_id=sql.Identifier(POSTGRES_TASK_PARENTS_TASK_ID),
+    parent_id=sql.Identifier(POSTGRES_TASK_PARENTS_PARENT_ID),
+)
+
 _BASE_GET_TASKS_QUERY = sql.SQL("SELECT * FROM {} AS task").format(
     sql.Identifier(POSTGRES_TASKS_TABLE)
 )
@@ -583,15 +655,15 @@ WHERE t.{task_id} = %s
 )
 
 _TASK_META_QUERY = sql.SQL(
-    "SELECT t.{task_id}, t.{task_ns} FROM {task_table} AS t;"
+    "SELECT t.{task_id}, t.{task_group} FROM {task_table} AS t;"
 ).format(
     task_id=sql.Identifier(TASK_ID),
-    task_ns=sql.Identifier(TASK_GROUP),
+    task_group=sql.Identifier(TASK_GROUP),
     task_table=sql.Identifier(POSTGRES_TASKS_TABLE),
 )
 
 _GET_TASK_GROUP_QUERY = sql.SQL(
-    "SELECT t.{} AS task_ns FROM {} AS t WHERE t.{} = %s;"
+    "SELECT t.{} AS task_group FROM {} AS t WHERE t.{} = %s;"
 ).format(
     sql.Identifier(TASK_GROUP),
     sql.Identifier(POSTGRES_TASKS_TABLE),
@@ -610,6 +682,17 @@ VALUES ({task_id}, {res}, {res_created_at});
     task_id=sql.Placeholder(TASK_RESULT_TASK_ID),
     res=sql.Placeholder(TASK_RESULT_RESULT),
     res_created_at=sql.Placeholder(TASK_RESULT_CREATED_AT),
+)
+
+_INSERT_PARENT_QUERY = sql.SQL(
+    """INSERT INTO {parents_table} ({task_id_col}, {parent_id_col}, {provided_arg_col})
+VALUES (%s, %s, %s);
+"""
+).format(
+    parents_table=sql.Identifier(POSTGRES_TASK_PARENTS_TABLE),
+    task_id_col=sql.Identifier(POSTGRES_TASK_PARENTS_TASK_ID),
+    parent_id_col=sql.Identifier(POSTGRES_TASK_PARENTS_PARENT_ID),
+    provided_arg_col=sql.Identifier(POSTGRES_TASK_PARENTS_PROVIDED_ARGUMENT),
 )
 
 _CREATE_REGISTRY_TASK_TABLE = sql.SQL(
