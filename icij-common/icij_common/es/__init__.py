@@ -143,7 +143,7 @@ class ESClient(AsyncElasticsearch):
         )
 
     async def poll_search_pages(
-        self, body: Dict, sort: Optional[List[Dict]] = None, **kwargs
+        self, body: Dict, sort: Union[List[str], Tuple[str, ...], None] = None, **kwargs
     ) -> AsyncGenerator[Dict[str, Any], None]:
         retrying = self._async_retrying()
         if sort is None:
@@ -192,13 +192,11 @@ class ESClient(AsyncElasticsearch):
         # pylint: disable=unexpected-keyword-arg
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
-        if SIZE in kwargs:
-            msg = f"{self.__class__.__name__} run searches using the pagination_size"
-            raise ValueError(msg)
+        size = kwargs.get("size", self.pagination_size)
         return await super().search(
             headers=headers,
             body=body,
-            size=self.pagination_size,
+            size=size,
             **kwargs,
         )
 
