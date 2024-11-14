@@ -27,7 +27,7 @@ from typing import (
 
 from typing_extensions import Self
 
-from icij_common.pydantic_utils import safe_copy
+from icij_common.pydantic_utils import safe_copy, to_lower_snake_case
 from icij_worker import AsyncApp, ResultEvent, Task, TaskError, TaskState
 from icij_worker.app import RegisteredTask, supports_progress
 from icij_worker.event_publisher.event_publisher import EventPublisher
@@ -585,7 +585,8 @@ async def task_wrapper(worker: Worker, task: Task) -> Task:
         raise TaskAlreadyCancelled(task_id=task.id)
     # Parse task to retrieve recoverable errors and max retries
     task_fn, recoverable_errors = worker.parse_task(task)
-    task_inputs = add_missing_args(task_fn, task.args)
+    task_args = {to_lower_snake_case(k): v for k, v in task.args.items()}
+    task_inputs = add_missing_args(task_fn, task_args)
     # Retry task until success, fatal error or max retry exceeded
     return await _retry_task(worker, task, task_fn, task_inputs, recoverable_errors)
 

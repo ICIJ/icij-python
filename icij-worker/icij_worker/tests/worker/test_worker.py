@@ -18,7 +18,7 @@ from icij_worker import ResultEvent, Task, TaskError, TaskState
 from icij_worker.exceptions import TaskAlreadyCancelled, WorkerTimeoutError
 from icij_worker.objects import ErrorEvent, ProgressEvent
 from icij_worker.utils.tests import MockManager, MockWorker
-from icij_worker.worker.worker import add_missing_args
+from icij_worker.worker.worker import add_missing_args, task_wrapper
 
 
 @pytest.fixture(
@@ -192,7 +192,7 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         assert saved_result == expected_result
 
 
-async def test_task_wrapper_should_recover_from_recoverable_error(
+async def test_worker_should_recover_from_recoverable_error(
     mock_failing_worker: MockWorker,
 ):
     # Given
@@ -309,7 +309,7 @@ async def test_task_wrapper_should_recover_from_recoverable_error(
         assert events == expected_events
 
 
-async def test_task_wrapper_should_handle_fatal_error(mock_failing_worker: MockWorker):
+async def test_worker_should_handle_fatal_error(mock_failing_worker: MockWorker):
     # Given
     worker = mock_failing_worker
     task_manager = MockManager(worker.app, worker.db_path)
@@ -385,7 +385,7 @@ async def test_task_wrapper_should_handle_fatal_error(mock_failing_worker: MockW
         assert error_event == expected_error_event
 
 
-async def test_task_wrapper_should_handle_unregistered_task(mock_worker: MockWorker):
+async def test_worker_should_handle_unregistered_task(mock_worker: MockWorker):
     # Given
     worker = mock_worker
     task_manager = MockManager(worker.app, worker.db_path)
@@ -702,3 +702,20 @@ async def test_worker_should_handle_worker_timeout(mock_worker: MockWorker):
             error = errors[0].error
             assert error.name == WorkerTimeoutError.__name__
             t.cancel()
+
+
+@pytest.mark.parametrize(
+    "mock_worker", [{"app": "test_async_app"}], indirect=["mock_worker"]
+)
+async def test_task_wrapper_should_handle_camel_case_args(mock_worker: MockWorker):
+    # Given
+    worker = mock_worker
+    args = {"snakeCaseArg": "Imma snake"}
+    task = Task.create(task_id="task_id", task_name="case_test_task", args=args)
+
+    # When
+    worker._current = task  # pylint: disable=protected-access
+    task = await task_wrapper(worker, task)
+
+    # Then
+    assert task.state == TaskState.DONE
