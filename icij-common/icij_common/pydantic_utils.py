@@ -21,6 +21,13 @@ def to_lower_camel(field: str) -> str:
     )
 
 
+def to_lower_snake_case(s: str):
+    snake = "".join("_" + c.lower() if c.isupper() else c for c in s)
+    if snake.startswith("_"):
+        snake = snake[1:]
+    return snake
+
+
 _FIELD_ARGS = ["include", "exclude", "update"]
 
 _SCHEMAS = dict()
