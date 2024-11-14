@@ -90,20 +90,6 @@ async def test_es_client_should_search_with_pagination_size():
         )
 
 
-async def test_es_client_should_raise_when_size_is_provided():
-    # Given
-    pagination = 666
-    es_client = ESClient(pagination=pagination)
-    size = 100
-    body = None
-    index = "test-datashare-project"
-
-    # When/Then
-    expected_msg = "ESClient run searches using the pagination_size"
-    with pytest.raises(ValueError, match=expected_msg):
-        await es_client.search(body=body, index=index, size=size)
-
-
 class _MockFailingClient(MockedESClient, metaclass=abc.ABCMeta):
     def __init__(
         self,

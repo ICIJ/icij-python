@@ -221,6 +221,10 @@ if _has_pytest:
     async def often_retriable() -> str:
         pass
 
+    @APP.task
+    def case_test_task(snake_case_arg: str):
+        return snake_case_arg
+
     @pytest.fixture(scope="session")
     def test_async_app() -> AsyncApp:
         return AsyncApp.load(f"{__name__}.APP")
