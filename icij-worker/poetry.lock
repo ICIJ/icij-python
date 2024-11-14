@@ -338,7 +338,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.5.1"
+version = "0.5.3"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
@@ -350,6 +350,7 @@ neo4j = {version = "^5.0.0", optional = true}
 pydantic = "^1.10"
 
 [package.extras]
+elasticsearch = ["elasticsearch[async] (>=7.17.9,<8.0.0)", "tenacity (>=9.0.0,<10.0.0)"]
 fastapi = ["fastapi (>=0.99,<0.111)"]
 neo4j = ["neo4j (>=5.0.0,<6.0.0)"]
 
