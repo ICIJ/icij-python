@@ -196,7 +196,7 @@ class AsyncApp:
             t_name
             for t_name, t in self._registry.items()
             if self._routing_strategy.app_tasks_filter(
-                task_group=t.group.name, app_group=group
+                task_group=t.group, app_group_name=group
             )
         }
         discarded = set(self._registry) - kept

@@ -1,15 +1,20 @@
 # pylint: disable=redefined-outer-name
-from typing import List
+from typing import List, Optional
 
 import pytest
 
 from icij_worker import AsyncApp, RoutingStrategy
+from icij_worker.app import TaskGroup
 
 
 class DummyRouting(RoutingStrategy):
 
-    def app_tasks_filter(self, *, task_group: str, app_group: str) -> bool:
-        return task_group.endswith(app_group)
+    def app_tasks_filter(
+        self, *, task_group: Optional[TaskGroup], app_group_name: str
+    ) -> bool:
+        if task_group is None:
+            return False
+        return task_group.name.endswith(app_group_name)
 
 
 @pytest.fixture()

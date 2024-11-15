@@ -30,11 +30,15 @@ class RoutingStrategy:
     """Override this class to implement your own routing strategy between task groups
     and DBs, amqp queues and so on..."""
 
-    def app_tasks_filter(self, *, task_group: str, app_group: str) -> bool:
+    def app_tasks_filter(
+        self, *, task_group: Optional["TaskGroup"], app_group_name: str
+    ) -> bool:
         """Used to filter app tasks so that the app can be started with a restricted
         group. Useful when tasks from the same app must be run by different workers
         """
-        return task_group.startswith(app_group)
+        if task_group is None:
+            return False
+        return task_group.name.startswith(app_group_name)
 
     @classmethod
     @lru_cache
