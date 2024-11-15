@@ -1,6 +1,0 @@
-{
-  "type": "amqp",
-  "rabbitmq_host": "localhost",
-  "rabbitmq_user": "guest",
-  "rabbitmq_password": "guest"
-}
