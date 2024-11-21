@@ -641,35 +641,6 @@ async def test_worker_should_keep_working_on_fatal_error_in_task_codebase(
         await worker.work_once()
 
 
-async def test_worker_should_stop_working_on_fatal_error_in_worker_codebase(
-    mock_failing_worker: MockWorker,
-):
-    # Given
-    worker = mock_failing_worker
-    task_manager = MockManager(worker.app, worker.db_path)
-    created_at = datetime.now()
-    task = Task(
-        id="some-id",
-        name="fatal_error_task",
-        created_at=created_at,
-        state=TaskState.CREATED,
-    )
-    await task_manager.save_task(task)
-
-    # When/Then
-    await task_manager.enqueue(task)
-    with patch.object(worker, "_consume") as mocked_consume:
-
-        class _FatalError(Exception): ...
-
-        async def _fatal_error_during_consuming():
-            raise _FatalError("i'm fatal")
-
-        mocked_consume.side_effect = _fatal_error_during_consuming
-        with pytest.raises(_FatalError):
-            await worker.work_once()
-
-
 @pytest.mark.parametrize("mock_worker", [{"group": "short"}], indirect=["mock_worker"])
 async def test_worker_should_handle_worker_timeout(mock_worker: MockWorker):
     # Given
@@ -702,6 +673,21 @@ async def test_worker_should_handle_worker_timeout(mock_worker: MockWorker):
             error = errors[0].error
             assert error.name == WorkerTimeoutError.__name__
             t.cancel()
+
+
+async def test_worker_should_not_exit_loop_on_invalid_task(
+    mock_worker: MockWorker, monkeypatch
+):
+    # Given
+    worker = mock_worker
+
+    async def _failing_consume() -> Task:
+        raise RuntimeError("some consumption error")
+
+    monkeypatch.setattr(MockWorker, "_consume", _failing_consume)
+    # When
+    with fail_if_exception("failed to continue on consumption error"):
+        await worker.work_once()
 
 
 @pytest.mark.parametrize(
