@@ -100,7 +100,8 @@ class AMQPConfigMixin(ICIJModel):
     @cached_property
     def broker_url(self) -> str:
         amqp_userinfo = self.rabbitmq_user
-        amqp_userinfo += f":{self.rabbitmq_password}"
+        if self.rabbitmq_password:
+            amqp_userinfo += f":{self.rabbitmq_password}"
         if amqp_userinfo:
             amqp_userinfo += "@"
         amqp_authority = (
