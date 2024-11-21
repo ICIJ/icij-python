@@ -236,8 +236,9 @@ class Worker(
                         'Task(id="%s") recoverable error while publishing success',
                         current_id,
                     )
-        except TaskConsumptionError:
-            self.error("failed to deserialize incoming task, skipping...")
+        except TaskConsumptionError as e:
+            self.error("failed to deserialize incoming task: ", e.__cause__)
+            self.error("skipping...")
             # TODO: change this function an AsyncContentManager
             # We have to yield here, otherwise we get a
             # RuntimeError("generator didn't yield")
@@ -282,8 +283,9 @@ class Worker(
                         'Task(id="%s") recoverable error while publishing success',
                         current_id,
                     )
-        except TaskConsumptionError:
-            self.error("failed to deserialize incoming task, skipping...")
+        except TaskConsumptionError as e:
+            self.error("failed to deserialize incoming task: ", e.__cause__)
+            self.error("skipping...")
             # TODO: change this function an AsyncContentManager
             # We have to yield here, otherwise we get a
             # RuntimeError("generator didn't yield")
