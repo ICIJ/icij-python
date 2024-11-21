@@ -58,6 +58,9 @@ C = TypeVar("C", bound="WorkerConfig")
 WE = TypeVar("WE", bound=WorkerEvent)
 
 
+class TaskConsumptionError(RuntimeError): ...
+
+
 class Worker(
     RegistrableFromConfig,
     EventPublisher,
@@ -175,17 +178,26 @@ class Worker(
     @final
     async def _work_once(self):
         async with self.ack_cm:
+            if self._current is None:  # Consumption failed, skipping
+                return
             self._current = await task_wrapper(self, self._current)
 
     @final
     async def consume(self) -> Task:
-        task = await self._consume()
-        self.debug('Task(id="%s") locked', task.id)
-        async with self._current_lock:
-            self._current = task
-            progress = 0.0
-            update = {"progress": progress, "state": TaskState.RUNNING}
-            self._current = safe_copy(task, update=update)
+        try:
+            task = await self._consume()
+            self.debug('Task(id="%s") locked', task.id)
+            async with self._current_lock:
+                self._current = task
+        except Exception as e:
+            msg = (
+                "failed to consume incoming task probably due to an IO error"
+                " or deserialization error"
+            )
+            raise TaskConsumptionError(msg) from e
+        progress = 0.0
+        update = {"progress": progress, "state": TaskState.RUNNING}
+        self._current = safe_copy(task, update=update)
         event = ProgressEvent.from_task(self._current)
         await self.publish_event(event)
         return self._current
@@ -224,6 +236,12 @@ class Worker(
                         'Task(id="%s") recoverable error while publishing success',
                         current_id,
                     )
+        except TaskConsumptionError:
+            self.error("failed to deserialize incoming task, skipping...")
+            # TODO: change this function an AsyncContentManager
+            # We have to yield here, otherwise we get a
+            # RuntimeError("generator didn't yield")
+            yield
         except Exception as fatal_error:  # pylint: disable=broad-exception-caught
             async with self._current_lock, self._cancel_lock:
                 if self._current is not None:
@@ -231,9 +249,11 @@ class Worker(
                     # let's fail this task and keep working
                     await self._handle_error(fatal_error, fatal=True)
                     return
-            # The error was in the worker's code, something is wrong that won't change
-            # at the next task, let's make the worker crash
-            raise fatal_error
+            msg = (
+                f"current task is expected to be known when fatal error occur,"
+                f" otherwise a {TaskConsumptionError.__name__} is expected"
+            )
+            raise RuntimeError(msg) from fatal_error
 
     @final
     @asynccontextmanager
@@ -262,6 +282,12 @@ class Worker(
                         'Task(id="%s") recoverable error while publishing success',
                         current_id,
                     )
+        except TaskConsumptionError:
+            self.error("failed to deserialize incoming task, skipping...")
+            # TODO: change this function an AsyncContentManager
+            # We have to yield here, otherwise we get a
+            # RuntimeError("generator didn't yield")
+            yield
         except Exception as fatal_error:  # pylint: disable=broad-exception-caught
             async with self._current_lock, self._cancel_lock:
                 if self._current is not None:
@@ -269,9 +295,11 @@ class Worker(
                     # let's fail this task and keep working
                     await self._handle_error(fatal_error, fatal=True)
                     return
-            # The error was in the worker's code, something is wrong that won't change
-            # at the next task, let's make the worker crash
-            raise fatal_error
+            msg = (
+                f"current task is expected to be known when fatal error occur,"
+                f" otherwise a {TaskConsumptionError.__name__} is expected"
+            )
+            raise RuntimeError(msg) from fatal_error
 
     async def _handle_error(self, error: BaseException, fatal: bool):
         task = self._current
