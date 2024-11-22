@@ -239,7 +239,7 @@ class AMQPWorker(Worker, AMQPMixin):
     async def _ensure_can_consume(self, task: Task) -> bool:
         if task.name not in self._app.registry:
             msg = (
-                f'Task(id="%s") has unknown name "{task.name}" for worker. '
+                f'Task(id="{task.id}") has unknown name "{task.name}" for worker. '
                 f"Nacking it with requeue."
             )
             self.error(msg)
