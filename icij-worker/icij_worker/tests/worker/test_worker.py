@@ -681,7 +681,8 @@ async def test_worker_should_not_exit_loop_on_invalid_task(
     # Given
     worker = mock_worker
 
-    async def _failing_consume() -> Task:
+    async def _failing_consume(self) -> Task:
+        # pylint: disable=ignored-argument
         raise RuntimeError("some consumption error")
 
     monkeypatch.setattr(MockWorker, "_consume", _failing_consume)

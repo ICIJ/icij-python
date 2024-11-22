@@ -237,8 +237,7 @@ class Worker(
                         current_id,
                     )
         except TaskConsumptionError as e:
-            self.error("failed to deserialize incoming task: ", e.__cause__)
-            self.error("skipping...")
+            self._handle_task_consumption_error(e)
             # TODO: change this function an AsyncContentManager
             # We have to yield here, otherwise we get a
             # RuntimeError("generator didn't yield")
@@ -284,8 +283,7 @@ class Worker(
                         current_id,
                     )
         except TaskConsumptionError as e:
-            self.error("failed to deserialize incoming task: ", e.__cause__)
-            self.error("skipping...")
+            self._handle_task_consumption_error(e)
             # TODO: change this function an AsyncContentManager
             # We have to yield here, otherwise we get a
             # RuntimeError("generator didn't yield")
@@ -323,6 +321,14 @@ class Worker(
             else:
                 await self._acknowledge(self._current)
         self._clear_current()
+
+    def _handle_task_consumption_error(self, e: TaskConsumptionError):
+        cause = e.__cause__
+        error_with_trace = "".join(
+            traceback.format_exception(None, cause, cause.__traceback__)
+        )
+        self.error("failed to deserialize incoming task: %s", error_with_trace)
+        self.error("skipping...")
 
     async def _handle_cancel_event(self, cancel_event: CancelEvent):
         async with self.cancel_lock, self._current_lock:
