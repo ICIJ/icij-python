@@ -29,11 +29,13 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         reconnection_wait_s: float = 5.0,
         app_id: Optional[str] = None,
         connection: Optional[AbstractRobustConnection] = None,
+        is_qpid: bool = False,
     ):
         super().__init__(
             broker_url,
             connection_timeout_s=connection_timeout_s,
             reconnection_wait_s=reconnection_wait_s,
+            is_qpid=is_qpid,
         )
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -82,7 +84,7 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
             await self._exit_stack.enter_async_context(self._connection)
         self.debug("creating channel...")
         self._channel_ = await self._connection.channel(
-            publisher_confirms=True,
+            publisher_confirms=self._publisher_confirms,
             on_return_raises=False,
         )
         await self._exit_stack.enter_async_context(self._channel)

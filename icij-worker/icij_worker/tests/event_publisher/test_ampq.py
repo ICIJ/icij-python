@@ -1,16 +1,15 @@
+from datetime import datetime
+
 import pytest
 from aio_pika import ExchangeType, connect_robust
 from aiormq import ChannelNotFoundEntity
 
-from icij_worker import Task, ManagerEvent
-from icij_worker.event_publisher.amqp import (
-    AMQPPublisher,
-)
-from icij_worker.routing_strategy import Exchange, Routing
+from icij_worker import ManagerEvent, Task
+from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.objects import ProgressEvent
-from icij_worker.tests.conftest import (
-    TestableAMQPPublisher,
-)
+from icij_worker.routing_strategy import Exchange, Routing
+from icij_worker.tests.conftest import TestableAMQPPublisher
+from icij_worker.utils.amqp import RobustConnection
 
 _EVENT_ROUTING = Routing(
     exchange=Exchange(name="event-ex", type=ExchangeType.FANOUT),
@@ -38,7 +37,6 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
     publisher = TestableAMQPPublisher(
         broker_url=broker_url, connection_timeout_s=2, reconnection_wait_s=1
     )
-    from datetime import datetime
 
     event = ProgressEvent(task_id=task.id, progress=0.0, created_at=datetime.now())
 
@@ -47,8 +45,8 @@ async def test_publish_event(rabbit_mq: str, hello_world_task: Task):
         await publisher.publish_event(event)
 
     # Then
-    connection = await connect_robust(url=broker_url)
-    channel = await connection.channel()
+    connection = await connect_robust(url=broker_url, connection_class=RobustConnection)
+    channel = await connection.channel(publisher_confirms=False)
     queue = await channel.get_queue(publisher.event_queue)
     async with queue.iterator(timeout=2.0) as messages:
         async for message in messages:

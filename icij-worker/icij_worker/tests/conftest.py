@@ -419,6 +419,7 @@ class TestableAMQPPublisher(AMQPPublisher):
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
+        is_qpid: bool = False,
         app_id: Optional[str] = None,
     ):
         # declare and bind the queues
@@ -427,6 +428,7 @@ class TestableAMQPPublisher(AMQPPublisher):
             broker_url=broker_url,
             connection_timeout_s=connection_timeout_s,
             reconnection_wait_s=reconnection_wait_s,
+            is_qpid=is_qpid,
             app_id=app_id,
         )
         self._declare_and_bind = True
