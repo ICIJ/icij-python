@@ -236,6 +236,7 @@ class AMQPWorker(Worker, AMQPMixin):
             connection_timeout_s=config.connection_timeout_s,
             reconnection_wait_s=config.reconnection_wait_s,
             inactive_after_s=config.inactive_after_s,
+            is_qpid=config.rabbitmq_is_qpid,
             **extras,
         )
         return worker
