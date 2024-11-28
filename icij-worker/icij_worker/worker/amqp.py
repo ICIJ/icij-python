@@ -58,6 +58,7 @@ class AMQPWorker(Worker, AMQPMixin):
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         inactive_after_s: Optional[float] = None,
+        is_qpid: bool = False,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
     ):
@@ -74,6 +75,7 @@ class AMQPWorker(Worker, AMQPMixin):
             connection_timeout_s=connection_timeout_s,
             reconnection_wait_s=reconnection_wait_s,
             inactive_after_s=inactive_after_s,
+            is_qpid=is_qpid,
         )
         self._management_client = management_client
         cancel_evt_queue_name = f"{self.worker_evt_routing().queue_name}-{self._id}"
@@ -97,12 +99,13 @@ class AMQPWorker(Worker, AMQPMixin):
 
     async def _aenter__(self):
         await self._exit_stack.__aenter__()  # pylint: disable=unnecessary-dunder-call
-        await self._exit_stack.enter_async_context(self._management_client)
+        if not self._is_qpid:
+            await self._exit_stack.enter_async_context(self._management_client)
         self._publisher = self._create_publisher()
         await self._exit_stack.enter_async_context(self._publisher)
         self._connection_ = self._publisher.connection
         self._channel_ = await self._connection.channel(
-            publisher_confirms=True, on_return_raises=False
+            publisher_confirms=self._publisher_confirms, on_return_raises=False
         )
         await self._channel.set_qos(prefetch_count=1, global_=False)
         await self._exit_stack.enter_async_context(self._channel)
@@ -131,11 +134,12 @@ class AMQPWorker(Worker, AMQPMixin):
             AbstractAsyncContextManager, self._task_queue_iterator
         )
         await self._exit_stack.enter_async_context(self._task_queue_iterator)
-        task_group = self._app.task_group(self._group)
-        group_policy = amqp_task_group_policy(
-            self._task_routing, task_group, self._app.config.max_task_queue_size
-        )
-        await self._management_client.set_policy(group_policy)
+        if not self._is_qpid:
+            task_group = self._app.task_group(self._group)
+            group_policy = amqp_task_group_policy(
+                self._task_routing, task_group, self._app.config.max_task_queue_size
+            )
+            await self._management_client.set_policy(group_policy)
 
     async def _bind_worker_event_queue(self):
         self._worker_evt_queue_iterator, _, _ = await self._get_queue_iterator(

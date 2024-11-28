@@ -59,6 +59,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         inactive_after_s: Optional[float] = None,
+        is_qpid: bool = False,
     ):
         super().__init__(app)
         super(TaskManager, self).__init__(
@@ -66,6 +67,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             connection_timeout_s=connection_timeout_s,
             reconnection_wait_s=reconnection_wait_s,
             inactive_after_s=inactive_after_s,
+            is_qpid=is_qpid,
         )
         self._management_client = management_client
         self._storage = task_store
@@ -87,6 +89,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             broker_url=config.broker_url,
             connection_timeout_s=config.connection_timeout_s,
             reconnection_wait_s=config.reconnection_wait_s,
+            is_qpid=config.rabbitmq_is_qpid,
         )
         return task_manager
 
@@ -201,7 +204,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._exit_stack.enter_async_context(self._connection)
         logger.debug("creating channel...")
         self._channel_ = await self._connection.channel(
-            publisher_confirms=True, on_return_raises=False
+            publisher_confirms=self._publisher_confirms, on_return_raises=False
         )
         await self._exit_stack.enter_async_context(self._channel)
         await self._channel.set_qos(prefetch_count=1, global_=False)

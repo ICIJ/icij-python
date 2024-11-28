@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import deepcopy
@@ -8,6 +9,7 @@ from functools import cached_property, lru_cache
 from typing import Any, AsyncContextManager, Dict, List, Optional, Tuple, Type, cast
 from urllib import parse
 
+import aiormq
 from aio_pika import (
     DeliveryMode,
     Message as AioPikaMessage,
@@ -20,6 +22,8 @@ from aio_pika.abc import (
     AbstractRobustChannel,
     AbstractRobustConnection,
     ExchangeType,
+    TimeoutType,
+    UnderlayConnection,
 )
 from aio_pika.exceptions import ChannelPreconditionFailed
 from aiohttp import (
@@ -30,8 +34,11 @@ from aiohttp import (
 )
 from aiohttp.client import _RequestOptions
 from aiohttp.typedefs import StrOrURL
-from aiormq.abc import ConfirmationFrameType
+from aiormq import Connection as AiormqConnection
+from aiormq.abc import ArgumentsType, ConfirmationFrameType, URLorStr
+from mdurl import URL
 from pamqp.commands import Basic
+from pamqp.common import FieldTable
 from typing_extensions import Unpack
 
 from icij_common.pydantic_utils import ICIJModel, NoEnumModel
@@ -96,6 +103,7 @@ class AMQPConfigMixin(ICIJModel):
     rabbitmq_management_port: Optional[int] = 15672
     rabbitmq_user: Optional[str] = "guest"
     rabbitmq_vhost: Optional[str] = "%2F"
+    rabbitmq_is_qpid: bool = False
 
     @cached_property
     def broker_url(self) -> str:
@@ -146,11 +154,14 @@ class AMQPMixin:
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         inactive_after_s: float = None,
+        is_qpid: bool = False,
     ):
+        self._is_qpid = is_qpid
         self._broker_url = broker_url
         self._reconnection_wait_s = reconnection_wait_s
         self._connection_timeout_s = connection_timeout_s
         self._inactive_after_s = inactive_after_s
+        self._publisher_confirms = not is_qpid
         self._connection_: Optional[AbstractRobustConnection] = None
         self._exit_stack = AsyncExitStack()
 
@@ -170,7 +181,7 @@ class AMQPMixin:
             message, delivery_mode=delivery_mode, app_id=self._app_id
         )
         confirmation = await exchange.publish(message, routing_key, mandatory=mandatory)
-        if not isinstance(confirmation, Basic.Ack):
+        if not isinstance(confirmation, Basic.Ack) and self._publisher_confirms:
             msg = f"Failed to deliver {message.body}, received {confirmation}"
             raise RuntimeError(msg)
         return confirmation
@@ -297,11 +308,12 @@ class AMQPMixin:
             dlx_name = routing.dead_letter_routing.exchange.name
             dl_routing_key = routing.dead_letter_routing.routing_key
             # TODO: this could be passed through policy
-            update = {
-                "x-dead-letter-exchange": dlx_name,
-                "x-dead-letter-routing-key": dl_routing_key,
-            }
-            queue_args.update(update)
+            if not self._is_qpid:
+                update = {
+                    "x-dead-letter-exchange": dlx_name,
+                    "x-dead-letter-routing-key": dl_routing_key,
+                }
+                queue_args.update(update)
         if declare_queues:
             queue = await self._channel.declare_queue(
                 routing.queue_name, durable=durable_queues, arguments=queue_args
@@ -425,6 +437,50 @@ class RobustConnection(RobustConnection_):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+    async def connect(self, timeout: TimeoutType = None) -> None:
+        self.transport = await QpidUnderlayConnection.connect(
+            self.url,
+            self._on_connection_close,
+            timeout=timeout,
+            **self.kwargs,
+        )
+        await self._on_connected()
+
+
+class QpidUnderlayConnection(UnderlayConnection):
+    @classmethod
+    async def make_connection(
+        cls,
+        url: URL,
+        timeout: TimeoutType = None,
+        **kwargs: Any,
+    ) -> aiormq.abc.AbstractConnection:
+        connection: aiormq.abc.AbstractConnection = await asyncio.wait_for(
+            aiormq_qpid_connect(url, **kwargs), timeout=timeout
+        )
+        await connection.ready()
+        return connection
+
+
+async def aiormq_qpid_connect(
+    url: URLorStr,
+    *args: Any,
+    client_properties: Optional[FieldTable] = None,
+    **kwargs: Any,
+) -> QpidConnection:
+    connection = QpidConnection(url, *args, **kwargs)
+    await connection.connect(client_properties or {})
+    return connection
+
+
+class QpidConnection(AiormqConnection):
+    QPID_CAPABILITIES = {"publisher_confirms": False}
+
+    @property
+    def server_capabilities(self) -> ArgumentsType:
+        # QPid doesn't seem to expose server properties so we mock empty ones
+        return self.server_properties.get("capabilities", self.QPID_CAPABILITIES)
 
 
 def parse_consumer_timeout(exc: BaseException) -> Optional[WorkerTimeoutError]:

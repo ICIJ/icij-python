@@ -570,7 +570,7 @@ class _RouteCreator(AMQPMixin):
         )
         await self._exit_stack.enter_async_context(self._connection)
         self._channel_ = await self._connection.channel(
-            publisher_confirms=True, on_return_raises=False
+            publisher_confirms=self._publisher_confirms, on_return_raises=False
         )
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
