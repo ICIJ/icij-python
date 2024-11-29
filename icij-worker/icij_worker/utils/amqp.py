@@ -308,13 +308,14 @@ class AMQPMixin:
             dlx_name = routing.dead_letter_routing.exchange.name
             dl_routing_key = routing.dead_letter_routing.routing_key
             # TODO: this could be passed through policy
-            if not self._is_qpid:
-                update = {
-                    "x-dead-letter-exchange": dlx_name,
-                    "x-dead-letter-routing-key": dl_routing_key,
-                }
-                queue_args.update(update)
+            update = {
+                "x-dead-letter-exchange": dlx_name,
+                "x-dead-letter-routing-key": dl_routing_key,
+            }
+            queue_args.update(update)
         if declare_queues:
+            if self._is_qpid:
+                queue_args = dict()
             queue = await self._channel.declare_queue(
                 routing.queue_name, durable=durable_queues, arguments=queue_args
             )
