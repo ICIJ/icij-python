@@ -10,11 +10,11 @@ import pytest
 from aio_pika import (
     ExchangeType,
     Message as AMQPMessage,
-    RobustConnection,
     connect_robust,
 )
 from pydantic import Field
 
+from conftest import RABBITMQ_TEST_PASSWORD, RABBITMQ_TEST_USER
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import (
@@ -45,7 +45,7 @@ from icij_worker.tests.conftest import (
     TestableAMQPPublisher,
     get_queue_size,
 )
-from icij_worker.utils.amqp import AMQPManagementClient, AMQPMixin
+from icij_worker.utils.amqp import AMQPManagementClient, AMQPMixin, RobustConnection
 from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
 from icij_worker.worker.worker import WE
 
@@ -106,6 +106,7 @@ class TestableAMQPWorker(AMQPWorker):
             broker_url=self._broker_url,
             connection_timeout_s=self._connection_timeout_s,
             reconnection_wait_s=self._reconnection_wait_s,
+            is_qpid=self._is_qpid,
             app_id=self._app.name,
         )
 
@@ -120,8 +121,9 @@ def amqp_worker_config() -> TestableAMQPWorkerConfig:
         rabbitmq_port=RABBITMQ_TEST_PORT,
         rabbitmq_management_port=RABBITMQ_MANAGEMENT_PORT,
         rabbitmq_vhost=DEFAULT_VHOST,
-        rabbitmq_user="guest",
-        rabbitmq_password="guest",
+        rabbitmq_user=RABBITMQ_TEST_USER,
+        rabbitmq_password=RABBITMQ_TEST_PASSWORD,
+        rabbitmq_is_qpid=False,
     )
     return config
 
@@ -147,7 +149,7 @@ def amqp_worker(
 
 @pytest.fixture
 async def populate_tasks(rabbit_mq: str, request):
-    connection = await connect_robust(rabbit_mq)
+    connection = await connect_robust(rabbit_mq, connection_class=RobustConnection)
     routing_strategy = RoutingStrategy()
     group = getattr(request, "param", None)
     task_routing = routing_strategy.amqp_task_routing(group)
@@ -168,7 +170,7 @@ async def populate_tasks(rabbit_mq: str, request):
         ),
     ]
     async with connection:
-        channel = await connection.channel()
+        channel = await connection.channel(publisher_confirms=False)
         task_ex = await channel.declare_exchange(
             task_routing.exchange.name, durable=True
         )

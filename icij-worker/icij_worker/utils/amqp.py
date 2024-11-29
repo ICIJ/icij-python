@@ -272,8 +272,8 @@ class AMQPMixin:
             declare_queues=declare_queues,
             durable_queues=durable_queues,
         )
-        ex = await self._channel.get_exchange(routing.exchange.name, ensure=True)
-        queue = await self._channel.get_queue(routing.queue_name, ensure=True)
+        ex = await self._channel.get_exchange(routing.exchange.name, ensure=False)
+        queue = await self._channel.get_queue(routing.queue_name, ensure=False)
         kwargs = dict()
         if self._inactive_after_s is not None:
             kwargs["timeout"] = self._inactive_after_s
