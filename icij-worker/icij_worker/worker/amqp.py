@@ -224,6 +224,7 @@ class AMQPWorker(Worker, AMQPMixin):
             broker_url=self._broker_url,
             connection_timeout_s=self._reconnection_wait_s,
             reconnection_wait_s=self._reconnection_wait_s,
+            is_qpid=self._is_qpid,
             app_id=self._app.name,
         )
 
@@ -235,8 +236,8 @@ class AMQPWorker(Worker, AMQPMixin):
             broker_url=config.broker_url,
             connection_timeout_s=config.connection_timeout_s,
             reconnection_wait_s=config.reconnection_wait_s,
-            inactive_after_s=config.inactive_after_s,
             is_qpid=config.rabbitmq_is_qpid,
+            inactive_after_s=config.inactive_after_s,
             **extras,
         )
         return worker

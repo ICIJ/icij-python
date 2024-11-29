@@ -27,9 +27,9 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
+        is_qpid: bool = False,
         app_id: Optional[str] = None,
         connection: Optional[AbstractRobustConnection] = None,
-        is_qpid: bool = False,
     ):
         super().__init__(
             broker_url,
