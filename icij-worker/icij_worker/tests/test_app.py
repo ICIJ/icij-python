@@ -3,6 +3,7 @@ from typing import List, Optional
 
 import pytest
 
+from icij_common.test_utils import fail_if_exception
 from icij_worker import AsyncApp, RoutingStrategy
 from icij_worker.app import TaskGroup
 
@@ -46,3 +47,19 @@ def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: List[str
 
     # Then
     assert app.registered_keys == expected_keys
+
+
+def test_validate_group_name_should_not_raise():
+    # Given
+    app = AsyncApp("some-app")
+    group = TaskGroup(name="some-group")
+    with fail_if_exception("failed to register 2 tasks with the same group"):
+        # When
+        @app.task(group=group)
+        def empty_a():
+            return None
+
+        # Then
+        @app.task(group=group)
+        def empty_b():
+            return None

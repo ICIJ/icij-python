@@ -175,7 +175,7 @@ class AsyncApp:
         if task.group is None:
             return
         existing = self._groups.get(task.group.name)
-        if existing is not None and existing.name != task.group:
+        if existing is not None and existing.name != task.group.name:
             msg = (
                 f"invalid task group {task.group}, it has the same name as registered "
                 f"group {existing}, use {existing} directly or specify a different name"
