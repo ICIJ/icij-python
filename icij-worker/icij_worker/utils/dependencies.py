@@ -35,7 +35,7 @@ async def run_deps(
         for name, enter_fn, exit_fn in dependencies:
             if enter_fn is not None:
                 if name is not None:
-                    logger.debug("applying: %s", name)
+                    logger.debug("Setup up dependency: %s", name)
                 if inspect.iscoroutinefunction(enter_fn):
                     await enter_fn(**kwargs)
                 else:
