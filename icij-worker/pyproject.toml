@@ -17,7 +17,7 @@ where = ["icij_worker/task_storage/postgres/db/*.sql", "icij_worker/task_storage
 
 [tool.black]
 line-length = 88
-target-version = ["py39"]
+target-version = ["py310"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -33,7 +33,7 @@ icij-worker = "icij_worker.__main__:cli_app"
 [tool.poetry.dependencies]
 python = "^3.10"
 icij_common = "^0.5.1"
-typer = { extras = ["all"], version = "^0.12.3" }
+typer = { extras = ["all"], version = "^0.13.1" }
 typing-extensions = "^4.12.2"
 
 # amqp
