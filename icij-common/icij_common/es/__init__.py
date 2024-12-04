@@ -10,7 +10,9 @@ from typing import (
     Collection,
     Dict,
     List,
+    Mapping,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -28,6 +30,7 @@ from tenacity import (
 
 logger = logging.getLogger(__name__)
 _ES_CLIENTS: Dict[str, AsyncElasticsearch] = dict()
+ESSort = Union[Sequence[Union[str, Mapping[str, Any]]], str, Mapping[str, Any], None]
 
 PointInTime = Dict[str, Any]
 
@@ -143,7 +146,7 @@ class ESClient(AsyncElasticsearch):
         )
 
     async def poll_search_pages(
-        self, body: Dict, sort: Union[List[str], Tuple[str, ...], None] = None, **kwargs
+        self, body: Dict, sort: ESSort = None, **kwargs
     ) -> AsyncGenerator[Dict[str, Any], None]:
         retrying = self._async_retrying()
         if sort is None:
