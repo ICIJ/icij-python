@@ -25,7 +25,7 @@ log_cli = true
 log_cli_level = "INFO"
 log_cli_format = "[%(levelname)s][%(asctime)s.%(msecs)03d][%(name)s]: %(message)s"
 log_cli_date_format = "%H:%M:%S"
-
+markers = [ "pull" ]
 
 [tool.poetry.scripts]
 icij-worker = "icij_worker.__main__:cli_app"
