@@ -243,6 +243,10 @@ def and_query(*queries: Dict) -> Dict:
     return bool_query({MUST: list(queries)})
 
 
+def or_query(*queries: Dict) -> Dict:
+    return bool_query({SHOULD: list(queries)})
+
+
 def must(*queries: Dict) -> Dict:
     return {MUST: list(queries)}
 
