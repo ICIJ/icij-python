@@ -1,11 +1,11 @@
 import uuid
 from typing import Any, Dict, Optional
 
-from icij_worker import Task
+from icij_worker import Task, TaskState
 from icij_worker.utils.http import AiohttpClient
 
 
-class TaskClient(AiohttpClient):
+class DatashareTaskClient(AiohttpClient):
     def __init__(self, datashare_url: str):
         super().__init__(datashare_url)
 
@@ -26,6 +26,29 @@ class TaskClient(AiohttpClient):
             pass
         return task
 
+    async def get_task(self, id_: str) -> Task:
+        url = f"/api/task/{id_}"
+        async with self._get(url) as res:
+            task = await res.json()
+        # TODO: align Java on Python here... it's not a good idea to store results
+        #  inside tasks since result can be quite large and we may want to get the task
+        #  metadata without having to deal with the large task results...
+        task.pop("result")
+        task = Task(**task)
+        return task
+
+    async def get_task_state(self, id_: str) -> TaskState:
+        return (await self.get_task(id_)).state
+
+    async def get_task_result(self, id_: str) -> object:
+        url = f"/api/task/{id_}"
+        async with self._get(url) as res:
+            task = await res.json()
+        return task["result"]
+
 
 def _generate_task_id(task_name: str) -> str:
     return f"{task_name}-{uuid.uuid4()}"
+
+
+TaskClient = DatashareTaskClient
