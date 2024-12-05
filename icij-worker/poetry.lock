@@ -355,7 +355,7 @@ files = [
 
 [[package]]
 name = "icij-common"
-version = "0.5.4"
+version = "0.5.5"
 description = "Common utils for ICIJ libs"
 optional = false
 python-versions = "^3.9"
