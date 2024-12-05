@@ -251,6 +251,9 @@ def must_no(*queries: Dict) -> Dict:
     return {MUST: list(queries)}
 
 
+must_not = must_no
+
+
 def with_sort(*, query: Dict, sort: Dict) -> Dict:
     if SORT not in query:
         query[SORT] = []
