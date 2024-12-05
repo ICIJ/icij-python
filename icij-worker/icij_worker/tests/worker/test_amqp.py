@@ -14,7 +14,6 @@ from aio_pika import (
 )
 from pydantic import Field
 
-from conftest import RABBITMQ_TEST_PASSWORD, RABBITMQ_TEST_USER
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import (
@@ -41,7 +40,9 @@ from icij_worker.tests.conftest import (
     DEFAULT_VHOST,
     RABBITMQ_MANAGEMENT_PORT,
     RABBITMQ_TEST_HOST,
+    RABBITMQ_TEST_PASSWORD,
     RABBITMQ_TEST_PORT,
+    RABBITMQ_TEST_USER,
     TestableAMQPPublisher,
     get_queue_size,
 )

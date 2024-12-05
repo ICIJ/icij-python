@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from enum import Enum, unique
 from functools import cached_property, lru_cache
-from typing import Any, AsyncContextManager, Dict, List, Optional, Tuple, Type, cast
+from typing import Any, Dict, List, Optional, Tuple, Type, cast
 from urllib import parse
 
 import aiormq
@@ -26,20 +26,12 @@ from aio_pika.abc import (
     UnderlayConnection,
 )
 from aio_pika.exceptions import ChannelPreconditionFailed
-from aiohttp import (
-    BasicAuth,
-    ClientResponse,
-    ClientResponseError,
-    ClientSession,
-)
-from aiohttp.client import _RequestOptions
-from aiohttp.typedefs import StrOrURL
+from aiohttp import BasicAuth
 from aiormq import Connection as AiormqConnection
 from aiormq.abc import ArgumentsType, ConfirmationFrameType, URLorStr
 from mdurl import URL
 from pamqp.commands import Basic
 from pamqp.common import FieldTable
-from typing_extensions import Unpack
 
 from icij_common.pydantic_utils import ICIJModel, NoEnumModel
 from icij_worker import Message
@@ -65,6 +57,7 @@ from icij_worker.constants import (
 from icij_worker.exceptions import WorkerTimeoutError
 from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
 from icij_worker.task_storage.postgres.postgres import logger
+from icij_worker.utils.http import AiohttpClient
 
 _DELIVERY_ACK_TIMEOUT_RE = re.compile(
     r"delivery acknowledgement on channel .+ timed out", re.MULTILINE
@@ -324,7 +317,7 @@ class AMQPMixin:
         await queue.bind(x, routing_key=routing.routing_key)
 
 
-class AMQPManagementClient(AsyncContextManager):
+class AMQPManagementClient(AiohttpClient):
     def __init__(
         self,
         rabbitmq_management_url: str,
@@ -332,38 +325,8 @@ class AMQPManagementClient(AsyncContextManager):
         rabbitmq_vhost: str,
         rabbitmq_auth: BasicAuth,
     ):
-        self._management_url = rabbitmq_management_url
+        super().__init__(rabbitmq_management_url, rabbitmq_auth)
         self._vhost = rabbitmq_vhost
-        self._auth = rabbitmq_auth
-        self._session: Optional[ClientSession]
-
-    async def __aenter__(self):
-        self._session = ClientSession(self._management_url, auth=self._auth)
-        await self._session.__aenter__()
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self._session.__aexit__(exc_type, exc_value, traceback)
-
-    @asynccontextmanager
-    async def _put(self, url: StrOrURL, *, data: Any = None, **kwargs: Any):
-        async with self._session.put(url, data=data, **kwargs) as res:
-            _raise_for_status(res)
-            yield res
-
-    @asynccontextmanager
-    async def _get(self, url: StrOrURL, *, allow_redirects: bool = True, **kwargs: Any):
-        async with self._session.get(
-            url, allow_redirects=allow_redirects, **kwargs
-        ) as res:
-            _raise_for_status(res)
-            yield res
-
-    @asynccontextmanager
-    async def _delete(self, url: StrOrURL, **kwargs: Unpack[_RequestOptions]):
-        async with self._session.delete(url, **kwargs) as res:
-            _raise_for_status(res)
-            yield res
 
     async def set_policy(self, policy: AMQPPolicy):
         url = f"/api/policies/{self._vhost}/{parse.quote(policy.name)}"
@@ -408,15 +371,6 @@ def amqp_task_group_policy(
         apply_to=ApplyTo.QUEUES,
         priority=AMQP_TASK_QUEUE_PRIORITY,
     )
-
-
-def _raise_for_status(res: ClientResponse):
-    try:
-        res.raise_for_status()
-    except ClientResponseError as e:
-        msg = "request to %s, failed with reason %s"
-        logger.exception(msg, res.request_info, res.reason)
-        raise e
 
 
 class RobustChannel(RobustChannel_):
