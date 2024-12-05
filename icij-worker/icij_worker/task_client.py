@@ -16,7 +16,7 @@ class TaskClient(AiohttpClient):
         *,
         id_: Optional[str] = None,
         group: Optional[str] = None,
-    ):
+    ) -> Task:
         if id_ is None:
             id_ = _generate_task_id(name)
         task = Task.create(task_id=id_, task_name=name, args=args)
@@ -24,6 +24,7 @@ class TaskClient(AiohttpClient):
         data = {"task": task, "group": group}
         async with self._put(url, json=data):
             pass
+        return task
 
 
 def _generate_task_id(task_name: str) -> str:
