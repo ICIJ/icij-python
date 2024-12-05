@@ -51,11 +51,15 @@ LIMIT = "limit"
 LTE = "lte"
 MATCH_ALL = "match_all"
 MUST = "must"
+MUST_NOT = "must_not"
+OP_TYPE_ = "_op_type"
 PIT = "pit"
 QUERY = "query"
 RANGE = "range"
+ROUTING_ = "_routing"
 SOURCE = "_source"
 SCORE_ = "_score"
+SCRIPT = "script"
 SCROLL = "scroll"
 SCROLL_ID = "scroll_id"
 SCROLL_ID_ = "_scroll_id"
@@ -66,6 +70,7 @@ SORT = "sort"
 SHOULD = "should"
 TERM = "term"
 TOTAL = "total"
+UPDATE = "update"
 VALUE = "value"
 VALUES = "values"
 
@@ -73,6 +78,7 @@ ES_DOCUMENT_TYPE = "Document"
 ES_NAMED_ENTITY_TYPE = "NamedEntity"
 
 DOC_CONTENT = "content"
+DOC_CONTENT_TRANSLATED = "content_translated"
 DOC_CONTENT_LENGTH = "contentLength"
 DOC_CONTENT_TYPE = "contentType"
 DOC_CREATED_AT = "createdAt"
@@ -229,8 +235,20 @@ class retry_if_error_code(retry_base):  # pylint: disable=invalid-name
         return False
 
 
+def bool_query(query: Dict) -> Dict:
+    return {QUERY: {BOOL: query}}
+
+
 def and_query(*queries: Dict) -> Dict:
-    return {QUERY: {BOOL: {MUST: list(queries)}}}
+    return bool_query({MUST: list(queries)})
+
+
+def must(*queries: Dict) -> Dict:
+    return {MUST: list(queries)}
+
+
+def must_no(*queries: Dict) -> Dict:
+    return {MUST: list(queries)}
 
 
 def with_sort(*, query: Dict, sort: Dict) -> Dict:
@@ -346,3 +364,7 @@ def mget_doc_body(
         ]
     }
     return body
+
+
+def bulk_action(*, op_type: str, index: str, routing: str, id_: str, **kwargs) -> dict:
+    return {OP_TYPE_: op_type, INDEX_: index, ROUTING_: routing, ID_: id_, **kwargs}
