@@ -5,6 +5,8 @@ from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import Task, TaskState
 from icij_worker.utils.http import AiohttpClient
 
+# TODO: we shouldn't have DS dependent class in here, move this util in its own repo
+
 # TODO: maxRetries is not supported by java, it's automatically set to 3
 _TASK_UNSUPPORTED = {"max_retries"}
 
@@ -27,7 +29,9 @@ class DatashareTaskClient(AiohttpClient):
         task = jsonable_encoder(task, exclude=_TASK_UNSUPPORTED, exclude_unset=True)
         task.pop("createdAt")
         url = f"/api/task/{id_}"
-        data = {"task": task, "group": group}
+        # TODO: we shouldn't have to write stuf like org.icij.datashare.asynctasks.Group
+        #  here
+        data = {"task": task, "group": _make_java_group(group)}
         async with self._put(url, json=data) as res:
             task = await res.json()
         task = Task(**task)
@@ -85,4 +89,5 @@ def _ds_to_icij_worker_task(task: dict) -> dict:
     return task
 
 
-TaskClient = DatashareTaskClient
+def _make_java_group(group: str) -> dict:
+    return {"@type": "org.icij.datashare.asynctasks.Group", "id": group}

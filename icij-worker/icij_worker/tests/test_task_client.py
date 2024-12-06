@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from aiohttp.typedefs import StrOrURL
 
 from icij_worker import Task, TaskState
-from icij_worker.task_client import DatashareTaskClient
+from icij_worker.ds_task_client import DatashareTaskClient
 
 
 async def test_task_client_create_task(monkeypatch):
