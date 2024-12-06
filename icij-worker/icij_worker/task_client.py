@@ -40,9 +40,20 @@ class DatashareTaskClient(AiohttpClient):
         # TODO: align Java on Python here... it's not a good idea to store results
         #  inside tasks since result can be quite large and we may want to get the task
         #  metadata without having to deal with the large task results...
-        task.pop("result", None)
+        task = _ds_to_icij_worker_task(task)
         task = Task(**task)
         return task
+
+    async def get_tasks(self) -> list[Task]:
+        url = "/api/task/all"
+        async with self._get(url) as res:
+            tasks = await res.json()
+        # TODO: align Java on Python here... it's not a good idea to store results
+        #  inside tasks since result can be quite large and we may want to get the task
+        #  metadata without having to deal with the large task results...
+        tasks = (_ds_to_icij_worker_task(t) for t in tasks)
+        tasks = [Task(**task) for task in tasks]
+        return tasks
 
     async def get_task_state(self, id_: str) -> TaskState:
         return (await self.get_task(id_)).state
@@ -55,9 +66,23 @@ class DatashareTaskClient(AiohttpClient):
             task = await res.json()
         return task.get("result")
 
+    async def delete(self, id_: str):
+        url = f"/api/task/{id_}"
+        async with self._delete(url):
+            pass
+
+    async def delete_all_tasks(self):
+        for t in await self.get_tasks():
+            await self.delete(t.id)
+
 
 def _generate_task_id(task_name: str) -> str:
     return f"{task_name}-{uuid.uuid4()}"
+
+
+def _ds_to_icij_worker_task(task: dict) -> dict:
+    task.pop("result", None)
+    return task
 
 
 TaskClient = DatashareTaskClient
