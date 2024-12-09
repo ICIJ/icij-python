@@ -10,16 +10,17 @@ from icij_worker import Task, TaskState
 from icij_worker.ds_task_client import DatashareTaskClient
 
 
-async def test_task_client_create_task(monkeypatch):
+async def test_ds_task_client_create_task(monkeypatch):
     # Given
     datashare_url = "http://some-url"
     task_name = "hello"
     task_id = f"{task_name}-{uuid.uuid4()}"
     args = {"greeted": "world"}
+    group = "PYTHON"
 
     @asynccontextmanager
     async def _put_and_assert(_, url: StrOrURL, *, data: Any = None, **kwargs: Any):
-        assert url == f"/api/task/{task_id}"
+        assert url == f"/api/task/{task_id}?group={group}"
         expected_task = {
             "@type": "Task",
             "id": task_id,
@@ -27,14 +28,13 @@ async def test_task_client_create_task(monkeypatch):
             "name": "hello",
             "args": {"greeted": "world"},
         }
-        expected_data = {"task": expected_task, "group": "PYTHON"}
+        expected_data = expected_task
         assert data is None
         json_data = kwargs.pop("json")
         assert not kwargs
         assert json_data == expected_data
-        expected_task["createdAt"] = datetime.now()
         mocked_res = AsyncMock()
-        mocked_res.json.return_value = expected_task
+        mocked_res.json.return_value = {"taskId": task_id}
         yield mocked_res
 
     monkeypatch.setattr("icij_worker.utils.http.AiohttpClient._put", _put_and_assert)
@@ -42,13 +42,11 @@ async def test_task_client_create_task(monkeypatch):
     task_client = DatashareTaskClient(datashare_url)
     async with task_client:
         # When
-        task = await task_client.create_task(
-            task_name, args, id_=task_id, group="PYTHON"
-        )
-    assert isinstance(task, Task)
+        t_id = await task_client.create_task(task_name, args, id_=task_id, group=group)
+    assert t_id == task_id
 
 
-async def test_task_client_get_task(monkeypatch):
+async def test_ds_task_client_get_task(monkeypatch):
     # Given
     datashare_url = "http://some-url"
     task_name = "hello"
@@ -82,7 +80,7 @@ async def test_task_client_get_task(monkeypatch):
     assert isinstance(task, Task)
 
 
-async def test_task_client_get_task_state(monkeypatch):
+async def test_ds_task_client_get_task_state(monkeypatch):
     # Given
     datashare_url = "http://some-url"
     task_name = "hello"
@@ -118,7 +116,7 @@ async def test_task_client_get_task_state(monkeypatch):
     assert res == TaskState.DONE
 
 
-async def test_task_client_get_task_result(monkeypatch):
+async def test_ds_task_client_get_task_result(monkeypatch):
     # Given
     datashare_url = "http://some-url"
     task_name = "hello"

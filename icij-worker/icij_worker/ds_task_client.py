@@ -22,20 +22,20 @@ class DatashareTaskClient(AiohttpClient):
         *,
         id_: Optional[str] = None,
         group: Optional[str] = None,
-    ) -> Task:
+    ) -> str:
         if id_ is None:
             id_ = _generate_task_id(name)
         task = Task.create(task_id=id_, task_name=name, args=args)
         task = jsonable_encoder(task, exclude=_TASK_UNSUPPORTED, exclude_unset=True)
         task.pop("createdAt")
         url = f"/api/task/{id_}"
-        # TODO: we shouldn't have to write stuf like org.icij.datashare.asynctasks.Group
-        #  here
-        data = {"task": task, "group": _make_java_group(group)}
-        async with self._put(url, json=data) as res:
-            task = await res.json()
-        task = Task(**task)
-        return task
+        if group is not None:
+            if not isinstance(group, str):
+                raise TypeError(f"expected group to be a string found {group}")
+            url += f"?group={group}"
+        async with self._put(url, json=task) as res:
+            task_res = await res.json()
+        return task_res["taskId"]
 
     async def get_task(self, id_: str) -> Task:
         url = f"/api/task/{id_}"
@@ -62,7 +62,7 @@ class DatashareTaskClient(AiohttpClient):
     async def get_task_state(self, id_: str) -> TaskState:
         return (await self.get_task(id_)).state
 
-    async def get_task_result(self, id_: str) -> object:
+    async def get_task_result(self, id_: str) -> Any:
         # TODO: we probably want to use /api/task/:id/results instead but it's
         #  restricted, we might need an API key or some auth
         url = f"/api/task/{id_}"
@@ -84,10 +84,10 @@ def _generate_task_id(task_name: str) -> str:
     return f"{task_name}-{uuid.uuid4()}"
 
 
+_JAVA_TASK_ATTRIBUTES = ["result", "error"]
+
+
 def _ds_to_icij_worker_task(task: dict) -> dict:
-    task.pop("result", None)
+    for k in _JAVA_TASK_ATTRIBUTES:
+        task.pop(k, None)
     return task
-
-
-def _make_java_group(group: str) -> dict:
-    return {"@type": "org.icij.datashare.asynctasks.Group", "id": group}

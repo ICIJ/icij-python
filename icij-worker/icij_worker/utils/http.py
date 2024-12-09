@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from typing import Any, AsyncContextManager, Optional
 
 from aiohttp import BasicAuth, ClientResponse, ClientResponseError, ClientSession
@@ -11,10 +12,18 @@ logger = logging.getLogger(__name__)
 
 
 class AiohttpClient(AsyncContextManager):
-    def __init__(self, base_url: str, auth: Optional[BasicAuth] = None):
+    def __init__(
+        self,
+        base_url: str,
+        auth: Optional[BasicAuth] = None,
+        headers: dict | None = None,
+    ):
         self._base_url = base_url
         self._auth = auth
         self._session: Optional[ClientSession] = None
+        if headers is None:
+            headers = dict()
+        self._headers = headers
 
     async def __aenter__(self):
         self._session = ClientSession(self._base_url, auth=self._auth)
@@ -26,21 +35,27 @@ class AiohttpClient(AsyncContextManager):
 
     @asynccontextmanager
     async def _put(self, url: StrOrURL, *, data: Any = None, **kwargs: Any):
-        async with self._session.put(url, data=data, **kwargs) as res:
+        headers = deepcopy(self._headers)
+        headers.update(kwargs.pop("headers", dict()))
+        async with self._session.put(url, data=data, headers=headers, **kwargs) as res:
             _raise_for_status(res)
             yield res
 
     @asynccontextmanager
     async def _get(self, url: StrOrURL, *, allow_redirects: bool = True, **kwargs: Any):
+        headers = deepcopy(self._headers)
+        headers.update(kwargs.pop("headers", dict()))
         async with self._session.get(
-            url, allow_redirects=allow_redirects, **kwargs
+            url, headers=headers, allow_redirects=allow_redirects, **kwargs
         ) as res:
             _raise_for_status(res)
             yield res
 
     @asynccontextmanager
     async def _delete(self, url: StrOrURL, **kwargs: Unpack[_RequestOptions]):
-        async with self._session.delete(url, **kwargs) as res:
+        headers = deepcopy(self._headers)
+        headers.update(kwargs.pop("headers", dict()))
+        async with self._session.delete(url, headers=headers, **kwargs) as res:
             _raise_for_status(res)
             yield res
 
