@@ -39,6 +39,7 @@ BOOL = "bool"
 COUNT = "count"
 DESC = "desc"
 DOC_TYPE = "_doc"
+DOC_ = "_doc"
 DOCS = "docs"
 FUNCTION_SCORE = "function_score"
 HITS = "hits"
@@ -156,7 +157,7 @@ class ESClient(AsyncElasticsearch):
     ) -> AsyncGenerator[Dict[str, Any], None]:
         retrying = self._async_retrying()
         if sort is None:
-            sort = self.default_sort()
+            sort = self.default_sort(**kwargs)
         res = await retrying(self.search, sort=sort, body=body, **kwargs)
         kwargs = deepcopy(kwargs)
         yield res
@@ -209,8 +210,10 @@ class ESClient(AsyncElasticsearch):
             **kwargs,
         )
 
-    def default_sort(self) -> str:
-        return f"{SHARD_DOC_}:{ASC}"
+    def default_sort(self, **kwargs) -> str:
+        if PIT in kwargs:
+            return f"{SHARD_DOC_}:{ASC}"
+        return f"{DOC_}:{ASC}"
 
     async def _close_pit(self, pit_id: str):
         await self.close_point_in_time(body={ID: pit_id})
