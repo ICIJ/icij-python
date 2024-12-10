@@ -255,7 +255,7 @@ def must(*queries: Dict) -> Dict:
 
 
 def must_no(*queries: Dict) -> Dict:
-    return {MUST: list(queries)}
+    return {MUST_NOT: list(queries)}
 
 
 must_not = must_no
