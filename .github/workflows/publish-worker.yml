@@ -15,7 +15,7 @@ jobs:
       - name: Setup Python project
         uses: actions/setup-python@v5
         with:
-          python-version: 3.10
+          python-version: "3.10"
           cache: poetry
       - name: Install Python project
         run: cd icij-worker && poetry install --with dev --sync
