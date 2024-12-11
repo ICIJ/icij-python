@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 
 from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import Task, TaskState
+from icij_worker.exceptions import UnknownTask
 from icij_worker.utils.http import AiohttpClient
 
 # TODO: we shouldn't have DS dependent class in here, move this util in its own repo
@@ -41,6 +42,8 @@ class DatashareTaskClient(AiohttpClient):
         url = f"/api/task/{id_}"
         async with self._get(url) as res:
             task = await res.json()
+        if task is None:
+            raise UnknownTask(id_)
         # TODO: align Java on Python here... it's not a good idea to store results
         #  inside tasks since result can be quite large and we may want to get the task
         #  metadata without having to deal with the large task results...
@@ -68,7 +71,16 @@ class DatashareTaskClient(AiohttpClient):
         url = f"/api/task/{id_}"
         async with self._get(url) as res:
             task = await res.json()
-        return task.get("result")
+        if task is None:
+            raise UnknownTask(id_)
+        if "result" not in task:
+            msg = (
+                f"task {id_} doesn't have a result yet, "
+                f"it's probably not {TaskState.DONE}"
+            )
+            raise ValueError(msg)
+        task_res = task["result"]
+        return task_res
 
     async def delete(self, id_: str):
         url = f"/api/task/{id_}"
