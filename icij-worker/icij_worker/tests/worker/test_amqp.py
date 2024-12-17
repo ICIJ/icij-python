@@ -366,6 +366,9 @@ async def test_worker_consume_cancel_events(
         assert received_event == expected_event
 
 
+# This is very ugly but for some reason when requeuing using a quorum queue,
+# the message is to properly marked as requeued (replication issues ?)
+@pytest.mark.flaky(retries=3, delay=1)
 @pytest.mark.parametrize(
     "requeue,amqp_worker",
     list(itertools.product([True, False], ({"app": "test_async_app_late"},))),

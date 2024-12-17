@@ -11,7 +11,7 @@ from aiormq import DeliveryError
 from pydantic import Field
 
 from icij_worker.app import AsyncApp
-from icij_worker.exceptions import TaskQueueIsFull
+from icij_worker.exceptions import MessageDeserializationError, TaskQueueIsFull
 from icij_worker.objects import (
     AsyncBackend,
     CancelEvent,
@@ -148,8 +148,13 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def _consume(self) -> ManagerEvent:
         # pylint: disable=unnecessary-dunder-call
         msg = await self._manager_messages_it.__anext__()
+        try:
+            message = cast(ManagerEvent, Message.parse_raw(msg.body))
+        except Exception as e:
+            msg = f"invalid manager event body {msg.body}"
+            raise MessageDeserializationError(msg) from e
         await msg.ack()
-        return cast(ManagerEvent, Message.parse_raw(msg.body))
+        return message
 
     async def _enqueue(self, task: Task):
         group = await self._storage.get_task_group(task.id)

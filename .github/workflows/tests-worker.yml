@@ -52,7 +52,7 @@ jobs:
           - 7475:7474
           - 7688:7687
       test-rabbit-mq:
-        image: rabbitmq:3.12.0-management
+        image: rabbitmq:3.13.7-management
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 2s

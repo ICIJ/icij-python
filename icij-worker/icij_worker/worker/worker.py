@@ -33,6 +33,7 @@ from icij_worker.app import RegisteredTask, supports_progress
 from icij_worker.event_publisher.event_publisher import EventPublisher
 from icij_worker.exceptions import (
     MaxRetriesExceeded,
+    MessageDeserializationError,
     RecoverableError,
     TaskAlreadyCancelled,
     TaskAlreadyReserved,
@@ -56,9 +57,6 @@ logger = logging.getLogger(__name__)
 
 C = TypeVar("C", bound="WorkerConfig")
 WE = TypeVar("WE", bound=WorkerEvent)
-
-
-class TaskConsumptionError(RuntimeError): ...
 
 
 class Worker(
@@ -184,17 +182,10 @@ class Worker(
 
     @final
     async def consume(self) -> Task:
-        try:
-            task = await self._consume()
-            self.debug('Task(id="%s") locked', task.id)
-            async with self._current_lock:
-                self._current = task
-        except Exception as e:
-            msg = (
-                "failed to consume incoming task probably due to an IO error"
-                " or deserialization error"
-            )
-            raise TaskConsumptionError(msg) from e
+        task = await self._consume()
+        self.debug('Task(id="%s") locked', task.id)
+        async with self._current_lock:
+            self._current = task
         progress = 0.0
         update = {"progress": progress, "state": TaskState.RUNNING}
         self._current = safe_copy(task, update=update)
@@ -236,8 +227,8 @@ class Worker(
                         'Task(id="%s") recoverable error while publishing success',
                         current_id,
                     )
-        except TaskConsumptionError as e:
-            self._handle_task_consumption_error(e)
+        except MessageDeserializationError as e:
+            self._handle_deser_consumption_error(e)
             # TODO: change this function an AsyncContentManager
             # We have to yield here, otherwise we get a
             # RuntimeError("generator didn't yield")
@@ -251,7 +242,7 @@ class Worker(
                     return
             msg = (
                 f"current task is expected to be known when fatal error occur,"
-                f" otherwise a {TaskConsumptionError.__name__} is expected"
+                f" otherwise a {MessageDeserializationError.__name__} is expected"
             )
             raise RuntimeError(msg) from fatal_error
 
@@ -282,8 +273,8 @@ class Worker(
                         'Task(id="%s") recoverable error while publishing success',
                         current_id,
                     )
-        except TaskConsumptionError as e:
-            self._handle_task_consumption_error(e)
+        except MessageDeserializationError as e:
+            self._handle_deser_consumption_error(e)
             # TODO: change this function an AsyncContentManager
             # We have to yield here, otherwise we get a
             # RuntimeError("generator didn't yield")
@@ -297,7 +288,7 @@ class Worker(
                     return
             msg = (
                 f"current task is expected to be known when fatal error occur,"
-                f" otherwise a {TaskConsumptionError.__name__} is expected"
+                f" otherwise a {MessageDeserializationError.__name__} is expected"
             )
             raise RuntimeError(msg) from fatal_error
 
@@ -322,11 +313,9 @@ class Worker(
                 await self._acknowledge(self._current)
         self._clear_current()
 
-    def _handle_task_consumption_error(self, e: TaskConsumptionError):
+    def _handle_deser_consumption_error(self, e: MessageDeserializationError):
         cause = e.__cause__
-        error_with_trace = "".join(
-            traceback.format_exception(None, cause, cause.__traceback__)
-        )
+        error_with_trace = _format_error(cause)
         self.error("failed to deserialize incoming task: %s", error_with_trace)
         self.error("skipping...")
 
@@ -464,7 +453,15 @@ class Worker(
     async def _watch_worker_events(self):
         try:
             while True:
-                worker_event = await self._consume_worker_events()
+                try:
+                    worker_event = await self._consume_worker_events()
+                except MessageDeserializationError as e:
+                    msg = (
+                        "failed to deserialize incoming worker event due to a "
+                        "deserialization error: %s"
+                    )
+                    self.exception(msg, _format_error(e))
+                    continue
                 event_task_id = worker_event.task_id
                 existing_events = self._worker_events[worker_event.__class__]
                 already_received = event_task_id in existing_events
@@ -672,5 +669,5 @@ def add_missing_args(fn: Callable, args: Dict[str, Any], **kwargs) -> Dict[str, 
     return args
 
 
-def _format_error(error: Exception) -> str:
+def _format_error(error: BaseException) -> str:
     return "".join(traceback.format_exception(None, error, error.__traceback__))

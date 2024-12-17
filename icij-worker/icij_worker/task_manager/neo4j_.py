@@ -26,7 +26,11 @@ from icij_worker.constants import (
     NEO4J_TASK_RETRIES_LEFT,
     TASK_ID,
 )
-from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
+from icij_worker.exceptions import (
+    MessageDeserializationError,
+    TaskQueueIsFull,
+    UnknownTask,
+)
 from icij_worker.objects import AsyncBackend, ManagerEvent, Message
 from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.utils import FromConfig
@@ -102,7 +106,12 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
             refresh_interval_s=self._event_refresh_interval_s,
             db_filter=None,
         )
-        return cast(ManagerEvent, Message.parse_obj(json.loads(event_as_json)))
+        try:
+            event = Message.parse_obj(json.loads(event_as_json))
+        except Exception as e:
+            msg = f"invalid event {event_as_json}"
+            raise MessageDeserializationError(msg) from e
+        return cast(ManagerEvent, event)
 
     async def cancel(self, task_id: str, *, requeue: bool):
         async with self._task_session(task_id) as sess:

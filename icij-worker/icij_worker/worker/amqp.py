@@ -26,6 +26,7 @@ from icij_worker import (
 from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
+from icij_worker.exceptions import MessageDeserializationError
 from icij_worker.objects import Message, TaskState, WorkerEvent
 from icij_worker.routing_strategy import Routing
 from icij_worker.utils.amqp import (
@@ -158,7 +159,11 @@ class AMQPWorker(Worker, AMQPMixin):
         while "I'm waiting to get a known task":
             # pylint: disable=unnecessary-dunder-call
             message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
-            task = Task.parse_raw(message.body)
+            try:
+                task = Task.parse_raw(message.body)
+            except Exception as e:
+                msg = f"invalid task body {message.body}"
+                raise MessageDeserializationError(msg) from e
             self._delivered[task.id] = message
             # This behavior is not shared with other implems, it's AMQP specific and
             # avoid a worker consuming in loops tasks which it can't handle.
@@ -171,7 +176,11 @@ class AMQPWorker(Worker, AMQPMixin):
         # pylint: disable=unnecessary-dunder-call
         message: AbstractIncomingMessage = await self._worker_events_it.__anext__()
         await message.ack()
-        event = cast(WorkerEvent, Message.parse_raw(message.body))
+        try:
+            event = cast(WorkerEvent, Message.parse_raw(message.body))
+        except Exception as e:
+            msg = f"invalid event body {message.body}"
+            raise MessageDeserializationError(msg) from e
         return event
 
     @property

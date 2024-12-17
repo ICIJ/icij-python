@@ -40,7 +40,11 @@ from icij_worker import (
 )
 from icij_worker.app import AsyncAppConfig, TaskGroup
 from icij_worker.event_publisher import EventPublisher
-from icij_worker.exceptions import TaskQueueIsFull, UnknownTask
+from icij_worker.exceptions import (
+    MessageDeserializationError,
+    TaskQueueIsFull,
+    UnknownTask,
+)
 from icij_worker.objects import (
     CancelEvent,
     Message,
@@ -432,7 +436,12 @@ if _has_pytest:
         @staticmethod
         def _task_factory(obj: Dict) -> Task:
             obj.pop("group", None)
-            return Task.parse_obj(obj)
+            try:
+                task = Task.parse_obj(obj)
+            except Exception as e:
+                msg = f"invalid task object {obj}"
+                raise MessageDeserializationError(msg) from e
+            return task
 
         async def _consume(self) -> Task:
             task = await self._consume_(
@@ -465,7 +474,11 @@ if _has_pytest:
                 key=lambda e: datetime.fromisoformat(e["createdAt"]).timestamp(),
             )
             event = events[0]
-            event = cast(WorkerEvent, Message.parse_obj(event))
+            try:
+                event = cast(WorkerEvent, Message.parse_obj(event))
+            except Exception as e:
+                msg = f"invalid event object {event}"
+                raise MessageDeserializationError(msg) from e
             worker_events = self._dbs[self._worker_events_db_name]
             key = self._key(event.task_id, WorkerEvent)
             worker_events[key] = events[1:]

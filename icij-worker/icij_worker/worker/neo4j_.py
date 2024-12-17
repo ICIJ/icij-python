@@ -11,6 +11,7 @@ import neo4j
 from neo4j.exceptions import ConstraintError, ResultNotSingleError
 from pydantic import Field
 
+from icij_worker import AsyncApp, AsyncBackend, Task, TaskState, Worker, WorkerConfig
 from icij_worker.constants import (
     NEO4J_TASK_CANCELLED_BY_EVENT_REL,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
@@ -22,9 +23,12 @@ from icij_worker.constants import (
     NEO4J_TASK_LOCK_WORKER_ID,
     NEO4J_TASK_NODE,
 )
-from icij_worker import AsyncApp, AsyncBackend, Task, TaskState, Worker, WorkerConfig
 from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
-from icij_worker.exceptions import TaskAlreadyReserved, UnknownTask
+from icij_worker.exceptions import (
+    MessageDeserializationError,
+    TaskAlreadyReserved,
+    UnknownTask,
+)
 from icij_worker.objects import CancelEvent, WorkerEvent
 from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
@@ -107,7 +111,12 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
             refresh_interval_s=self._poll_interval_s,
             db_filter=self._db_filter,
         )
-        return Task.from_neo4j({"task": task})
+        try:
+            task = Task.from_neo4j({"task": task})
+        except Exception as e:
+            msg = f"invalid task {task}"
+            raise MessageDeserializationError(msg) from e
+        return task
 
     async def _consume_worker_events(self) -> WorkerEvent:
         return await self._consume_(
@@ -180,7 +189,12 @@ LIMIT 1
         event = await res.single(strict=True)
     except ResultNotSingleError:
         return None
-    return CancelEvent.from_neo4j(event)
+    try:
+        event = CancelEvent.from_neo4j(event)
+    except Exception as e:
+        msg = f"invalid cancel event {event}"
+        raise MessageDeserializationError(msg) from e
+    return event
 
 
 async def _acknowledge_task_tx(

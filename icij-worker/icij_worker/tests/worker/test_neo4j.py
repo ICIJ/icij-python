@@ -32,7 +32,6 @@ from icij_worker.objects import (
 from icij_worker.tests.conftest import count_locks
 from icij_worker.tests.worker.conftest import make_app
 from icij_worker.utils import neo4j_
-from icij_worker.worker.worker import TaskConsumptionError
 
 
 @pytest.fixture(
@@ -114,17 +113,15 @@ async def test_should_consume_with_group(
     # When
     async with worker:
         # Then
-        with pytest.raises(TaskConsumptionError) as ex:
+        with pytest.raises(ClientError) as ex:
             await worker.consume()
 
-    cause = ex.value.__cause__
-    assert isinstance(cause, ClientError)
-    assert cause.code == "Neo.ClientError.Database.DatabaseNotFound"
+    assert ex.value.code == "Neo.ClientError.Database.DatabaseNotFound"
     expected = (
         "Unable to get a routing table for database 'other-db' because"
         " this database does not exist"
     )
-    assert cause.message == expected
+    assert ex.value.message == expected
 
 
 @pytest.mark.parametrize("worker", [None], indirect=["worker"])

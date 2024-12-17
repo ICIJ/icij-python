@@ -15,7 +15,11 @@ import pytest
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after, fail_if_exception
 from icij_worker import ResultEvent, Task, TaskError, TaskState
-from icij_worker.exceptions import TaskAlreadyCancelled, WorkerTimeoutError
+from icij_worker.exceptions import (
+    MessageDeserializationError,
+    TaskAlreadyCancelled,
+    WorkerTimeoutError,
+)
 from icij_worker.objects import ErrorEvent, ProgressEvent
 from icij_worker.utils.tests import MockManager, MockWorker
 from icij_worker.worker.worker import add_missing_args, task_wrapper
@@ -675,15 +679,16 @@ async def test_worker_should_handle_worker_timeout(mock_worker: MockWorker):
             t.cancel()
 
 
-async def test_worker_should_not_exit_loop_on_invalid_task(
+async def test_worker_should_keep_consuming_on_message_deserialization_error(
     mock_worker: MockWorker, monkeypatch
 ):
     # Given
     worker = mock_worker
 
     async def _failing_consume(self) -> Task:
-        # pylint: disable=ignored-argument
-        raise RuntimeError("some consumption error")
+        # pylint: disable=unused-argument
+        origin = ValueError("some_error")
+        raise MessageDeserializationError("invalid task message") from origin
 
     monkeypatch.setattr(MockWorker, "_consume", _failing_consume)
     # When

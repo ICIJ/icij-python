@@ -46,6 +46,7 @@ ujson = { version = "^5.10.0", optional = true }
 neo4j = { version = "^5.0.0", optional = true }
 # postgres
 psycopg = { extras = ["binary", "pool"], version = "^3.2.1", optional = true }
+pytest-retry = "^1.6.3"
 
 [tool.poetry.extras]
 amqp = ["aio-pika", "aiohttp", "psycopg", "sqlitedict", "ujson"]

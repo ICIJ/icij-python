@@ -67,3 +67,6 @@ class MissingTaskResult(ICIJWorkerError, LookupError):
 
 
 class WorkerTimeoutError(ICIJWorkerError, RuntimeError): ...
+
+
+class MessageDeserializationError(ICIJWorkerError, RuntimeError): ...

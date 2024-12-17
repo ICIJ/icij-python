@@ -1,4 +1,4 @@
-from .app import AsyncApp
+from .app import AsyncApp, TaskGroup
 from .objects import (
     Task,
     TaskError,
