@@ -4,7 +4,6 @@ from functools import lru_cache
 from typing import Callable, Dict, Optional
 
 from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
-from icij_common.test_utils import TEST_DB
 
 try:
     from aio_pika import ExchangeType
@@ -93,4 +92,6 @@ class RoutingStrategy:
     @classmethod
     def test_db(cls, group: Optional[str]) -> str:
         # pylint: disable=unused-argument
+        from icij_common.test_utils import TEST_DB
+
         return TEST_DB
