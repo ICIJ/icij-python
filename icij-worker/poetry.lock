@@ -1350,4 +1350,4 @@ neo4j = ["neo4j"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "7037f44ca24427b091deffb60931843f4c992d6b13d3be2d8f449149cc27fb2c"
+content-hash = "808cd6db5f5c29bca8c1aa0e30d40a5ca46ae4b91c7b261bbb9fe82d68e428ac"
