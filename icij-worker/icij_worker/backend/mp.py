@@ -50,7 +50,7 @@ def _mp_work_forever(
             **worker_extras,
         )
         deps_cm = app.lifetime_dependencies(
-            worker_id=worker.id, worker_config=config, **app_deps_extras
+            worker_id=worker.id, worker_config=config, app=app, **app_deps_extras
         )
         # From now on, the deps_cm should have setup loggers, we can let it log errors,
         # we get out of here
