@@ -46,6 +46,7 @@ from icij_worker.objects import (
     CancelledEvent,
     ErrorEvent,
     ProgressEvent,
+    ShutdownEvent,
     TaskUpdate,
     WorkerEvent,
 )
@@ -87,13 +88,18 @@ class Worker(
         self._loop = asyncio.get_event_loop()
         self._work_forever_task: Optional[asyncio.Task] = None
         self._work_once_task: Optional[asyncio.Task] = None
-        self._watch_cancelled_task: Optional[asyncio.Task] = None
-        self._already_exiting = False
+        self._watch_events: Optional[asyncio.Task] = None
+        self._already_exiting: bool = False
+        self._shutdown_asked: bool = False
         self._current: Optional[Task] = None
-        self._worker_events: Dict[Type[WE], Dict[str, WE]] = {CancelEvent: dict()}
+        self._worker_events: Dict[Type[WE], Dict[str, WE]] = {
+            CancelEvent: dict(),
+            ShutdownEvent: dict(),
+        }
         self._config: Optional[C] = None
-        self._cancel_lock = asyncio.Lock()
+        self._event_lock = asyncio.Lock()
         self._current_lock = asyncio.Lock()
+        self._started_task_consumption_evt = asyncio.Event()  # useful for tests
         self._successful_exit = False
         self._timeout_exc: Optional[WorkerTimeoutError] = None
         self._timeout_callback_handle: Optional[TimerHandle] = None
@@ -103,8 +109,8 @@ class Worker(
         return self._loop
 
     @property
-    def cancel_lock(self) -> asyncio.Lock:
-        return self._cancel_lock
+    def event_lock(self) -> asyncio.Lock:
+        return self._event_lock
 
     @property
     def _routing_strategy(self) -> RoutingStrategy:
@@ -182,6 +188,7 @@ class Worker(
 
     @final
     async def consume(self) -> Task:
+        self._started_task_consumption_evt.set()
         task = await self._consume()
         self.debug('Task(id="%s") locked', task.id)
         async with self._current_lock:
@@ -213,13 +220,13 @@ class Worker(
                 self._clear_current()
             self.info('Task(id="%s") successful !', current_id)
         except asyncio.CancelledError as e:
-            async with self.cancel_lock, self._cancel_lock:
+            async with self.event_lock, self._current_lock:
                 await self._handle_task_cancellation(e)
         except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
             # Let this bubble up and the worker continue without recording anything
             raise e
         except RecoverableError as e:
-            async with self.cancel_lock, self._current_lock:
+            async with self.event_lock, self._current_lock:
                 if self._current is not None:
                     await self._handle_error(e, fatal=False)
                 else:
@@ -234,7 +241,7 @@ class Worker(
             # RuntimeError("generator didn't yield")
             yield
         except Exception as fatal_error:  # pylint: disable=broad-exception-caught
-            async with self._current_lock, self._cancel_lock:
+            async with self._current_lock, self.event_lock:
                 if self._current is not None:
                     # The error is due to the current task, other tasks might success,
                     # let's fail this task and keep working
@@ -259,13 +266,13 @@ class Worker(
                 self._clear_current()
             self.info('Task(id="%s") successful !', current_id)
         except asyncio.CancelledError as e:
-            async with self.cancel_lock, self._current_lock:
+            async with self.event_lock, self._current_lock:
                 await self._handle_task_cancellation(e)
         except (TaskAlreadyCancelled, TaskAlreadyReserved) as e:
             # Let this bubble up and the worker continue without recording anything
             raise e
         except RecoverableError as e:
-            async with self._current_lock, self._cancel_lock:
+            async with self._current_lock, self.event_lock:
                 if self._current is not None:
                     await self._handle_error(e, fatal=False)
                 else:
@@ -280,7 +287,7 @@ class Worker(
             # RuntimeError("generator didn't yield")
             yield
         except Exception as fatal_error:  # pylint: disable=broad-exception-caught
-            async with self._current_lock, self._cancel_lock:
+            async with self._current_lock, self.event_lock:
                 if self._current is not None:
                     # The error is due to the current task, other tasks might success,
                     # let's fail this task and keep working
@@ -320,7 +327,7 @@ class Worker(
         self.error("skipping...")
 
     async def _handle_cancel_event(self, cancel_event: CancelEvent):
-        async with self.cancel_lock, self._current_lock:
+        async with self.event_lock, self._current_lock:
             if self._current is None:
                 self.info(
                     'Task(id="%s") completed before cancellation was effective, '
@@ -344,6 +351,10 @@ class Worker(
         await self._work_once_task
 
     async def _handle_task_cancellation(self, e: asyncio.CancelledError):
+        if self._shutdown_asked or self._shutdown_signal:
+            # we just reraise and the Worker.__aexit__ will take care of
+            # handling worker shutdown gracefully
+            raise e
         if self._timeout_exc is not None:
             self.exception(
                 'Task(id="%s") consumer exceeded allocated timeout', self._current.id
@@ -351,10 +362,6 @@ class Worker(
             fatal = not self._app.config.recover_from_worker_timeout
             await self._handle_error(self._timeout_exc, fatal=fatal)
             return
-        if self._worker_cancelled:
-            # we just raise and the Worker.__aexit__ will take care of
-            # handling worker shutdown gracefully
-            raise e
         if self._current is None:
             logger.info(
                 "task cancellation was ask but task was acked or nacked"
@@ -365,8 +372,19 @@ class Worker(
         update = {"state": TaskState.QUEUED if event.requeue else TaskState.CANCELLED}
         self._current = safe_copy(self._current, update=update)
         self.info('Task(id="%s") cancellation requested !', self._current.id)
-        await self._publish_cancelled_event(event)
-        self._clear_current()
+        await self._publish_cancelled_event(event.requeue)
+
+    async def _handle_shutdown_event(self):
+        self.info("shutdown requested...")
+        async with self.event_lock, self._current_lock:
+            self._shutdown_asked = True
+            if self._current is not None:
+                self.info(
+                    'Task(id="%s") cancelling task...',
+                    self._current,
+                )
+        self._work_once_task.cancel()
+        await self._work_once_task
 
     @property
     def _late_ack(self) -> bool:
@@ -387,10 +405,7 @@ class Worker(
             raise ValueError("can't negatively acknowledge with early ack")
         self.info("negatively acknowledging Task(id=%s)...", task.id)
         await self._negatively_acknowledge(task)
-        # This is ugly but makes tests easier
-        # (shutdown doesn't try to requeue the task again)
-        if task is self._current:
-            self._clear_current()
+        self._clear_current()
         self.info("Task(id=%s) negatively acknowledged !", task.id)
 
     @abstractmethod
@@ -427,16 +442,13 @@ class Worker(
     def _publish_progress_sync(self, progress: float, task: Task):
         self._loop.call_soon(self._publish_progress, progress, task)
 
-    async def _publish_cancelled_event(self, cancel_event: CancelEvent):
-        update = {
-            "state": TaskState.QUEUED if cancel_event.requeue else TaskState.CANCELLED
-        }
+    async def _publish_cancelled_event(self, requeue: bool):
+        update = {"state": TaskState.QUEUED if requeue else TaskState.CANCELLED}
         self._current = safe_copy(self._current, update=update)
-        cancelled_event = CancelledEvent.from_task(
-            self._current, requeue=cancel_event.requeue
-        )
-        if not cancel_event.requeue and self._late_ack:
+        cancelled_event = CancelledEvent.from_task(self._current, requeue=requeue)
+        if not requeue and self._late_ack:
             await self.acknowledge(self._current)
+        self._clear_current()
         await self.publish_event(cancelled_event)
 
     @final
@@ -462,19 +474,25 @@ class Worker(
                     )
                     self.exception(msg, _format_error(e))
                     continue
-                event_task_id = worker_event.task_id
+                event_task_id = getattr(worker_event, "task_id", None)
                 existing_events = self._worker_events[worker_event.__class__]
-                already_received = event_task_id in existing_events
+                if event_task_id is not None:
+                    already_received = event_task_id in existing_events
+                    if already_received:
+                        continue
+                    existing_events[event_task_id] = worker_event
+                if isinstance(worker_event, ShutdownEvent):
+                    await self._handle_shutdown_event()
+                    return
                 not_processing = self._current is None
-                if already_received or not_processing:
+                if not_processing:
                     continue
-                existing_events[event_task_id] = worker_event
                 if isinstance(worker_event, CancelEvent):
                     await self._handle_cancel_event(worker_event)
                 else:
                     raise ValueError(f"unexpected event type {worker_event}")
         except Exception as fatal_error:
-            async with self._current_lock, self._cancel_lock:
+            async with self._current_lock, self.event_lock:
                 if self._current is not None:
                     await self._handle_error(fatal_error, fatal=True)
             raise fatal_error
@@ -503,8 +521,8 @@ class Worker(
     @final
     async def __aenter__(self) -> Self:
         await self._aenter__()
-        # Start watching cancelled tasks
-        self._watch_cancelled_task = self._loop.create_task(self._watch_worker_events())
+        # Start watching worker events
+        self._watch_events = self._loop.create_task(self._watch_worker_events())
         return self
 
     @final
@@ -543,19 +561,16 @@ class Worker(
         # dependencies might be closed while trying to gracefully shutdown
         if not self._already_exiting:
             self._already_exiting = True
-            if (
-                self._watch_cancelled_task is not None
-                and not self._watch_cancelled_task.cancelled()
-            ):
-                logger.info("terminating cancel event loop ...")
-                self._watch_cancelled_task.cancel()
+            if self._watch_events is not None and not self._watch_events.cancelled():
+                logger.info("terminating watch events loop ...")
+                self._watch_events.cancel()
                 # Wait for cancellation to be effective
                 try:
-                    await self._watch_cancelled_task
+                    await self._watch_events
                 except asyncio.CancelledError:
                     pass
-                self._watch_cancelled_task = None
-                logger.info("cancel event loop terminated !")
+                self._watch_events = None
+                logger.info("events loop terminated !")
             # Let's try to shut down gracefully
             await self.shutdown()
             # Clean worker dependencies only if needed, dependencies might be share in
@@ -570,17 +585,16 @@ class Worker(
 
     @final
     async def _shutdown_gracefully(self):
-        async with self._current_lock, self._cancel_lock:
-            if self._current is not None:
-                cancel_event = CancelEvent.from_task(self._current, requeue=True)
-                await self._publish_cancelled_event(cancel_event)
-                self._clear_current()
+        if self._current is not None:
+            requeue = self._shutdown_signal
+            await self._publish_cancelled_event(requeue)
 
     @final
     async def shutdown(self):
         if self.graceful_shutdown:
             self.info("shutting down gracefully")
-            await self._shutdown_gracefully()
+            async with self.event_lock, self._current_lock:
+                await self._shutdown_gracefully()
             self.info("graceful shut down complete")
         else:
             self.info("shutting down the hard way, task might not be re-queued...")
@@ -647,7 +661,7 @@ async def _retry_task(
     update = TaskUpdate.done(datetime.now(timezone.utc))
     task = safe_copy(task, update=update.dict(exclude_unset=True))
     worker.info('Task(id="%s") complete, saving result...', task.id)
-    async with worker.cancel_lock:
+    async with worker.event_lock:
         await worker.publish_result_event(task_res, task)
     return task
 

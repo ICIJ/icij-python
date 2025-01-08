@@ -19,6 +19,7 @@ from icij_worker.objects import (
     ManagerEvent,
     Message,
     ResultEvent,
+    ShutdownEvent,
     Task,
     TaskState,
 )
@@ -48,7 +49,6 @@ class AMQPTaskManagerConfig(TaskManagerConfig, AMQPConfigMixin):
 
 @TaskManager.register(AsyncBackend.amqp)
 class AMQPTaskManager(TaskManager, AMQPMixin):
-
     def __init__(
         self,
         app: AsyncApp,
@@ -186,12 +186,25 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         cancel_event = CancelEvent(
             task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
         )
-        # TODO: for now cancellation is not groupd, workers from other group
+        # TODO: for now cancellation is not grouped, workers from other group
         #  are responsible to ignoring the broadcast. That could be easily implemented
         #  in the future but will need sync with Java
         routing = self.worker_evt_routing().routing_key
         await self._publish_message(
             cancel_event,
+            exchange=self._worker_evt_x,
+            routing_key=routing,
+            mandatory=True,  # This is important
+        )
+
+    async def shutdown_workers(self):
+        shutdown_event = ShutdownEvent(created_at=datetime.now(timezone.utc))
+        # TODO: for now cancellation is not grouped, workers from other group
+        #  are responsible to ignoring the broadcast. That could be easily implemented
+        #  in the future but will need sync with Java
+        routing = self.worker_evt_routing().routing_key
+        await self._publish_message(
+            shutdown_event,
             exchange=self._worker_evt_x,
             routing_key=routing,
             mandatory=True,  # This is important

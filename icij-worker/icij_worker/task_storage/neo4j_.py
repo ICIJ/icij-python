@@ -13,6 +13,8 @@ from icij_common.neo4j.db import db_specific_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker.constants import (
+    NEO4J_SHUTDOWN_EVENT_CREATED_AT,
+    NEO4J_SHUTDOWN_EVENT_NODE,
     NEO4J_TASK_ARGS,
     NEO4J_TASK_ARGUMENTS_DEPRECATED,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
@@ -50,6 +52,8 @@ from icij_worker.constants import (
     NEO4J_TASK_RETRIES_DEPRECATED,
     NEO4J_TASK_RETRIES_LEFT,
     NEO4J_TASK_TYPE_DEPRECATED,
+    NEO4J_WORKER_ID,
+    NEO4J_WORKER_NODE,
 )
 from icij_worker.exceptions import MissingTaskResult, UnknownTask
 from icij_worker.objects import ErrorEvent, ResultEvent, Task, TaskState, TaskUpdate
@@ -529,6 +533,21 @@ RETURN task
     await tx.run(query)
 
 
+async def migrate_add_task_shutdown_v0_tx(tx: neo4j.AsyncTransaction):
+    create_worker_id_index = f"""
+CREATE INDEX index_worker_id IF NOT EXISTS
+FOR (worker:{NEO4J_WORKER_NODE})
+ON (worker.{NEO4J_WORKER_ID})
+"""
+    await tx.run(create_worker_id_index)
+    create_shutdown_index = f"""
+CREATE INDEX index_shutdown_event_created_at IF NOT EXISTS
+FOR (worker:{NEO4J_SHUTDOWN_EVENT_NODE})
+ON (worker.{NEO4J_SHUTDOWN_EVENT_CREATED_AT})
+"""
+    await tx.run(create_shutdown_index)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = [
     add_support_for_async_task_tx,
@@ -542,4 +561,5 @@ MIGRATIONS = [
     migrate_task_retries_and_error_v0_tx,
     migrate_task_arguments_into_args_v0_tx,
     migrate_task_namespace_into_group_v0,
+    migrate_add_task_shutdown_v0_tx,
 ]

@@ -9,7 +9,7 @@ from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after
 from icij_worker import Task, TaskError, TaskState
 from icij_worker.exceptions import UnregisteredTask
-from icij_worker.objects import CancelEvent, ProgressEvent, StacktraceItem
+from icij_worker.objects import ProgressEvent, StacktraceItem
 from icij_worker.utils.tests import MockManager, MockWorker
 
 
@@ -146,8 +146,7 @@ async def test_consume_cancelled_event(
     await task_manager.save_task(task)
 
     # When
-    cancel_event = CancelEvent.from_task(task, requeue=requeue)
-    await worker.publish_cancelled_event(cancel_event=cancel_event)
+    await worker.publish_cancelled_event(requeue)
 
     # Then
     async with task_manager:

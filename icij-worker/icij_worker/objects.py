@@ -11,7 +11,7 @@ from typing import Callable, ClassVar, Sequence, Union, cast
 
 from pydantic import Field, root_validator, validator
 from pydantic.utils import ROOT_KEY
-from typing_extensions import Any, Dict, List, Optional, final
+from typing_extensions import Any, Dict, List, Optional, Self, final
 
 from icij_common import neo4j
 from icij_common.pydantic_utils import (
@@ -22,6 +22,7 @@ from icij_common.pydantic_utils import (
     safe_copy,
 )
 from icij_worker.constants import (
+    NEO4J_SHUTDOWN_EVENT_CREATED_AT,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_REQUEUE,
     NEO4J_TASK_COMPLETED_AT,
@@ -209,6 +210,13 @@ class Registrable(ICIJModel, RegistrableMixin, ABC):
 
 
 class Message(Registrable): ...  # pylint: disable=multiple-statements
+
+
+class TaskMessage(Message):
+    task_id: str
+    created_at: datetime
+    retries_left: Optional[int] = None
+    max_retries: Optional[int] = None
 
 
 @Message.register("Task")
@@ -439,10 +447,8 @@ class TaskError(Message, LowerCamelCaseModel):
 
 
 class TaskEvent(
-    Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, FromTask, ABC
+    TaskMessage, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, FromTask, ABC
 ):
-    task_id: str
-    created_at: datetime
     retries_left: int = 3
 
     @validator("created_at", pre=True)
@@ -450,12 +456,10 @@ class TaskEvent(
         return cls._validate_neo4j_datetime(value)
 
 
-class WorkerEvent(TaskEvent, ABC):
-    pass
+class WorkerEvent(Message, ABC): ...  # pylint: disable=multiple-statements
 
 
-class ManagerEvent(TaskEvent, ABC):
-    pass
+class ManagerEvent(TaskEvent, ABC): ...  # pylint: disable=multiple-statements
 
 
 @Message.register("ProgressEvent")
@@ -480,7 +484,7 @@ class ProgressEvent(ManagerEvent):
 
 
 @Message.register("CancelEvent")
-class CancelEvent(WorkerEvent):
+class CancelEvent(WorkerEvent, TaskEvent):
     requeue: bool
 
     @classmethod
@@ -633,6 +637,26 @@ class ErrorEvent(ManagerEvent):
             return cls(**as_dict)
 
         return as_row
+
+
+@Message.register("ShutdownEvent")
+class ShutdownEvent(WorkerEvent, LowerCamelCaseModel, Neo4jDatetimeMixin):
+    created_at: datetime
+
+    @validator("created_at", pre=True)
+    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
+        return cls._validate_neo4j_datetime(value)
+
+    @classmethod
+    def from_neo4j(
+        cls,
+        record: "neo4j.Record",
+        *,
+        event_key: str = "event",
+    ) -> Self:
+        event = record.get(event_key)
+        created_at = event[NEO4J_SHUTDOWN_EVENT_CREATED_AT]
+        return ShutdownEvent(created_at=created_at)
 
 
 class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):

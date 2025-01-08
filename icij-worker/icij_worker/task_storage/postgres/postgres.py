@@ -69,7 +69,7 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
     migration_timeout_s: float = 60.0
     migration_throttle_s: float = 0.1
 
-    def to_storage(
+    def to_storage(  # pylint: disable=arguments-differ
         self, routing_strategy: Optional[RoutingStrategy]
     ) -> PostgresStorage:
         storage = PostgresStorage(
@@ -397,7 +397,7 @@ async def _get_tasks(
 
 
 async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
-    error_as_dict = error.dict()
+    error_as_dict = error.dict(exclude_none=True)
     error_as_dict.update(error_as_dict.pop("error"))
     error_as_dict.pop(TaskError.registry_key.default)
     error_as_dict["stacktrace"] = ujson.dumps(error_as_dict["stacktrace"])

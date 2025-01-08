@@ -14,7 +14,7 @@ _HANDLE_SIGNALS = [signal.SIGTERM]
 # TODO: rename this file to signals
 class HandleSignalsMixin(LogWithNameMixin, ABC):
     _work_forever_task: Optional[asyncio.Task]
-    _worker_cancelled: bool = False
+    _shutdown_signal: bool = False
     _loop: AbstractEventLoop
     cancel_lock: asyncio.Lock
 
@@ -28,8 +28,8 @@ class HandleSignalsMixin(LogWithNameMixin, ABC):
             self._setup_child_process_signal_handlers()
 
     async def _signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
-        async with self.cancel_lock:
-            self._worker_cancelled = True
+        async with self.event_lock:
+            self._shutdown_signal = True
             self.exception("received %s", signal_name)
             self._graceful_shutdown = graceful
             if self._work_forever_task is not None:

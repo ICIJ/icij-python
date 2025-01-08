@@ -27,6 +27,7 @@ from icij_worker.objects import (
     ManagerEvent,
     Message,
     ProgressEvent,
+    ShutdownEvent,
     Task,
 )
 from icij_worker.tests.conftest import count_locks
@@ -242,3 +243,19 @@ async def test_worker_ack_cm(
     count_locks_query = "MATCH (lock:_TaskLock) RETURN count(*) as nLocks"
     recs, _, _ = await worker.driver.execute_query(count_locks_query)
     assert recs[0]["nLocks"] == 0
+
+
+@pytest.mark.parametrize("worker", [None], indirect=["worker"])
+async def test_worker_consume_shutdown_event(
+    worker: Neo4jWorker, populate_shutdown_events: List[ShutdownEvent]
+):
+    # pylint: disable=unused-argument,protected-access
+    # When
+    task = asyncio.create_task(worker._consume_worker_events())
+    # Then
+    timeout = 2
+    await asyncio.wait([task], timeout=timeout)
+    if not task.done():
+        pytest.fail(f"failed to shutdown event in less than {timeout}s")
+    event = task.result()
+    assert event == populate_shutdown_events[0]

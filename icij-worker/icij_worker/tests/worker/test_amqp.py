@@ -308,7 +308,7 @@ async def test_should_not_consume_task_from_other_group(
 
 
 @pytest.mark.parametrize(
-    "requeue,retries_left", list(itertools.product((True, False), (0, 1)))
+    "requeue,retries_left", list(itertools.product((False, True), (0, 1)))
 )
 async def test_worker_consume_cancel_events(
     test_amqp_task_manager: AMQPTaskManager,
@@ -355,7 +355,6 @@ async def test_worker_consume_cancel_events(
             return bool(amqp_worker.worker_events[CancelEvent])
 
         assert await async_true_after(_received_event, after_s=after_s), failure
-        assert len(amqp_worker.worker_events) == 1
         received_event = amqp_worker.worker_events[CancelEvent].pop("some-id")
         expected_event = CancelEvent(
             task_id="some-id", requeue=requeue, created_at=datetime.now()

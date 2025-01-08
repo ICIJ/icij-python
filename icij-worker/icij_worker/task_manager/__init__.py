@@ -56,7 +56,7 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     @final
     async def __aexit__(self, exc_type, exc_value, tb):
         await self._aexit__(exc_type, exc_value, tb)
-        if self._consume_loop is not None:
+        if self._consume_loop is not None and not self._consume_loop.done():
             logger.info("cancelling worker event loop...")
             self._consume_loop.cancel()
             await asyncio.wait([self._consume_loop])
@@ -165,6 +165,9 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
 
     @abstractmethod
     async def cancel(self, task_id: str, *, requeue: bool): ...
+
+    @abstractmethod
+    async def shutdown_workers(self): ...
 
     @abstractmethod
     async def _consume(self) -> ManagerEvent: ...

@@ -578,7 +578,7 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
 
         # Then
         async def _cancelled_watch_loop() -> bool:
-            return worker.watch_cancelled_task is None
+            return worker.watch_events is None
 
         failure_msg = f"worker failed to exit cancel events loop in less than {after_s}"
         assert await async_true_after(
@@ -677,6 +677,107 @@ async def test_worker_should_handle_worker_timeout(mock_worker: MockWorker):
             error = errors[0].error
             assert error.name == WorkerTimeoutError.__name__
             t.cancel()
+
+
+async def test_worker_should_handle_shutdown_event(mock_worker: MockWorker):
+    # pylint: disable=protected-access
+    # Given
+    worker = mock_worker
+    task_manager = MockManager(worker.app, worker.db_path)
+
+    # When
+    asyncio_tasks = set()
+    async with worker, task_manager:
+        work_forever_task = asyncio.create_task(worker.work_forever_async())
+        work_forever_task.add_done_callback(asyncio_tasks.discard)
+        worker._work_forever_task = work_forever_task
+        asyncio_tasks.add(work_forever_task)
+
+        after_s = 2.0
+
+        async def _started_consumption() -> bool:
+            return worker.started_task_consumption
+
+        failure_msg = f"Failed to start consuming in less than {after_s}"
+        assert await async_true_after(
+            _started_consumption, after_s=after_s
+        ), failure_msg
+
+        await task_manager.shutdown_workers()
+
+        async def _cancelled_watch_loop() -> bool:
+            return worker.watch_events is None
+
+        failure_msg = f"worker failed to exit cancel events loop in less than {after_s}"
+        assert await async_true_after(
+            _cancelled_watch_loop, after_s=after_s
+        ), failure_msg
+
+        async def _successful_exit() -> bool:
+            return worker.successful_exit
+
+        failure_msg = f"worker failed to exit working loop in less than {after_s}"
+        assert await async_true_after(_successful_exit, after_s=after_s), failure_msg
+
+
+async def test_worker_should_handle_shutdown_event_and_cancel_running_task(
+    mock_worker: MockWorker,
+):
+    # pylint: disable=protected-access
+    # Given
+    worker = mock_worker
+    task_manager = MockManager(worker.app, worker.db_path)
+    created_at = datetime.now()
+    duration = 10
+    task = Task(
+        id="some-id",
+        name="sleep_for",
+        created_at=created_at,
+        state=TaskState.CREATED,
+        args={"duration": duration},
+    )
+    await task_manager.save_task(task)
+
+    # When
+    asyncio_tasks = set()
+    async with worker, task_manager:
+        work_forever_task = asyncio.create_task(worker.work_forever_async())
+        work_forever_task.add_done_callback(asyncio_tasks.discard)
+        worker._work_forever_task = work_forever_task
+        asyncio_tasks.add(work_forever_task)
+
+        await task_manager.enqueue(task)
+        after_s = 2.0
+
+        async def _has_state(state: TaskState) -> bool:
+            saved = await task_manager.get_task(task_id=task.id)
+            return saved.state is state
+
+        failure_msg = f"Failed to run task in less than {after_s}"
+        assert await async_true_after(
+            functools.partial(_has_state, TaskState.RUNNING), after_s=after_s
+        ), failure_msg
+        await task_manager.shutdown_workers()
+
+        expected_state = TaskState.CANCELLED
+        failure_msg = f"Failed to cancel task in less than {after_s}"
+        assert await async_true_after(
+            functools.partial(_has_state, expected_state), after_s=after_s
+        ), failure_msg
+
+        async def _cancelled_watch_loop() -> bool:
+            return worker.watch_events is None
+
+        failure_msg = f"worker failed to exit cancel events loop in less than {after_s}"
+        assert await async_true_after(
+            _cancelled_watch_loop, after_s=after_s
+        ), failure_msg
+
+        async def _successful_exit() -> bool:
+            return worker.successful_exit
+
+        failure_msg = f"worker failed to exit working loop in less than {after_s}"
+        assert await async_true_after(_successful_exit, after_s=after_s), failure_msg
 
 
 async def test_worker_should_keep_consuming_on_message_deserialization_error(
