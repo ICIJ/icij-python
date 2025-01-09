@@ -253,17 +253,13 @@ class AMQPMixin:
         *,
         declare_exchanges: bool,
         declare_queues: bool = True,
-        durable_queues: bool = True,
     ) -> Tuple[AbstractQueueIterator, AbstractExchange, Optional[AbstractExchange]]:
         await self._exit_stack.enter_async_context(
             cast(AbstractAsyncContextManager, self._channel)
         )
         dlq_ex = None
         await self._create_routing(
-            routing,
-            declare_exchanges=declare_exchanges,
-            declare_queues=declare_queues,
-            durable_queues=durable_queues,
+            routing, declare_exchanges=declare_exchanges, declare_queues=declare_queues
         )
         ex = await self._channel.get_exchange(routing.exchange.name, ensure=False)
         queue = await self._channel.get_queue(routing.queue_name, ensure=False)
@@ -278,7 +274,6 @@ class AMQPMixin:
         *,
         declare_exchanges: bool = True,
         declare_queues: bool = True,
-        durable_queues: bool = True,
     ):
         if declare_exchanges:
             x = await self._channel.declare_exchange(
@@ -294,7 +289,6 @@ class AMQPMixin:
                 routing.dead_letter_routing,
                 declare_exchanges=declare_exchanges,
                 declare_queues=declare_queues,
-                durable_queues=durable_queues,
             )
             if queue_args is None:
                 queue_args = dict()
@@ -310,7 +304,7 @@ class AMQPMixin:
             if self._is_qpid:
                 queue_args = dict()
             queue = await self._channel.declare_queue(
-                routing.queue_name, durable=durable_queues, arguments=queue_args
+                routing.queue_name, durable=True, arguments=queue_args
             )
         else:
             queue = await self._channel.get_queue(routing.queue_name, ensure=True)

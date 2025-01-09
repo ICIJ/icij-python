@@ -120,7 +120,7 @@ class AMQPWorker(Worker, AMQPMixin):
         event_transient_queue = await self._channel.get_queue(
             self._worker_evt_routing.queue_name
         )
-        await event_transient_queue.delete(if_empty=False, if_unused=False)
+        await event_transient_queue.delete(if_empty=True, if_unused=False)
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _bind_task_queue(self):
@@ -145,8 +145,7 @@ class AMQPWorker(Worker, AMQPMixin):
     async def _bind_worker_event_queue(self):
         self._worker_evt_queue_iterator, _, _ = await self._get_queue_iterator(
             self._worker_evt_routing,
-            declare_queues=True,  # The worker always creates its own transient queue
-            durable_queues=False,
+            declare_queues=True,
             declare_exchanges=self._declare_exchanges,
         )
         self._worker_evt_queue_iterator = cast(

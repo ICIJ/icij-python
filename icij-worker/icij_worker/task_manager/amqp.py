@@ -232,10 +232,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         for routing in self._other_routings:
             logger.debug("(re)declaring routing %s...", routing)
             await self._create_routing(
-                routing,
-                declare_exchanges=True,
-                declare_queues=True,
-                durable_queues=True,
+                routing, declare_exchanges=True, declare_queues=True
             )
         await self._create_routing(
             self.worker_evt_routing(), declare_exchanges=True, declare_queues=False
@@ -276,8 +273,5 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             )
             await self._management_client.set_policy(group_policy)
             await self._create_routing(
-                routing,
-                declare_exchanges=True,
-                declare_queues=True,
-                durable_queues=True,
+                routing, declare_exchanges=True, declare_queues=True
             )
