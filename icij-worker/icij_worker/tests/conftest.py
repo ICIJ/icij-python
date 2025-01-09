@@ -40,7 +40,7 @@ from icij_common.test_utils import reset_env  # pylint: disable=unused-import
 from icij_worker import AsyncApp, Neo4JTaskManager, Task
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
-from icij_worker.objects import CancelEvent, ManagerEvent, TaskState
+from icij_worker.objects import CancelEvent, ManagerEvent, ShutdownEvent, TaskState
 from icij_worker.task_manager.amqp import AMQPTaskManager
 from icij_worker.task_storage import TaskStorage
 from icij_worker.task_storage.fs import FSKeyValueStorage
@@ -233,6 +233,18 @@ RETURN task, event"""
         query_0, now=datetime.now(), taskId=populate_tasks[0].id, group=group
     )
     return [CancelEvent.from_neo4j(recs_0[0])]
+
+
+@pytest.fixture(scope="function")
+async def populate_shutdown_events(
+    neo4j_async_app_driver: neo4j.AsyncDriver,
+) -> List[CancelEvent]:
+    query_0 = """CREATE (event:_ShutdownEvent { createdAt: $now })
+RETURN event"""
+    recs_0, _, _ = await neo4j_async_app_driver.execute_query(
+        query_0, now=datetime.now()
+    )
+    return [ShutdownEvent.from_neo4j(recs_0[0])]
 
 
 class Recoverable(ValueError):

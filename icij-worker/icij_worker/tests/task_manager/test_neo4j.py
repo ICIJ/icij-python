@@ -27,6 +27,7 @@ from icij_worker.objects import (
     ErrorEvent,
     ManagerEvent,
     ProgressEvent,
+    ShutdownEvent,
     StacktraceItem,
 )
 from icij_worker.tests.conftest import TestableNeo4JTaskManager
@@ -658,3 +659,19 @@ async def test_task_manager_should_raise_when_saving_existing_result(
     expected = "Attempted to save result for task task-0 but found existing result"
     with pytest.raises(ValueError, match=expected):
         await task_manager.save_result(result=task_result)
+
+
+async def test_task_manager_shutdown_workers(
+    neo4j_task_manager: TestableNeo4JTaskManager,
+):
+    # Given
+    driver = neo4j_task_manager.driver
+    # When
+    await neo4j_task_manager.shutdown_workers()
+    query = """MATCH (event:_ShutdownEvent)
+RETURN event"""
+    recs, _, _ = await driver.execute_query(query)
+    assert len(recs) == 1
+    event = ShutdownEvent.from_neo4j(recs[0])
+    # Then
+    assert event.created_at < datetime.now(timezone.utc)

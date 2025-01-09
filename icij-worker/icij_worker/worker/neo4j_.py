@@ -13,6 +13,8 @@ from pydantic import Field
 
 from icij_worker import AsyncApp, AsyncBackend, Task, TaskState, Worker, WorkerConfig
 from icij_worker.constants import (
+    NEO4J_SHUTDOWN_EVENT_CREATED_AT,
+    NEO4J_SHUTDOWN_EVENT_NODE,
     NEO4J_TASK_CANCELLED_BY_EVENT_REL,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_EFFECTIVE,
@@ -22,6 +24,9 @@ from icij_worker.constants import (
     NEO4J_TASK_LOCK_TASK_ID,
     NEO4J_TASK_LOCK_WORKER_ID,
     NEO4J_TASK_NODE,
+    NEO4J_WORKER_ID,
+    NEO4J_WORKER_NODE,
+    NEO4J_WORKER_SHUTDOWN_BY_REL,
 )
 from icij_worker.event_publisher.neo4j_ import Neo4jEventPublisher
 from icij_worker.exceptions import (
@@ -29,7 +34,7 @@ from icij_worker.exceptions import (
     TaskAlreadyReserved,
     UnknownTask,
 )
-from icij_worker.objects import CancelEvent, WorkerEvent
+from icij_worker.objects import CancelEvent, ShutdownEvent, WorkerEvent
 from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 
@@ -120,7 +125,9 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
     async def _consume_worker_events(self) -> WorkerEvent:
         return await self._consume_(
-            functools.partial(_consume_worker_events_tx, group=self._group),
+            functools.partial(
+                _consume_worker_events_tx, worker_id=self.id, group=self._group
+            ),
             refresh_interval_s=self._poll_interval_s,
             db_filter=self._db_filter,
         )
@@ -170,15 +177,60 @@ RETURN task"""
 
 
 async def _consume_worker_events_tx(
-    tx: neo4j.AsyncTransaction, group: Optional[str], **_
+    tx: neo4j.AsyncTransaction, *, worker_id: str, group: Optional[str], **_
 ) -> Optional[WorkerEvent]:
-    where_ns = ""
+    await _create_worker_node_tx(tx, worker_id)
+    shutdown_event = await _consume_shutdown_events_tx(tx, worker_id)
+    if shutdown_event is not None:
+        return shutdown_event
+    return await _consume_cancelled_events_tx(tx, group)
+
+
+async def _create_worker_node_tx(tx: neo4j.AsyncTransaction, worker_id: str, **_):
+    create_worker_node_query = f"""MERGE (
+    worker: {NEO4J_WORKER_NODE} {{ {NEO4J_WORKER_ID}: $workerId }})
+RETURN worker
+"""
+    await tx.run(create_worker_node_query, workerId=worker_id)
+
+
+async def _consume_shutdown_events_tx(
+    tx: neo4j.AsyncTransaction, worker_id: str, **_
+) -> Optional[ShutdownEvent]:
+    shutdown_event_query = f"""MATCH (worker: {NEO4J_WORKER_NODE} {{
+    {NEO4J_WORKER_ID}: $workerId }})
+WITH worker
+MATCH (event:{NEO4J_SHUTDOWN_EVENT_NODE})
+WHERE NOT (worker)-[:{NEO4J_WORKER_SHUTDOWN_BY_REL}]->(event)
+WITH event, worker
+ORDER BY event.{NEO4J_SHUTDOWN_EVENT_CREATED_AT} ASC
+LIMIT 1
+CREATE (worker)-[:{NEO4J_WORKER_SHUTDOWN_BY_REL}]->(event)
+RETURN event
+"""
+    res = await tx.run(shutdown_event_query, workerId=worker_id)
+    try:
+        event = await res.single(strict=True)
+    except ResultNotSingleError:
+        return None
+    try:
+        event = ShutdownEvent.from_neo4j(event)
+    except Exception as e:
+        msg = f"invalid shutdown event {event}"
+        raise MessageDeserializationError(msg) from e
+    return event
+
+
+async def _consume_cancelled_events_tx(
+    tx: neo4j.AsyncTransaction, group: Optional[str], **_
+):
+    where_group = ""
     if group is not None:
-        where_ns = f"AND task.{NEO4J_TASK_GROUP} = $group"
+        where_group = f"AND task.{NEO4J_TASK_GROUP} = $group"
     get_event_query = f"""MATCH (task:{NEO4J_TASK_NODE})-[
     :{NEO4J_TASK_CANCELLED_BY_EVENT_REL}
 ]->(event:{NEO4J_TASK_CANCEL_EVENT_NODE})
-WHERE NOT event.{NEO4J_TASK_CANCEL_EVENT_EFFECTIVE}{where_ns}
+WHERE NOT event.{NEO4J_TASK_CANCEL_EVENT_EFFECTIVE}{where_group}
 SET event.{NEO4J_TASK_CANCEL_EVENT_EFFECTIVE} = true
 RETURN task, event
 ORDER BY event.{NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT} ASC

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import uuid
 from abc import ABC
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +49,7 @@ from icij_worker.exceptions import (
 from icij_worker.objects import (
     CancelEvent,
     Message,
+    ShutdownEvent,
     WorkerEvent,
 )
 from icij_worker.task_manager import TaskManager, TaskManagerConfig
@@ -315,6 +317,16 @@ if _has_pytest:
             worker_events[key] = events
             worker_events.commit(blocking=True)
 
+        async def shutdown_workers(self):
+            shutdown_event = ShutdownEvent(created_at=datetime.now(timezone.utc))
+            key = self._key(task_id=f"shutdown-({uuid.uuid4()})", obj_cls=CancelEvent)
+            worker_events = self._dbs[self._worker_events_db_name]
+            events = worker_events.get(key, [])
+            event_dict = shutdown_event.dict(by_alias=True, exclude_none=True)
+            events.append(event_dict)
+            worker_events[key] = events
+            worker_events.commit(blocking=True)
+
         @classmethod
         def _from_config(cls, config: MockManagerConfig, **extras) -> MockManager:
             tm = cls(
@@ -343,13 +355,16 @@ if _has_pytest:
             manager_events_db.commit(blocking=True)
             self.published_events.append(event)
 
+    def _default_loggers() -> list[str]:
+        return [icij_worker.__name__]
+
     @WorkerConfig.register()
     class MockWorkerConfig(WorkerConfig, IgnoreExtraModel):
         type: ClassVar[str] = Field(const=True, default=AsyncBackend.mock.value)
 
         db_path: Path
         log_level: str = "DEBUG"
-        loggers: List[str] = [icij_worker.__name__]
+        loggers: List[str] = Field(default_factory=_default_loggers)
         task_queue_poll_interval_s: float = 2.0
 
     @Worker.register(AsyncBackend.mock)
@@ -370,14 +385,15 @@ if _has_pytest:
             self._worker_id = worker_id
             self._logger_ = logging.getLogger(__name__)
             self.terminated_cancelled_event_loop = False
+            self._exited = False
 
         @property
         def app(self) -> AsyncApp:
             return self._app
 
         @property
-        def watch_cancelled_task(self) -> Optional[asyncio.Task]:
-            return self._watch_cancelled_task
+        def watch_events(self) -> Optional[asyncio.Task]:
+            return self._watch_events
 
         async def work_forever_async(self):
             await self._work_forever_async()
@@ -401,6 +417,10 @@ if _has_pytest:
         @current.setter
         def current(self, value: Optional[Task]):
             self._current = value
+
+        @property
+        def started_task_consumption(self) -> bool:
+            return self._started_task_consumption_evt.is_set()
 
         async def signal_handler(self, signal_name: signal.Signals, *, graceful: bool):
             await self._signal_handler(signal_name, graceful=graceful)
@@ -464,9 +484,7 @@ if _has_pytest:
                 self._poll_interval_s,
                 list,
                 group=self._group,
-                select=lambda events: bool(  # pylint: disable=unnecessary-lambda
-                    events
-                ),
+                select=lambda evts: bool(evts),  # pylint: disable=unnecessary-lambda
                 order=self._order_events,
             )
             events = sorted(
@@ -479,14 +497,15 @@ if _has_pytest:
             except Exception as e:
                 msg = f"invalid event object {event}"
                 raise MessageDeserializationError(msg) from e
-            worker_events = self._dbs[self._worker_events_db_name]
-            key = self._key(event.task_id, WorkerEvent)
-            worker_events[key] = events[1:]
-            worker_events.commit(blocking=True)
+            if isinstance(event, CancelEvent):
+                worker_events = self._dbs[self._worker_events_db_name]
+                key = self._key(event.task_id, WorkerEvent)
+                worker_events[key] = events[1:]
+                worker_events.commit(blocking=True)
             return event
 
         async def work_once(self):
             await self._work_once()
 
-        async def publish_cancelled_event(self, cancel_event: CancelEvent):
-            await self._publish_cancelled_event(cancel_event)
+        async def publish_cancelled_event(self, requeue: bool):
+            await self._publish_cancelled_event(requeue)

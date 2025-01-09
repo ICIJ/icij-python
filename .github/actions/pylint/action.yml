@@ -17,4 +17,4 @@ runs:
       run: |
         pylint_rc=$(pwd)/qa/pylintrc
         cd ${{ inputs.path }}
-        pylint --rcfile $pylint_rc --load-plugins=pylint.extensions.bad_builtin -r y -j 0 -f colorized **/*.py **/*.ipynb
+        pylint --rcfile $pylint_rc --load-plugins=pylint.extensions.bad_builtin -r y -j 0 -f colorized **/*.py

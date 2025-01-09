@@ -7,8 +7,11 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ResultNotSingleError
 from pydantic import Field
 
+from icij_common.neo4j.migrate import retrieve_dbs
 from icij_worker import AsyncApp, Task, TaskState
 from icij_worker.constants import (
+    NEO4J_SHUTDOWN_EVENT_CREATED_AT,
+    NEO4J_SHUTDOWN_EVENT_NODE,
     NEO4J_TASK_CANCELLED_BY_EVENT_REL,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_EFFECTIVE,
@@ -56,7 +59,6 @@ class Neo4JTaskManagerConfig(TaskManagerConfig):
 
 @TaskManager.register(AsyncBackend.neo4j)
 class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
-
     def __init__(
         self,
         app: AsyncApp,
@@ -117,6 +119,12 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
         async with self._task_session(task_id) as sess:
             await sess.execute_write(_cancel_task_tx, task_id=task_id, requeue=requeue)
 
+    async def shutdown_workers(self):
+        dbs = await retrieve_dbs(self._driver)
+        for db in dbs:
+            async with self._db_session(db.name) as sess:
+                await sess.execute_write(_shutdown_workers_tx)
+
 
 async def _enqueue_task_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str, max_queue_size: int
@@ -158,6 +166,14 @@ CREATE (task)-[
     await tx.run(
         query, taskId=task_id, requeue=requeue, cancelledAt=datetime.now(timezone.utc)
     )
+
+
+async def _shutdown_workers_tx(tx: neo4j.AsyncTransaction):
+    query = f"""CREATE (event:{NEO4J_SHUTDOWN_EVENT_NODE} {{
+        {NEO4J_SHUTDOWN_EVENT_CREATED_AT}: $createdAt 
+    }})
+"""
+    await tx.run(query, createdAt=datetime.now(timezone.utc))
 
 
 async def _consume_manager_events_tx(tx: neo4j.AsyncTransaction) -> Optional[str]:
