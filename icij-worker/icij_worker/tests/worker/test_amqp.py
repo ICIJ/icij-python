@@ -44,6 +44,7 @@ from icij_worker.tests.conftest import (
     RABBITMQ_TEST_PORT,
     RABBITMQ_TEST_USER,
     TestableAMQPPublisher,
+    get_queue,
     get_queue_size,
 )
 from icij_worker.utils.amqp import AMQPManagementClient, AMQPMixin, RobustConnection
@@ -365,41 +366,30 @@ async def test_worker_consume_cancel_events(
         assert received_event == expected_event
 
 
-# This is very ugly but for some reason when requeuing using a quorum queue,
-# the message is to properly marked as requeued (replication issues ?)
-@pytest.mark.flaky(retries=3, delay=1)
 @pytest.mark.parametrize(
-    "requeue,amqp_worker",
-    list(itertools.product([True, False], ({"app": "test_async_app_late"},))),
-    indirect=["amqp_worker"],
+    "amqp_worker", [{"app": "test_async_app_late"}], indirect=["amqp_worker"]
 )
 async def test_worker_negatively_acknowledge(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, requeue: bool
+    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker
 ):
     # pylint: disable=protected-access,unused-argument
     # When
     async with amqp_worker:
         # Then
         task = await amqp_worker.consume()
-        updated_state = TaskState.QUEUED if requeue else TaskState.ERROR
-        nacked = safe_copy(task, update={"state": updated_state})
-        await amqp_worker._negatively_acknowledge_(nacked)
+        await amqp_worker._negatively_acknowledge_(task)
         task_routing = amqp_worker.task_routing(None)
 
-        async def _assert_has_size(queue_name: str, n: int) -> bool:
-            size = await get_queue_size(queue_name)
-            return size == n
+        async def _processed_current() -> bool:
+            q = await get_queue(task_routing.queue_name)
+            # We expect the worker to ack the task (not to nack it), the TM will take
+            # care of requeuing the task when receiving the ErrorEvent
+            n_acks = q.get("message_stats", dict()).get("ack")
+            return bool(n_acks)
 
-        if requeue:
-            expected = functools.partial(
-                _assert_has_size, queue_name=task_routing.queue_name, n=2
-            )
-        else:
-            dlq_name = task_routing.dead_letter_routing.queue_name
-            expected = functools.partial(_assert_has_size, queue_name=dlq_name, n=1)
         timeout = 10  # Stats can take long to refresh...
-        failure = f"Failed to requeue job in less than {timeout} seconds."
-        assert await async_true_after(expected, after_s=timeout), failure
+        failure = f"Failed to ack current task in less than {timeout} seconds."
+        assert await async_true_after(_processed_current, after_s=timeout), failure
 
 
 _CREATED_AT = datetime.now()
