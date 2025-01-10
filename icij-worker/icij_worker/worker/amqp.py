@@ -27,7 +27,7 @@ from icij_worker.event_publisher.amqp import (
     AMQPPublisher,
 )
 from icij_worker.exceptions import MessageDeserializationError
-from icij_worker.objects import Message, TaskState, WorkerEvent
+from icij_worker.objects import Message, WorkerEvent
 from icij_worker.routing_strategy import Routing
 from icij_worker.utils.amqp import (
     AMQPConfigMixin,
@@ -208,9 +208,12 @@ class AMQPWorker(Worker, AMQPMixin):
 
     async def _negatively_acknowledge(self, nacked: Task):
         # pylint: disable=unused-argument
+        # We don't actually nack the task message here, otherwise the task message
+        # would be redistributed as is. Instead, since a ErrorEvent was sent earlier,
+        # the TM will requeue the task as needed (with the updated retry count and
+        # so on). So we just mark the current task message as correctly processed
         message = self._delivered[nacked.id]
-        requeue = nacked.state is not TaskState.ERROR
-        await message.nack(requeue=requeue)
+        await message.ack()
 
     async def _publish_event(self, event: ManagerEvent):
         await self._publisher.publish_event(event)
