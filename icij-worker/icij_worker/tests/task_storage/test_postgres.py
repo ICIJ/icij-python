@@ -594,6 +594,37 @@ WHERE table_name = 'tasks' AND column_name = 'group';
         assert args_cols is not None
 
 
+async def test_migrate_rename_task_group_into_group_id(
+    test_postgres_conn: AsyncConnection,
+):
+    # Given
+    conn = test_postgres_conn
+    # When
+    async with conn.cursor() as cur:
+        migration_query = (
+            "SELECT * FROM schema_migrations WHERE version = '20250115170559';"
+        )
+        await cur.execute(migration_query)
+        migration = await cur.fetchone()
+        assert migration is not None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'group';
+"""
+        await cur.execute(arguments_col_query)
+        arguments_cols = await cur.fetchone()
+        assert arguments_cols is None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'group_id';
+"""
+        await cur.execute(arguments_col_query)
+        args_cols = await cur.fetchone()
+        assert args_cols is not None
+
+
 async def test_migrate_rename_task_cancelled_at_into_completed_at(
     test_postgres_conn: AsyncConnection,
 ):

@@ -67,7 +67,7 @@ CREATE TABLE public.task_parents (
 CREATE TABLE public.tasks (
     id character varying(128) NOT NULL,
     name character varying(128) NOT NULL,
-    "group" character varying(128),
+    group_id character varying(128),
     state character varying(16) NOT NULL,
     progress real,
     created_at timestamp with time zone NOT NULL,
@@ -176,4 +176,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20240827142011'),
     ('20240919114022'),
     ('20241108104336'),
-    ('20250114171324');
+    ('20250114171324'),
+    ('20250115170559');
