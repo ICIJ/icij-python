@@ -45,7 +45,7 @@ async def test_task_manager_enqueue(
         except asyncio.TimeoutError:
             pytest.fail(f"Failed to receive result in less than {receive_timeout}")
     created_at = task_json.pop("createdAt")
-    with fail_if_exception("failed to parse cancelled_at datetime"):
+    with fail_if_exception("failed to parse createdAt datetime"):
         datetime.fromisoformat(created_at)
     expected_json = {
         "@type": "Task",
@@ -85,7 +85,7 @@ async def test_task_manager_enqueue_with_group(
         except asyncio.TimeoutError:
             pytest.fail(f"Failed to receive result in less than {receive_timeout}")
     created_at = task_json.pop("createdAt")
-    with fail_if_exception("failed to parse cancelled_at datetime"):
+    with fail_if_exception("failed to parse createdAt datetime"):
         datetime.fromisoformat(created_at)
     expected_json = {
         "@type": "Task",
@@ -174,7 +174,7 @@ async def test_task_manager_requeue(
         except asyncio.TimeoutError:
             pytest.fail(f"Failed to receive result in less than {receive_timeout}")
     created_at = task_json.pop("createdAt")
-    with fail_if_exception("failed to parse cancelled_at datetime"):
+    with fail_if_exception("failed to parse createdAt datetime"):
         datetime.fromisoformat(created_at)
     expected_json = {
         "@type": "Task",

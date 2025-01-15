@@ -18,6 +18,7 @@ from icij_worker.task_storage.neo4j_ import (
     migrate_add_task_shutdown_v0_tx,
     migrate_cancelled_event_created_at_v0_tx,
     migrate_index_event_dates_v0_tx,
+    migrate_rename_task_cancelled_at_into_created_at_v0_tx,
     migrate_task_arguments_into_args_v0_tx,
     migrate_task_errors_v0_tx,
     migrate_task_inputs_to_arguments_v0_tx,
@@ -188,6 +189,19 @@ RETURN task"""
  }) 
 RETURN task"""
     await neo4j_test_driver.execute_query(query_1, now=_NOW)
+
+
+@pytest.fixture(scope="function")
+async def populate_tasks_legacy_v6(neo4j_test_driver: neo4j.AsyncDriver):
+    query_0 = """CREATE (task:_Task:CANCELLED {
+    id: 'task-0', 
+    name: 'hello_world',
+    createdAt: $now,
+    cancelledAt: $now,
+    args: '{"greeted": "0"}'
+ }) 
+RETURN task"""
+    await neo4j_test_driver.execute_query(query_0, now=_NOW)
 
 
 @pytest.fixture(scope="function")
@@ -692,3 +706,19 @@ async def test_migrate_add_task_shutdown_v0_tx(
             existing_indexes.add(rec["name"])
         assert "index_worker_id" in existing_indexes
         assert "index_shutdown_event_created_at" in existing_indexes
+
+
+async def test_migrate_rename_task_cancelled_at_into_created_at_v0_tx(
+    neo4j_test_driver: neo4j.AsyncDriver,
+    populate_tasks_legacy_v6,  # pylint: disable=unused-argument
+):
+    # When
+    async with neo4j_test_driver.session() as sess:
+        await sess.execute_write(migrate_rename_task_cancelled_at_into_created_at_v0_tx)
+        task_query = "MATCH (task:_Task) RETURN task"
+        tasks = await sess.run(task_query)
+        tasks = [t async for t in tasks]
+        assert len(tasks) == 1
+        task = tasks[0]["task"]
+        assert task.get("cancelledAt") is None
+        assert task.get("completedAt") is not None

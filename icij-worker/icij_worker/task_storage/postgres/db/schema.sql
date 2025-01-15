@@ -1,6 +1,7 @@
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -49,6 +50,17 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: task_parents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_parents (
+    task_id character varying(128) NOT NULL,
+    parent_id character varying(128) NOT NULL,
+    provided_argument character varying(128) NOT NULL
+);
+
+
+--
 -- Name: tasks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60,7 +72,6 @@ CREATE TABLE public.tasks (
     progress real,
     created_at timestamp with time zone NOT NULL,
     completed_at timestamp with time zone,
-    cancelled_at timestamp with time zone,
     retries_left smallint NOT NULL,
     max_retries smallint,
     args character varying
@@ -136,6 +147,22 @@ ALTER TABLE ONLY public.results
 
 
 --
+-- Name: task_parents task_parents_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_parents
+    ADD CONSTRAINT task_parents_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.tasks(id);
+
+
+--
+-- Name: task_parents task_parents_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_parents
+    ADD CONSTRAINT task_parents_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -147,4 +174,6 @@ ALTER TABLE ONLY public.results
 INSERT INTO public.schema_migrations (version) VALUES
     ('20240802104314'),
     ('20240827142011'),
-    ('20240919114022');
+    ('20240919114022'),
+    ('20241108104336'),
+    ('20250114171324');

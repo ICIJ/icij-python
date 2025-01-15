@@ -93,20 +93,6 @@ def task_1() -> Task:
 
 _ = task_1()
 
-_TASK_COLS_LEGACY_V0 = [
-    "id",
-    "name",
-    "namespace",
-    "state",
-    "progress",
-    "created_at",
-    "completed_at",
-    "cancelled_at",
-    "retries_left",
-    "max_retries",
-    "arguments",
-]
-
 _TASK_COLS = [
     "id",
     "name",
@@ -115,7 +101,6 @@ _TASK_COLS = [
     "progress",
     "created_at",
     "completed_at",
-    "cancelled_at",
     "retries_left",
     "max_retries",
     "args",
@@ -202,25 +187,6 @@ async def test_postgres_conn(
     conn = test_postgres_conn_session
     await _wipe_tasks(conn)
     return conn
-
-
-@pytest.fixture()
-async def populate_task_legacy_v0(test_postgres_conn: AsyncConnection) -> List[Task]:
-    tasks = [task_0(), task_1()]
-    task_tuples = [t.dict() for t in tasks]
-    for i, t in enumerate(task_tuples):
-        t["arguments"] = json.dumps(t["arguments"])
-        t["namespace"] = "some-namespace" if i % 2 == 0 else None
-    task_tuples = [tuple(t[col] for col in _TASK_COLS_LEGACY_V0) for t in task_tuples]
-    async with test_postgres_conn.cursor() as cur:
-        query = f"INSERT INTO tasks ({', '.join(_TASK_COLS_LEGACY_V0)}) VALUES\n"
-        values_placeholder = (
-            f"({','.join('%s' for _ in range(len(_TASK_COLS_LEGACY_V0)))})"
-        )
-        query += ",\n".join(cur.mogrify(values_placeholder, t) for t in task_tuples)
-        query += ";"
-        await cur.execute(query)
-    return tasks
 
 
 @pytest.fixture()
@@ -622,6 +588,37 @@ WHERE table_name = 'tasks' AND column_name = 'namespace';
         arguments_col_query = """SELECT column_name
 FROM information_schema.columns 
 WHERE table_name = 'tasks' AND column_name = 'group';
+"""
+        await cur.execute(arguments_col_query)
+        args_cols = await cur.fetchone()
+        assert args_cols is not None
+
+
+async def test_migrate_rename_task_cancelled_at_into_completed_at(
+    test_postgres_conn: AsyncConnection,
+):
+    # Given
+    conn = test_postgres_conn
+    # When
+    async with conn.cursor() as cur:
+        migration_query = (
+            "SELECT * FROM schema_migrations WHERE version = '20250114171324';"
+        )
+        await cur.execute(migration_query)
+        migration = await cur.fetchone()
+        assert migration is not None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'tasks' AND column_name = 'cancelled_at';
+"""
+        await cur.execute(arguments_col_query)
+        arguments_cols = await cur.fetchone()
+        assert arguments_cols is None
+
+        arguments_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'completed_at';
 """
         await cur.execute(arguments_col_query)
         args_cols = await cur.fetchone()

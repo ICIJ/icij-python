@@ -171,11 +171,11 @@ async def test_consume_cancelled_event(
             expected_cancelled_at_type = datetime
         assert await async_true_after(expected, after_s=consume_timeout), msg
         db_task = await task_manager.get_task(task_id=task.id)
-        assert isinstance(db_task.cancelled_at, expected_cancelled_at_type)
+        assert isinstance(db_task.completed_at, expected_cancelled_at_type)
         db_task = db_task.dict()
         expected_task = expected_task.dict()
-        db_task.pop("cancelled_at", None)
-        expected_task.pop("cancelled_at", None)
+        db_task.pop("completed_at", None)
+        expected_task.pop("completed_at", None)
         assert db_task == expected_task
 
 
