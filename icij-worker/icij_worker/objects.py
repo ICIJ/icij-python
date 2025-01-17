@@ -326,7 +326,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             as_dict = {
                 k.name: v
                 for k, v in zip(cursor.description, values)
-                if k.name != "group"
+                if k.name != "group_id"
             }
             return cls(**as_dict)
 

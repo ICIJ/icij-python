@@ -32,7 +32,7 @@ TASK_ARGS = "args"
 TASK_CANCELLED_AT_DEPRECATED = "cancelled_at"
 TASK_COMPLETED_AT = "completed_at"
 TASK_CREATED_AT = _CREATED_AT
-TASK_GROUP = "group_id"
+TASK_GROUP = "group"
 TASK_ID = "id"
 TASK_MAX_RETRIES = "max_retries"
 TASK_NAME = "name"
@@ -48,7 +48,7 @@ TASK_RESULT_TASK_ID = _TASK_ID
 TASK_RESULT_RESULT = "result"
 
 # POSTGRES
-POSTGRES_TASKS_GROUP = "group"
+POSTGRES_TASKS_GROUP = "group_id"
 
 POSTGRES_TASKS_TABLE = "tasks"
 POSTGRES_TASK_ERRORS_TABLE = "errors"
