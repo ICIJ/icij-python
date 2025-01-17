@@ -96,7 +96,7 @@ _ = task_1()
 _TASK_COLS = [
     "id",
     "name",
-    "group",
+    "group_id",
     "state",
     "progress",
     "created_at",
@@ -195,7 +195,7 @@ async def populate_task(test_postgres_conn: AsyncConnection) -> List[Task]:
     task_tuples = [t.dict() for t in tasks]
     for i, t in enumerate(task_tuples):
         t["args"] = json.dumps(t["args"])
-        t["group"] = "some-group" if i % 2 == 0 else None
+        t["group_id"] = "some-group" if i % 2 == 0 else None
     task_tuples = [tuple(t[col] for col in _TASK_COLS) for t in task_tuples]
     async with test_postgres_conn.cursor() as cur:
         col_names = sql.SQL(", ").join(sql.Identifier(c) for c in _TASK_COLS)
@@ -226,7 +226,7 @@ async def test_save_task(
         await cur.execute(query, (task.id,))
         db_task = await cur.fetchone()
     db_task["args"] = json.loads(db_task["args"])
-    group = db_task.pop("group")
+    group = db_task.pop("group_id")
     assert group is None
     db_task = Task(**db_task)
     assert db_task == task
@@ -255,7 +255,7 @@ async def test_save_existing_task(
         await cur.execute(query, (task.id,))
         db_task = await cur.fetchone()
     db_task["args"] = json.loads(db_task["args"])
-    group = db_task.pop("group")
+    group = db_task.pop("group_id")
     assert group == "some-group"
     db_task = Task(**db_task)
     assert db_task == task
@@ -577,19 +577,19 @@ async def test_migrate_rename_task_namespace_into_group(
         migration = await cur.fetchone()
         assert migration is not None
 
-        arguments_col_query = """SELECT column_name
+        ns_col_query = """SELECT column_name
 FROM information_schema.columns 
 WHERE table_name = 'tasks' AND column_name = 'namespace';
 """
-        await cur.execute(arguments_col_query)
+        await cur.execute(ns_col_query)
         arguments_cols = await cur.fetchone()
         assert arguments_cols is None
 
-        arguments_col_query = """SELECT column_name
+        group_col_query = """SELECT column_name
 FROM information_schema.columns 
-WHERE table_name = 'tasks' AND column_name = 'group';
+WHERE table_name = 'tasks' AND column_name = 'group_id';
 """
-        await cur.execute(arguments_col_query)
+        await cur.execute(group_col_query)
         args_cols = await cur.fetchone()
         assert args_cols is not None
 
@@ -608,18 +608,49 @@ async def test_migrate_rename_task_cancelled_at_into_completed_at(
         migration = await cur.fetchone()
         assert migration is not None
 
-        arguments_col_query = """SELECT column_name
+        cancelled_at_col_query = """SELECT column_name
 FROM information_schema.columns
 WHERE table_name = 'tasks' AND column_name = 'cancelled_at';
 """
-        await cur.execute(arguments_col_query)
+        await cur.execute(cancelled_at_col_query)
         arguments_cols = await cur.fetchone()
         assert arguments_cols is None
 
-        arguments_col_query = """SELECT column_name
+        completed_at_col_query = """SELECT column_name
 FROM information_schema.columns 
 WHERE table_name = 'tasks' AND column_name = 'completed_at';
 """
-        await cur.execute(arguments_col_query)
+        await cur.execute(completed_at_col_query)
+        args_cols = await cur.fetchone()
+        assert args_cols is not None
+
+
+async def test_migrate_rename_task_group_into_group_id(
+    test_postgres_conn: AsyncConnection,
+):
+    # Given
+    conn = test_postgres_conn
+    # When
+    async with conn.cursor() as cur:
+        migration_query = (
+            "SELECT * FROM schema_migrations WHERE version = '20250115170559';"
+        )
+        await cur.execute(migration_query)
+        migration = await cur.fetchone()
+        assert migration is not None
+
+        group_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'group';
+"""
+        await cur.execute(group_col_query)
+        arguments_cols = await cur.fetchone()
+        assert arguments_cols is None
+
+        group_id_col_query = """SELECT column_name
+FROM information_schema.columns 
+WHERE table_name = 'tasks' AND column_name = 'group_id';
+"""
+        await cur.execute(group_id_col_query)
         args_cols = await cur.fetchone()
         assert args_cols is not None
