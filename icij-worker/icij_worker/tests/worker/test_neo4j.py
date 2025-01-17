@@ -188,7 +188,7 @@ _EVENTS = (
         safe_copy(_TASK, update={"completed_at": datetime.now()}), "some-result"
     ),
     CancelledEvent.from_task(
-        safe_copy(_TASK, update={"cancelled_at": datetime.now()}), requeue=True
+        safe_copy(_TASK, update={"completed_at": datetime.now()}), requeue=True
     ),
 )
 

@@ -98,7 +98,7 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     @final
     async def requeue(self, task: Task):
         logger.info("requeing Task(id=%s)", task.id)
-        update = {"state": TaskState.QUEUED, "progress": 0.0, "cancelled_at": None}
+        update = {"state": TaskState.QUEUED, "progress": 0.0}
         updated = safe_copy(task, update=update)
         await self._requeue(updated)
         logger.info("Task(id=%s) requeued", updated.id)

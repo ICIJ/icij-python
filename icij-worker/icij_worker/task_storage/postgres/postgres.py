@@ -31,6 +31,7 @@ from psycopg_pool import AsyncConnectionPool
 from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import RoutingStrategy, ResultEvent, Task, TaskState
 from icij_worker.constants import (
+    POSTGRES_TASKS_GROUP,
     POSTGRES_TASKS_TABLE,
     POSTGRES_TASK_DBS_TABLE,
     POSTGRES_TASK_DB_IS_LOCKED,
@@ -41,7 +42,6 @@ from icij_worker.constants import (
     TASK_ERRORS_TASK_ID,
     TASK_ID,
     TASK_NAME,
-    TASK_GROUP,
     TASK_RESULT_CREATED_AT,
     TASK_RESULT_RESULT,
     TASK_RESULT_TASK_ID,
@@ -263,7 +263,7 @@ class PostgresStorage(TaskStorage):
                 ns = await cur.fetchone()
         if ns is None:
             raise UnknownTask(task_id)
-        ns = ns["task_ns"]
+        ns = ns["task_group"]
         return ns
 
     async def init_database(self, db_name: str):
@@ -291,7 +291,10 @@ class PostgresStorage(TaskStorage):
             db_meta = dict()
             async with pool.connection() as conn:
                 async for task_meta in _tasks_meta(conn):
-                    db_meta[task_meta[TASK_ID]] = (db_name, task_meta[TASK_GROUP])
+                    db_meta[task_meta[TASK_ID]] = (
+                        db_name,
+                        task_meta[POSTGRES_TASKS_GROUP],
+                    )
             self._task_meta.update(db_meta)
 
     async def _pool_factory(
@@ -341,7 +344,7 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
 
 async def _insert_task(cur: AsyncClientCursor, task: Task, group: Optional[str]):
     task_as_dict = task.dict(exclude={Task.registry_key.default})
-    task_as_dict[TASK_GROUP] = group
+    task_as_dict[POSTGRES_TASKS_GROUP] = group
     task_as_dict[TASK_ARGS] = ujson.dumps(jsonable_encoder(task.args))
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
     col_value_placeholders = sql.SQL(", ").join(
@@ -366,10 +369,10 @@ async def _get_tasks(
     # pylint: disable=unused-argument
     where = []
     if group is not None:
-        where_ns = sql.SQL("task.{} = {}").format(
-            sql.Identifier(TASK_GROUP), sql.Literal(group)
+        where_group = sql.SQL("task.{} = {}").format(
+            sql.Identifier(POSTGRES_TASKS_GROUP), sql.Literal(group)
         )
-        where.append(where_ns)
+        where.append(where_group)
     if task_name is not None:
         where_task_name = sql.SQL("task.{} = {}").format(
             sql.Identifier(TASK_NAME), sql.Literal(task_name)
@@ -583,17 +586,17 @@ WHERE t.{task_id} = %s
 )
 
 _TASK_META_QUERY = sql.SQL(
-    "SELECT t.{task_id}, t.{task_ns} FROM {task_table} AS t;"
+    "SELECT t.{task_id}, t.{task_group} FROM {task_table} AS t;"
 ).format(
     task_id=sql.Identifier(TASK_ID),
-    task_ns=sql.Identifier(TASK_GROUP),
+    task_group=sql.Identifier(POSTGRES_TASKS_GROUP),
     task_table=sql.Identifier(POSTGRES_TASKS_TABLE),
 )
 
 _GET_TASK_GROUP_QUERY = sql.SQL(
-    "SELECT t.{} AS task_ns FROM {} AS t WHERE t.{} = %s;"
+    "SELECT t.{} AS task_group FROM {} AS t WHERE t.{} = %s;"
 ).format(
-    sql.Identifier(TASK_GROUP),
+    sql.Identifier(POSTGRES_TASKS_GROUP),
     sql.Identifier(POSTGRES_TASKS_TABLE),
     sql.Identifier(TASK_ID),
 )

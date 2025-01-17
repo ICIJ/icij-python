@@ -81,10 +81,10 @@ class TaskState(str, Enum):
             return stored.state
         if update.state is TaskState.QUEUED and stored.state is TaskState.RUNNING:
             # We have to store the most recent state
-            if update.cancelled_at is not None:
+            if update.completed_at is not None:
                 if (
-                    stored.cancelled_at is None
-                    or stored.cancelled_at < update.cancelled_at
+                    stored.completed_at is None
+                    or stored.completed_at < update.completed_at
                 ):
                     return update.state
                 return stored.state
@@ -228,7 +228,6 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     progress: Optional[float] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
-    cancelled_at: Optional[datetime] = None
     retries_left: Optional[int] = None
     max_retries: Optional[int] = None
 
@@ -289,10 +288,6 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
 
     @validator("completed_at", pre=True)
     def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
-
-    @validator("cancelled_at", pre=True)
-    def _validate_cancelled_at(cls, value: Any):  # pylint: disable=no-self-argument
         return cls._validate_neo4j_datetime(value)
 
     @validator("progress")
@@ -371,10 +366,9 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         cancelled_state = TaskState.QUEUED if event.requeue else TaskState.CANCELLED
         update["state"] = cancelled_state
         if event.requeue:
-            update["cancelled_at"] = None
             update["progress"] = 0.0
         else:
-            update["cancelled_at"] = event.created_at
+            update["completed_at"] = event.created_at
         updated = safe_copy(base_update, update=update)
         return updated
 
@@ -664,9 +658,8 @@ class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
     progress: Optional[float] = None
     retries_left: Optional[int] = None
     completed_at: Optional[datetime] = None
-    cancelled_at: Optional[datetime] = None
 
-    _from_task = ["state", "progress", "retries_left", "completed_at", "cancelled_at"]
+    _from_task = ["state", "progress", "retries_left", "completed_at"]
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> TaskUpdate:

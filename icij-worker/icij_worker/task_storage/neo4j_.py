@@ -17,6 +17,7 @@ from icij_worker.constants import (
     NEO4J_SHUTDOWN_EVENT_NODE,
     NEO4J_TASK_ARGS,
     NEO4J_TASK_ARGUMENTS_DEPRECATED,
+    NEO4J_TASK_CANCELLED_AT_DEPRECATED,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
     NEO4J_TASK_CANCEL_EVENT_CREATED_AT_DEPRECATED,
     NEO4J_TASK_CANCEL_EVENT_NODE,
@@ -548,6 +549,23 @@ ON (worker.{NEO4J_SHUTDOWN_EVENT_CREATED_AT})
     await tx.run(create_shutdown_index)
 
 
+async def migrate_rename_task_cancelled_at_into_created_at_v0_tx(
+    tx: neo4j.AsyncTransaction,
+):
+    renamed_cancelled_at_into_created_at = f"""
+MATCH (task:{NEO4J_TASK_NODE}:CANCELLED)
+SET task.{NEO4J_TASK_COMPLETED_AT} = task.{NEO4J_TASK_CANCELLED_AT_DEPRECATED}
+"""
+    await tx.run(renamed_cancelled_at_into_created_at)
+
+    delete_cancelled_at_prop = f"""
+MATCH (task:{NEO4J_TASK_NODE})
+WHERE task.{NEO4J_TASK_CANCELLED_AT_DEPRECATED} IS NOT NULL
+REMOVE task.{NEO4J_TASK_CANCELLED_AT_DEPRECATED}
+"""
+    await tx.run(delete_cancelled_at_prop)
+
+
 # pylint: disable=line-too-long
 MIGRATIONS = [
     add_support_for_async_task_tx,
@@ -562,4 +580,5 @@ MIGRATIONS = [
     migrate_task_arguments_into_args_v0_tx,
     migrate_task_namespace_into_group_v0,
     migrate_add_task_shutdown_v0_tx,
+    migrate_rename_task_cancelled_at_into_created_at_v0_tx,
 ]
