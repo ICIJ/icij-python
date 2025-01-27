@@ -1,6 +1,10 @@
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Type, Union
+from collections import defaultdict
 
+from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Tuple, Type, Union
+
+from icij_worker import ResultEvent, RoutingStrategy, Task, TaskError
+from icij_worker.dag.dag import TaskDAG
 from icij_worker import ResultEvent, Task, TaskError
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, TaskUpdate
@@ -8,12 +12,16 @@ from icij_worker.task_storage import TaskStorage
 
 DBItem = Union[List, Dict]
 
+TaskParent = Tuple[str, str]
+
 
 class KeyValueStorage(TaskStorage, ABC):
     # Save each type in a different DB to speedup lookup, but that could be changed
     _tasks_db_name = "tasks"
     _results_db_name = "results"
     _errors_db_name = "errors"
+    _parents_db_name = "parents"
+    _routing_strategy: RoutingStrategy
 
     async def save_task_(self, task: Task, group: Optional[str]) -> bool:
         """When possible override this to be transactional"""
@@ -34,6 +42,7 @@ class KeyValueStorage(TaskStorage, ABC):
                 )
                 raise ValueError(msg)
             update = TaskUpdate.from_task(task).dict(exclude_none=True)
+            update["args"] = task.args
             await self._update(self._tasks_db_name, update, key=key)
         return new_task
 
@@ -69,7 +78,7 @@ class KeyValueStorage(TaskStorage, ABC):
             errors = await self._read_key(self._errors_db_name, key=key)
         except UnknownTask:
             return []
-        errors = [TaskError.parse_obj(err) for err in errors]
+        errors = [ErrorEvent.parse_obj(err) for err in errors]
         return errors
 
     async def get_task_result(self, task_id: str) -> ResultEvent:

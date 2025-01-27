@@ -231,7 +231,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
     created_at: datetime
     completed_at: Optional[datetime] = None
     retries_left: Optional[int] = None
-    max_retries: Optional[int] = None
+    max_retries: int = 3
 
     _non_inherited_from_event = [
         "requeue",
@@ -254,7 +254,7 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             v = dict()
         return v
 
-    @root_validator(pre=True)
+    @root_validator
     def retries_left_should_default_to_max_retries_when_missing(
         cls, values: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -285,8 +285,10 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
                 raise UnregisteredTask(self.name, available_tasks) from e
             return self.with_max_retries(max_retries)
         as_dict = self.dict()
-        as_dict.pop("max_retries", None)
-        return Task(max_retries=max_retries, **as_dict)
+        as_dict.pop("retries_left", None)
+        if max_retries is not None:
+            as_dict["max_retries"] = max_retries
+        return Task(**as_dict)
 
     @validator("args", pre=True)
     def _validate_args(cls, value: Any):  # pylint: disable=no-self-argument
@@ -330,6 +332,9 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
             node.pop("group")
         node["state"] = state
         return cls(**node)
+
+    def with_args(self, args: Dict) -> Task:
+        return safe_copy(self, update={"args": args})
 
     @final
     @classmethod

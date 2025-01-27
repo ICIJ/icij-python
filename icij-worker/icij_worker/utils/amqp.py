@@ -167,9 +167,7 @@ class AMQPMixin:
         routing_key: Optional[str],
         mandatory: bool,
     ) -> Optional[ConfirmationFrameType]:
-        message = message.json(
-            exclude_unset=True, by_alias=True, exclude_none=True
-        ).encode()
+        message = message.json(by_alias=True, exclude_none=True).encode()
         message = AioPikaMessage(
             message, delivery_mode=delivery_mode, app_id=self._app_id
         )

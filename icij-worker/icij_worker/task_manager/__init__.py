@@ -2,25 +2,47 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from asyncio import Task as AsyncIOTask
+from copy import deepcopy
+from datetime import datetime, timezone
 from functools import cached_property
-from typing import ClassVar, Optional, final
+from typing import (
+    Any,
+    ClassVar,
+    Collection,
+    Dict,
+    Optional,
+    Set,
+    Tuple,
+    cast,
+    final,
+)
 
+from async_lru import alru_cache
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.app import AsyncAppConfig
-from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
+from icij_worker.dag.dag import TaskDAG
+from icij_worker.exceptions import (
+    DAGError,
+    TaskAlreadyQueued,
+    UnknownTask,
+    UnregisteredTask,
+)
 from icij_worker.objects import (
     AsyncBackend,
     CancelledEvent,
     ErrorEvent,
     ManagerEvent,
     ProgressEvent,
+    READY_STATES,
+    TaskError,
+    TaskUpdate,
 )
 from icij_worker.routing_strategy import RoutingStrategy
-from icij_worker.task_storage import TaskStorage
-from icij_worker.utils import RegistrableConfig
+from icij_worker.task_storage import DAGTaskStorage, TaskStorage
+from icij_worker.utils import CacheDict, RegistrableConfig, find_missing_args
 from icij_worker.utils.registrable import RegistrableFromConfig
 
 logger = logging.getLogger(__name__)
@@ -39,10 +61,17 @@ class TaskManagerConfig(RegistrableConfig):
         return app
 
 
+_TaskName = str
+_TaskMeta = Tuple[_TaskName, TaskState, Optional[float]]
+
+
+# TODO: try to isolate the DAG part to keep the main TM codebase light and simple
 class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
-    def __init__(self, app: AsyncApp):
+    def __init__(self, app: AsyncApp, caches_size: int = 1000):
         self._app = app
         self._loop = asyncio.get_event_loop()
+        self._caches_size = caches_size
+        self._task_metas: Dict[str, _TaskMeta] = CacheDict(cache_len=self._caches_size)
         self._consume_loop: Optional[AsyncIOTask] = None
 
     @final
@@ -87,13 +116,17 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
         if task.state is not TaskState.CREATED:
             msg = f"invalid state {task.state}, expected {TaskState.CREATED}"
             raise ValueError(msg)
-        task = await self.get_task(task.id)
-        if task.state is TaskState.QUEUED:
-            raise TaskAlreadyQueued(task.id)
-        await self._enqueue(task)
+        db_task = await self.get_task(task.id)
+        if db_task.state is TaskState.QUEUED:
+            raise TaskAlreadyQueued(db_task.id)
+        await self._enqueue_(task)
         queued = safe_copy(task, update={"state": TaskState.QUEUED})
         await self.save_task(queued)
+        self._update_metas(queued)
         return queued
+
+    async def _enqueue_(self, task: Task):
+        await self._enqueue(task)
 
     @final
     async def requeue(self, task: Task):
@@ -101,11 +134,10 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
         update = {"state": TaskState.QUEUED, "progress": 0.0}
         updated = safe_copy(task, update=update)
         await self._requeue(updated)
+        self._update_metas(updated)
         logger.info("Task(id=%s) requeued", updated.id)
 
-    @final
     async def save_task(self, task: Task) -> bool:
-        max_retries = None
         try:
             group = await self.get_task_group(task_id=task.id)
         except UnknownTask as e:
@@ -114,18 +146,11 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
                 if group is not None:
                     group = group.name
                 max_retries = self._app.registry[task.name].max_retries
+                task = task.with_max_retries(max_retries)
             except KeyError:
                 available_tasks = list(self._app.registry)
                 raise UnregisteredTask(task.name, available_tasks) from e
-        task = task.with_max_retries(max_retries)
         return await self.save_task_(task, group)
-
-    async def _save_cancelled_event(self, event: CancelledEvent):
-        task = await self.get_task(event.task_id)
-        task = task.as_resolved(event)
-        if event.requeue and not self.late_ack:
-            await self.requeue(task)
-        await self.save_task(task)
 
     @final
     async def consume_events(self):
@@ -146,15 +171,15 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
             else:
                 raise TypeError(f"unexpected message type {msg.__class__}")
 
-    @final
-    async def _save_result_event(self, result: ResultEvent):
+    async def _save_result_event(self, result: ResultEvent) -> Task:
         await self.save_result(result)
         task = await self.get_task(result.task_id)
         task = task.as_resolved(result)
         await self.save_task(task)
+        self._update_metas(task)
+        return task
 
-    @final
-    async def _save_error_event(self, error: ErrorEvent):
+    async def _save_error_event(self, error: ErrorEvent) -> Task:
         # Update the task retries count
         task = await self.get_task(error.task_id)
         task = task.as_resolved(error)
@@ -162,9 +187,31 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
         if task.state is TaskState.QUEUED:
             await self.requeue(task)
         await self.save_task(task)
+        self._update_metas(task)
+        return task
+
+    async def _save_progress_event(self, event: ProgressEvent) -> Task:
+        # Might be better to be overridden to be performed in a transactional manner
+        # when possible
+        task = await self.get_task(event.task_id)
+        task = task.as_resolved(event)
+        await self.save_task(task)
+        self._update_metas(task)
+        return task
+
+    async def _save_cancelled_event(self, event: CancelledEvent):
+        task = await self.get_task(event.task_id)
+        task = task.as_resolved(event)
+        if event.requeue and not self.late_ack:
+            await self.requeue(task)
+        self._update_metas(task)
+        await self.save_task(task)
+
+    async def cancel(self, task_id: str, *, requeue: bool):
+        await self._cancel(task_id, requeue=requeue)
 
     @abstractmethod
-    async def cancel(self, task_id: str, *, requeue: bool): ...
+    async def _cancel(self, task_id: str, *, requeue: bool): ...
 
     @abstractmethod
     async def shutdown_workers(self): ...
@@ -177,3 +224,241 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
 
     @abstractmethod
     async def _requeue(self, task: Task): ...
+
+    def _update_metas(self, task: Task):
+        self._task_metas[task.id] = (task.name, task.state, task.progress)
+
+    async def _get_task_meta(self, task_id) -> _TaskMeta:
+        meta = self._task_metas.get(task_id)
+        if meta is None:
+            task = await self.get_task(task_id)
+            self._update_metas(task)
+            meta = (task.name, task.state, task.progress)
+            self._task_metas[task.id] = meta
+        return meta
+
+    async def _get_task_progress(self, task_id: str) -> Optional[float]:
+        meta = await self._get_task_meta(task_id)
+        return meta[2]
+
+
+class DAGTaskManager(TaskManager, DAGTaskStorage, ABC):
+    def __init__(self, app: AsyncApp, caches_size: int = 1000):
+        super().__init__(app, caches_size)
+        self._get_task_dag_ = alru_cache(maxsize=self._caches_size)(self._get_task_dag_)
+        
+    async def _get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        dag = await self._get_task_dag_(task_id)
+        if dag is None:
+            return dag
+        done = []
+        for t_id in dag:
+            meta = await self._get_task_meta(t_id)
+            if meta[2] == TaskState.DONE:
+                done.append(t_id)
+        dag.done(*done)
+        return dag
+
+    async def save_task(self, task: Task) -> bool:
+        is_new = await super().save_task(task)
+        if is_new:
+            task = task.with_max_retries(self._app)
+            has_dag = bool(self._app.registry[task.name].parents)
+            if has_dag:
+                group = self._app.registry[task.name].group
+                await self._save_task_dag(task, group)
+        return is_new
+
+    async def _save_task_dag(self, task: Task, group: Optional[str]):
+        max_retries = self._app.registry[task.name].max_retries
+        task = task.with_max_retries(max_retries)
+        task_dag = TaskDAG.from_app(self._app, task)
+        for t in task_dag.created_tasks:
+            await self.save_task_(t, group)
+        for child, parents in task_dag.arg_providers.items():
+            for provided_arg, parent in parents.items():
+                await self._save_dag_dependency(
+                    child, parent_id=parent, provided_arg=provided_arg
+                )
+
+    async def _enqueue_(self, task: Task):
+        dag = await self._get_task_dag(task.id)
+        if dag is not None:
+            if task.id == dag.dag_task_id:
+                await self._enqueue_start_nodes(dag, task)
+        await self._enqueue(task)
+
+    async def _enqueue_start_nodes(self, dag: TaskDAG, dag_task: Task):
+        start_nodes = dag.get_ready()
+        for start_task_id in start_nodes:
+            start_task = await self.get_task(start_task_id)
+            args = await self._get_args_from_dag(
+                start_task, dag, already_known=dag_task.args
+            )
+            start_task = start_task.with_args(args)
+            await self.enqueue(start_task)
+
+    async def _save_result_event(self, result: ResultEvent) -> Task:
+        task = await super()._save_result_event(result)
+        dag = await self._get_task_dag(task.id)
+        if dag is not None:
+            has_next = await self._enqueue_next_tasks(task, dag)
+            if not has_next:
+                dag_task = await self.get_task(dag.dag_task_id)
+                update = TaskUpdate.done(completed_at=result.created_at)
+                dag_task = safe_copy(dag_task, update=update.dict(exclude_unset=True))
+                await self.save_task(dag_task)
+        return task
+
+    async def _save_error_event(self, error: ErrorEvent) -> Task:
+        task = await super()._save_error_event(error)
+        if task.state is TaskState.ERROR:
+            dag = await self._get_task_dag(task.id)
+            if dag is not None:
+                logger.info(
+                    'fatal error in DAG task Task(id="%s"), cancelling other tasks',
+                    task.id,
+                )
+                already_known = {task.id, dag.dag_task_id}
+                # TODO: here we don't really need the dag but just the list of DAG task,
+                #  we might gain a little bit of time by not building the actual DAG
+                await self._cancel_dag_tasks(
+                    dag, requeue=False, already_known=already_known
+                )
+                dag_error = DAGError(dag.dag_task_id, error)
+                dag_error = TaskError.from_exception(dag_error)
+                dag_task = await self.get_task(dag.dag_task_id)
+                dag_error = ErrorEvent(
+                    task_id=dag.dag_task_id,
+                    error=dag_error,
+                    created_at=error.created_at,
+                )
+                dag_task = dag_task.as_resolved(dag_error)
+                await self.save_error(dag_error)
+                await self.save_task(dag_task)
+        elif task.state is TaskState.QUEUED:
+            dag = await self._get_task_dag(task.id)
+            if dag is not None:
+                # TODO: here we don't really need the dag but just the list of DAG task,
+                #  we might gain a little bit of time by not building the actual DAG
+                await self._save_dag_task_progress(dag)
+        else:
+            raise ValueError(f"unexpected task state {task.state}")
+        return task
+
+    async def _save_progress_event(self, event: ProgressEvent) -> Task:
+        task = await super()._save_progress_event(event)
+        dag = await self._get_task_dag(event.task_id)
+        if dag is not None:
+            # TODO: here we don't really need the dag but just the list of DAG task,
+            #  we might gain a little bit of time by not building the actual DAG
+            await self._save_dag_task_progress(dag)
+        return task
+
+    async def _enqueue_next_tasks(self, task: Task, dag: TaskDAG) -> bool:
+        # Mark done task as done
+        dag.done(task.id)
+        # Update task with other done tasks
+        await self._mark_done_tasks(dag, already_done={task.id})
+        # Enqueue next tasks
+        already_known = deepcopy(task.args)
+        dag_task = await self.get_task(dag.dag_task_id)
+        already_known.update(deepcopy(dag_task.args))
+        has_next = False
+        if dag.is_active():
+            successors = dag.successors(task.id)
+            for next_task_id in dag.get_ready():
+                has_next = True
+                if next_task_id in successors:
+                    next_task = await self.get_task(next_task_id)
+                    args = await self._get_args_from_dag(next_task, dag, already_known)
+                    next_task = next_task.with_args(args)
+                    await self.enqueue(next_task)
+        return has_next
+
+    async def _save_dag_task_progress(self, dag: TaskDAG):
+        # TODO: here we don't really need the dag but just the list of DAG task,
+        #  we might gain a little bit of time by not building the actual DAG
+        dag_task_progress = await self._get_dag_progress(dag)
+        dag_task_event = ProgressEvent(
+            task_id=dag.dag_task_id,
+            progress=dag_task_progress,
+            created_at=datetime.now(timezone.utc),
+        )
+        dag_task = await self.get_task(dag.dag_task_id)
+        dag_task = dag_task.as_resolved(dag_task_event)
+        await self.save_task(dag_task)
+
+    async def _get_args_from_dag(
+        self, task: Task, dag: TaskDAG, already_known: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        args = dict()
+        task_fn = self._app.registry[task.name].task
+        args.update(cast(dict, task.args))
+        args.update(already_known)
+        missing = find_missing_args(task_fn, args)
+        for arg in missing:
+            provider_id = dag.get_argument_provider(task.id, argument_name=arg)
+            res = await self.get_task_result(provider_id)
+            args[arg] = res
+        return args
+
+    async def cancel(self, task_id: str, *, requeue: bool):
+        dag = await self._get_task_dag(task_id)
+        if dag is not None:
+            logger.info(
+                'Task(id="%s") was cancelled, cancelling its DAG tasks',
+                task_id,
+            )
+            # TODO: here we don't really need the dag but just the list of DAG task,
+            #  we might gain a little bit of time by not building the actual DAG
+            await self._cancel_dag_tasks(dag, requeue)
+            cancelled_event = CancelledEvent(
+                task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
+            )
+            await self._save_cancelled_event(cancelled_event)
+        else:
+            await super().cancel(task_id, requeue=requeue)
+
+    async def _cancel_dag_tasks(
+        self,
+        dag: TaskDAG,
+        requeue: bool,
+        already_known: Optional[Collection[str]] = None,
+    ):
+        if already_known is None:
+            already_known = tuple()
+        already_known = set(already_known)
+        for t_id in dag:
+            if t_id not in already_known:
+                meta = await self._get_task_meta(t_id)
+                dag_t_state = meta[0]
+                if dag_t_state not in READY_STATES:
+                    logger.info('cancelling Task(id="%s") as DAG was cancelled', t_id)
+                    await self._cancel(t_id, requeue=requeue)
+
+    async def _mark_done_tasks(self, dag: TaskDAG, already_done: Set[str]):
+        for t_id in dag:
+            if t_id not in already_done:
+                meta = await self._get_task_meta(t_id)
+                dag_t_state = meta[0]
+                if dag_t_state is TaskState.DONE:
+                    dag.done(t_id)
+
+    async def _get_dag_progress(self, dag: TaskDAG) -> float:
+        # TODO: here we don't really need the dag but just the list of DAG task,
+        #  we might gain a little bit of time by not building the actual DAG
+        progress = 0.0
+        meta = {
+            dag_t: await self._get_task_meta(dag_t)
+            for dag_t in dag
+            if dag_t != dag.dag_task_id
+        }
+        weights = {
+            dag_t: self._app.registry[task_name].progress_weight
+            for dag_t, (task_name, _, _) in meta.items()
+        }
+        for dag_t in meta:
+            progress += meta[dag_t][2] * weights[dag_t]
+        progress /= sum(weights.values())
+        return progress

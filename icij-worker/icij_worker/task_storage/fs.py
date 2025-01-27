@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+from collections import defaultdict
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from pathlib import Path
@@ -11,6 +12,7 @@ from sqlitedict import SqliteDict
 
 from icij_common.pydantic_utils import ICIJModel
 from icij_worker import Task, TaskState
+from icij_worker.dag.dag import TaskDAG
 from icij_worker.exceptions import UnknownTask
 from icij_worker.task_storage import TaskStorageConfig
 from icij_worker.task_storage.key_value import DBItem, KeyValueStorage
@@ -25,9 +27,6 @@ class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
 
 class FSKeyValueStorage(KeyValueStorage):
     # Save each type in a different DB to speedup lookup
-    _tasks_db_name = "tasks"
-    _results_db_name = "results"
-    _errors_db_name = "errors"
     # pylint: disable=c-extension-no-member
     _encode = functools.partial(ujson.encode, default=str)
     _decode = functools.partial(ujson.decode)
@@ -110,6 +109,53 @@ class FSKeyValueStorage(KeyValueStorage):
         task = [Task.parse_obj(t) for t in tasks]
         return task
 
+    async def _save_dag_dependency(
+        self, task_id: str, *, parent_id: str, provided_arg: str
+    ):
+        try:
+            parents = await self._read_key(self._parents_db_name, key=task_id)
+        except UnknownTask:
+            parents = []
+            await self._insert(self._parents_db_name, parents, key=task_id)
+        parents.append([parent_id, provided_arg])
+        await self._insert(self._parents_db_name, parents, key=task_id)
+
+    async def _get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        unexplored = {task_id}
+        graph = defaultdict(dict)
+        seen = set()
+        while unexplored:
+            dag_relationships = []
+            for t, parents in self._dbs[self._parents_db_name].items():
+                if t in unexplored or any(p[0] in unexplored for p in parents):
+                    dag_relationships += [(t, p) for p in parents]
+            unexplored = set()
+            if not dag_relationships:
+                break
+            for child_id, (parent_id, provided_arg) in dag_relationships:
+                graph[child_id][parent_id] = provided_arg
+                if child_id not in seen:
+                    seen.add(child_id)
+                    unexplored.add(child_id)
+                if parent_id not in seen:
+                    seen.add(parent_id)
+                    unexplored.add(parent_id)
+            unexplored = list(unexplored)
+        if not graph:
+            return None
+        parents = set(p for graph_parents in graph.values() for p in graph_parents)
+        all_tasks = set(graph.keys()).union(parents)
+        sink = all_tasks - parents
+        if len(sink) != 1:
+            raise ValueError(f"Found several sinks in DAG {graph}: {sorted(sink)}")
+        sink = next(iter(sink))
+        dag = TaskDAG(dag_task_id=sink)
+        for child, parents in graph.items():
+            for parent, provided_arg in parents.items():
+                dag.add_task_dep(child, parent_id=parent, provided_arg=provided_arg)
+        dag.prepare()
+        return dag
+
     def _make_db(self, filename: str, *, name: str) -> SqliteDict:
         return SqliteDict(
             filename,
@@ -127,5 +173,8 @@ class FSKeyValueStorage(KeyValueStorage):
             ),
             self._errors_db_name: self._make_db(
                 self._db_path, name=self._errors_db_name
+            ),
+            self._parents_db_name: self._make_db(
+                self._db_path, name=self._parents_db_name
             ),
         }

@@ -49,6 +49,10 @@ def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: List[str
     assert app.registered_keys == expected_keys
 
 
+def test_load_app_should_raise_for_conflicting_argument_names_in_dag():
+    assert False
+
+
 def test_validate_group_name_should_not_raise():
     # Given
     app = AsyncApp("some-app")

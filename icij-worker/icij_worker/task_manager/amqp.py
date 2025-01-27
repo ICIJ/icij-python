@@ -11,6 +11,7 @@ from aiormq import DeliveryError
 from pydantic import Field
 
 from icij_worker.app import AsyncApp
+from icij_worker.dag.dag import TaskDAG
 from icij_worker.exceptions import MessageDeserializationError, TaskQueueIsFull
 from icij_worker.objects import (
     AsyncBackend,
@@ -145,6 +146,13 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def save_error(self, error: ErrorEvent):
         await self._storage.save_error(error)
 
+    async def _save_dag_dependency(
+        self, task_id: str, *, parent_id: str, provided_arg: str
+    ):
+        await self._storage._save_dag_dependency(
+            task_id, parent_id=parent_id, provided_arg=provided_arg
+        )
+
     async def _consume(self) -> ManagerEvent:
         # pylint: disable=unnecessary-dunder-call
         msg = await self._manager_messages_it.__anext__()
@@ -182,7 +190,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         except DeliveryError as e:
             raise TaskQueueIsFull(self.max_task_queue_size) from e
 
-    async def cancel(self, task_id: str, *, requeue: bool):
+    async def _cancel(self, task_id: str, *, requeue: bool):
         cancel_event = CancelEvent(
             task_id=task_id, requeue=requeue, created_at=datetime.now(timezone.utc)
         )
@@ -209,6 +217,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             routing_key=routing,
             mandatory=True,  # This is important
         )
+
+    async def _get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        return await self._storage._get_task_dag(task_id)
 
     async def _connection_workflow(self):
         await self._exit_stack.enter_async_context(self._management_client)

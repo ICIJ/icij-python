@@ -347,7 +347,7 @@ async def test_worker_consume_cancel_events(
         is_running = functools.partial(_assert_has_state, TaskState.RUNNING)
         assert await async_true_after(is_running, after_s=after_s), failure
         # When
-        await task_manager.cancel(task.id, requeue=requeue)
+        await task_manager._cancel(task.id, requeue=requeue)
 
         # Then
         failure = f"failed to consume cancel event in less than {after_s}s"

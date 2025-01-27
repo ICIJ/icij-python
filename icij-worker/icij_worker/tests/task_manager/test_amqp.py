@@ -53,6 +53,8 @@ async def test_task_manager_enqueue(
         "state": "CREATED",
         "name": "hello_world",
         "args": {"greeted": "world"},
+        "maxRetries": 3,
+        "retriesLeft": 3,
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
@@ -183,6 +185,8 @@ async def test_task_manager_requeue(
         "name": "hello_world",
         "progress": 0.0,
         "state": "QUEUED",
+        "maxRetries": 3,
+        "retriesLeft": 3,
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
@@ -225,7 +229,7 @@ async def test_task_manager_cancel(
     await task_manager.save_task(task)
 
     # When
-    await task_manager.cancel(task_id=task.id, requeue=requeue)
+    await task_manager._cancel(task_id=task.id, requeue=requeue)
 
     # Then
     channel = task_manager.channel
@@ -240,5 +244,10 @@ async def test_task_manager_cancel(
             pytest.fail(f"Failed to receive result in less than {receive_timeout}")
     created_at = cancel_evt_json.pop("createdAt")
     assert isinstance(datetime.fromisoformat(created_at), datetime)
-    expected_json = {"@type": "CancelEvent", "requeue": requeue, "taskId": "some-id"}
+    expected_json = {
+        "@type": "CancelEvent",
+        "requeue": requeue,
+        "taskId": "some-id",
+        "retriesLeft": 3,
+    }
     assert cancel_evt_json == expected_json

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from copy import deepcopy
 from functools import cached_property
 from graphlib import TopologicalSorter
 from itertools import chain, repeat
@@ -8,6 +9,26 @@ from typing import Dict, List, Optional, Set
 
 from icij_worker.app import AsyncApp
 from icij_worker.objects import Task
+
+
+class NodeInfo:  # Copy of _NodeInfo by with __eq__ implemented for tests
+    __slots__ = "node", "npredecessors", "successors"
+
+    def __init__(self, node):
+        self.node = node
+        self.npredecessors = 0
+        self.successors = []
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, NodeInfo):
+            return False
+        if self.node != other.node:
+            return False
+        if self.npredecessors != other.npredecessors:
+            return False
+        if self.successors != other.successors:
+            return False
+        return True
 
 
 class TaskDAG(TopologicalSorter):
@@ -18,14 +39,18 @@ class TaskDAG(TopologicalSorter):
         self._arg_providers: Dict[str, Dict[str, str]] = dict()
         self._dag_tasks: Optional[Set[Task]] = None
 
+    def _get_nodeinfo(self, node):
+        if (result := self._node2info.get(node)) is None:
+            self._node2info[node] = result = NodeInfo(node)
+        return result
+
     @property
     def arg_providers(self) -> Dict[str, Dict[str, str]]:
         return self._arg_providers
 
     @classmethod
-    def from_app(cls, dag_task: Task, app: AsyncApp) -> TaskDAG:
+    def from_app(cls, app: AsyncApp, dag_task: Task) -> TaskDAG:
         dag = cls(dag_task.id)
-        dag._dag_tasks = set()
         find_deps = [dag_task]
         parent_tasks = dict()
         while dependencies := list(
@@ -45,18 +70,23 @@ class TaskDAG(TopologicalSorter):
                     ).with_max_retries(app)
                     parent_tasks[parent] = parent_task
                 dag.add_task_dep(
-                    child.id, parent=parent_task, provided_arg=provided_arg
+                    child.id, parent_id=parent_task.id, provided_arg=provided_arg
                 )
+                dag.add_created(parent_task)
                 find_deps.append(parent_task)
         _validate_args(dag, dag_task, app)
         return dag
 
-    def add_task_dep(self, child_id: str, *, parent: Task, provided_arg: str):
-        super().add(child_id, parent.id)
+    def add_task_dep(self, child_id: str, *, parent_id: str, provided_arg: str):
+        super().add(child_id, parent_id)
         if child_id not in self._arg_providers:
             self._arg_providers[child_id] = dict()
-        self._arg_providers[child_id][provided_arg] = parent.id
-        self._dag_tasks.add(parent)
+        self._arg_providers[child_id][provided_arg] = parent_id
+
+    def add_created(self, task: Task):
+        if self._dag_tasks is None:
+            self._dag_tasks = set()
+        self._dag_tasks.add(task)
 
     @property
     def created_tasks(self) -> Set[Task]:
@@ -95,13 +125,34 @@ class TaskDAG(TopologicalSorter):
     def __iter__(self):
         yield from self._node2info
 
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, TaskDAG):
+            return False
+        if self.arg_providers != other.arg_providers:
+            return False
+        # Gain a bit of time before computing the heavy stuff
+        if set(self._node2info.keys()) != set(other._node2info.keys()):
+            return False
+        left_node_2_info = deepcopy(self._node2info)
+        right_node_2_info = deepcopy(other._node2info)
+        for k, v in left_node_2_info.items():
+            left_node_2_info[k].successors = sorted(v.successors)
+        for k, v in right_node_2_info.items():
+            right_node_2_info[k].successors = sorted(v.successors)
+        if left_node_2_info != right_node_2_info:
+            return False
+        return True
+
+    def __len__(self) -> int:
+        return len(self._node2info)
+
     def get_argument_provider(self, task_id: str, *, argument_name: str) -> str:
         return self._arg_providers[task_id][argument_name]
 
 
 def _validate_args(dag: TaskDAG, dag_task: Task, app: AsyncApp):
     missing = []
-    provided_as_input = set(dag_task.arguments)
+    provided_as_input = set(dag_task.args)
     extra_inputs = set(provided_as_input)
     extra_inputs -= set(_get_task_params(app, dag_task))
     for t in dag.created_tasks:
