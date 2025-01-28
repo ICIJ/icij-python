@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from pathlib import Path
@@ -14,6 +15,8 @@ from icij_worker import Task, TaskState
 from icij_worker.exceptions import UnknownTask
 from icij_worker.task_storage import TaskStorageConfig
 from icij_worker.task_storage.key_value import DBItem, KeyValueStorage
+
+logger = logging.getLogger(__name__)
 
 
 class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
@@ -129,3 +132,12 @@ class FSKeyValueStorage(KeyValueStorage):
                 self._db_path, name=self._errors_db_name
             ),
         }
+
+    async def get_health(self) -> bool:
+        try:
+            for db in self._dbs.values():
+                len(db)
+        except Exception as e:
+            logger.exception("fs storage health failed: %s", e)
+            return False
+        return True

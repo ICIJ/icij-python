@@ -124,6 +124,7 @@ class PoolManager(AbstractAsyncContextManager):
 
 
 class PostgresStorage(TaskStorage):
+
     def __init__(
         self,
         connection_info: PostgresConnectionInfo,
@@ -275,6 +276,18 @@ class PostgresStorage(TaskStorage):
             migration_timeout_s=self._migration_timeout_s,
             migration_throttle_s=self._migration_throttle_s,
         )
+
+    async def get_health(self) -> bool:
+        try:
+            registry_pool = await self._pool_manager.get_pool(self._registry_db_name)
+            async with registry_pool.connection() as conn:
+                health_query = sql.SQL("SELECT 1;")
+                async with conn.cursor() as cur:
+                    await cur.execute(health_query)
+        except Exception as e:
+            logger.error("postgres health check failed: %s", e)
+            return False
+        return True
 
     async def _get_task_db(self, task_id: str) -> str:
         if task_id not in self._task_meta:
@@ -522,7 +535,7 @@ async def init_database(
 async def _insert_db_into_registry(registry_con: AsyncConnection, db_name: str):
     async with registry_con.cursor() as cur:
         query = sql.SQL(
-            """INSERT INTO {} ({}, {}) VALUES (%s, %s) 
+            """INSERT INTO {} ({}, {}) VALUES (%s, %s)
 ON CONFLICT DO NOTHING;"""
         ).format(
             sql.Identifier(POSTGRES_TASK_DBS_TABLE),

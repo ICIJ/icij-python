@@ -543,7 +543,6 @@ async def test_amqp_task_manager(
     rabbit_mq: str,
     test_async_app: AsyncApp,
 ) -> TestableAMQPTaskManager:
-
     task_manager = TestableAMQPTaskManager(
         test_async_app, fs_storage, management_client, broker_url=rabbit_mq
     )

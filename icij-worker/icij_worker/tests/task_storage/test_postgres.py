@@ -654,3 +654,29 @@ WHERE table_name = 'tasks' AND column_name = 'group_id';
         await cur.execute(group_id_col_query)
         args_cols = await cur.fetchone()
         assert args_cols is not None
+
+
+async def test_get_health(test_postgres_storage: PostgresStorage):
+    # When
+    health = await test_postgres_storage.get_health()
+    # Then
+    assert health
+
+
+async def test_get_health_should_fail(
+    monkeypatch, test_postgres_storage: PostgresStorage
+):
+    # Given
+    def _failing_get_connection(self, key):
+        # pylint: disable=unused-argument
+        raise OSError("failing...")
+
+    monkeypatch.setattr(
+        "icij_worker.task_storage.postgres.postgres.PoolManager.get_pool",
+        _failing_get_connection,
+    )
+
+    # When
+    health = await test_postgres_storage.get_health()
+    # Then
+    assert not health

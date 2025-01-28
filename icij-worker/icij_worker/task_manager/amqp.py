@@ -34,6 +34,7 @@ from icij_worker.utils.amqp import (
     AMQPMixin,
     RobustConnection,
     amqp_task_group_policy,
+    health_policy,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self._storage = task_store
         self._task_x: Optional[AbstractExchange] = None
         self._worker_evt_x: Optional[AbstractExchange] = None
+        self._health_x: Optional[AbstractExchange] = None
         self._manager_messages_it: Optional[AbstractQueueIterator] = None
 
         self._task_groups: Dict[str, Optional[str]] = dict()
@@ -240,6 +242,9 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         await self._create_routing(
             self.manager_evt_routing(), declare_exchanges=True, declare_queues=True
         )
+        await self._create_routing(
+            self.health_routing(), declare_exchanges=True, declare_queues=True
+        )
         self._task_x = await self._channel.get_exchange(
             self.default_task_routing().exchange.name, ensure=True
         )
@@ -249,6 +254,11 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         self._worker_evt_x = await self._channel.get_exchange(
             self.worker_evt_routing().exchange.name, ensure=True
         )
+        self._health_x = await self._channel.get_exchange(
+            self.health_routing().exchange.name, ensure=True
+        )
+        healthz_policy = health_policy(self.health_routing())
+        await self._management_client.set_policy(healthz_policy)
         logger.info("connection workflow complete")
 
     @cached_property
@@ -275,3 +285,8 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
             await self._create_routing(
                 routing, declare_exchanges=True, declare_queues=True
             )
+
+    async def get_health(self) -> Dict[str, bool]:
+        storage_health = await self._storage.get_health()
+        amqp_health = await self._get_amqp_health()
+        return {"storage": storage_health, "amqp": amqp_health}

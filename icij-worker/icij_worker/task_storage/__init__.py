@@ -55,3 +55,6 @@ class TaskStorage(ABC):
 
     @abstractmethod
     async def save_error(self, error: ErrorEvent): ...
+
+    @abstractmethod
+    async def get_health(self) -> bool: ...

@@ -232,3 +232,27 @@ async def test_get_error(fs_storage: TestableFSKeyValueStorage):
     db_errors = await store.get_task_errors(task_id="task-0")
     # Then
     assert db_errors == [err]
+
+
+async def test_get_health(fs_storage: TestableFSKeyValueStorage):
+    # When
+    async with fs_storage:
+        health = await fs_storage.get_health()
+    # Then
+    assert health
+
+
+async def test_get_health_should_fail(
+    monkeypatch,
+    fs_storage: TestableFSKeyValueStorage,
+):
+    # Given
+    def _failing_len(self):
+        raise OSError("failing...")
+
+    monkeypatch.setattr("icij_worker.task_storage.fs.SqliteDict.__len__", _failing_len)
+    # When
+    async with fs_storage:
+        health = await fs_storage.get_health()
+    # Then
+    assert not health

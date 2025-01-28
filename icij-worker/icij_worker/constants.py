@@ -1,6 +1,11 @@
 # AMQP
 from icij_common.pydantic_utils import to_lower_camel
 
+
+AMQP_HEALTH_X = "exchangeMonitoring"
+AMQP_HEALTH_ROUTING_KEY = "routingKeyMonitoring"
+AMQP_HEALTH_QUEUE = "MONITORING"
+
 AMQP_MANAGER_EVENTS_X = "exchangeManagerEvents"
 AMQP_MANAGER_EVENTS_QUEUE = "MANAGER_EVENT"
 AMQP_MANAGER_EVENTS_ROUTING_KEY = "routingKeyManagerEvents"
@@ -22,6 +27,7 @@ AMQP_WORKER_EVENTS_QUEUE = "WORKER_EVENT"
 AMQP_WORKER_EVENTS_ROUTING_KEY = "routingKeyWorkerEvents"
 
 AMQP_TASK_QUEUE_PRIORITY = 1000
+AMQP_HEALTH_POLICY_PRIORITY = 10000
 
 _CREATED_AT = "created_at"
 _TASK_ID = "task_id"

@@ -1,5 +1,6 @@
 import itertools
 import json
+import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
@@ -9,7 +10,7 @@ import neo4j
 from neo4j import AsyncTransaction
 from neo4j.exceptions import ResultNotSingleError
 
-from icij_common.neo4j.db import db_specific_session
+from icij_common.neo4j.db import db_specific_session, registry_db_session
 from icij_common.neo4j.migrate import retrieve_dbs
 from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker.constants import (
@@ -59,6 +60,8 @@ from icij_worker.constants import (
 from icij_worker.exceptions import MissingTaskResult, UnknownTask
 from icij_worker.objects import ErrorEvent, ResultEvent, Task, TaskState, TaskUpdate
 from icij_worker.task_storage import TaskStorage
+
+logger = logging.getLogger(__name__)
 
 
 class Neo4jStorage(TaskStorage):
@@ -173,6 +176,16 @@ class Neo4jStorage(TaskStorage):
                     for meta in await sess.execute_read(_get_tasks_meta_tx)
                 }
                 self._task_meta.update(task_meta)
+
+    async def get_health(self) -> bool:
+        try:
+            async with registry_db_session(self._driver) as sess:
+                res = await sess.run("RETURN 1 AS health_check")
+                await res.single()
+        except Exception as e:
+            logger.error("neo4j health failed: %s", e)
+            return False
+        return True
 
 
 async def _get_tasks_meta_tx(tx: neo4j.AsyncTransaction) -> List[neo4j.Record]:
