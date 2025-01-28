@@ -254,6 +254,7 @@ if _has_pytest:
 
     @TaskManager.register(AsyncBackend.mock)
     class MockManager(TaskManager, DBMixin):
+
         def __init__(
             self, app: AsyncApp, db_path: Path, event_refresh_interval_s: float = 0.1
         ):
@@ -335,6 +336,9 @@ if _has_pytest:
                 event_refresh_interval_s=config.event_refresh_interval_s,
             )
             return tm
+
+        async def get_health(self) -> Dict[str, bool]:
+            return {"db": True}
 
     R = TypeVar("R")
 

@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from enum import Enum, unique
 from functools import cached_property, lru_cache
-from typing import Any, Dict, List, Optional, Tuple, Type, cast
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 from urllib import parse
 
 import aiormq
@@ -37,6 +37,10 @@ from icij_common.pydantic_utils import ICIJModel, NoEnumModel
 from icij_worker import Message
 from icij_worker.app import TaskGroup
 from icij_worker.constants import (
+    AMQP_HEALTH_POLICY_PRIORITY,
+    AMQP_HEALTH_QUEUE,
+    AMQP_HEALTH_ROUTING_KEY,
+    AMQP_HEALTH_X,
     AMQP_MANAGER_EVENTS_DL_QUEUE,
     AMQP_MANAGER_EVENTS_DL_ROUTING_KEY,
     AMQP_MANAGER_EVENTS_DL_X,
@@ -160,16 +164,17 @@ class AMQPMixin:
 
     async def _publish_message(
         self,
-        message: Message,
+        message: Union[Message, bytes],
         *,
         exchange: AbstractExchange,
         delivery_mode: DeliveryMode = DeliveryMode.PERSISTENT,
         routing_key: Optional[str],
         mandatory: bool,
     ) -> Optional[ConfirmationFrameType]:
-        message = message.json(
-            exclude_unset=True, by_alias=True, exclude_none=True
-        ).encode()
+        if isinstance(message, Message):
+            message = message.json(
+                exclude_unset=True, by_alias=True, exclude_none=True
+            ).encode()
         message = AioPikaMessage(
             message, delivery_mode=delivery_mode, app_id=self._app_id
         )
@@ -247,6 +252,15 @@ class AMQPMixin:
             queue_name=AMQP_WORKER_EVENTS_QUEUE,
         )
 
+    @classmethod
+    @lru_cache(maxsize=1)
+    def health_routing(cls) -> Routing:
+        return Routing(
+            exchange=Exchange(name=AMQP_HEALTH_X, type=ExchangeType.DIRECT),
+            routing_key=AMQP_HEALTH_ROUTING_KEY,
+            queue_name=AMQP_HEALTH_QUEUE,
+        )
+
     async def _get_queue_iterator(
         self,
         routing: Routing,
@@ -310,6 +324,23 @@ class AMQPMixin:
             queue = await self._channel.get_queue(routing.queue_name, ensure=True)
         await queue.bind(x, routing_key=routing.routing_key)
 
+    async def _get_amqp_health(self) -> bool:
+        health_routing = self.health_routing()
+        try:
+            health_x = await self.channel.get_exchange(
+                health_routing.exchange.name, ensure=True
+            )
+            await self._publish_message(
+                b"",
+                exchange=health_x,
+                routing_key=health_routing.routing_key,
+                mandatory=True,  # This is important
+            )
+        except Exception as e:
+            logger.exception("amqp health failed: %s", e)
+            return False
+        return True
+
 
 class AMQPManagementClient(AiohttpClient):
     def __init__(
@@ -346,12 +377,12 @@ class AMQPManagementClient(AiohttpClient):
 
 
 def amqp_task_group_policy(
-    task_routing: Routing,
+    routing: Routing,
     group: Optional[TaskGroup],
     app_max_task_queue_size: Optional[int],
 ) -> AMQPPolicy:
-    pattern = rf"^{re.escape(task_routing.queue_name)}$"
-    name = f"task-group-policy-{task_routing.queue_name}"
+    pattern = rf"^{re.escape(routing.queue_name)}$"
+    name = f"task-group-policy-{routing.queue_name}"
     definition = {"overflow": "reject-publish", "delivery-limit": 10}
     max_task_queue_size = app_max_task_queue_size
     if group is not None and group.max_task_queue_size is not None:
@@ -364,6 +395,19 @@ def amqp_task_group_policy(
         definition=definition,
         apply_to=ApplyTo.QUEUES,
         priority=AMQP_TASK_QUEUE_PRIORITY,
+    )
+
+
+def health_policy(routing: Routing) -> AMQPPolicy:
+    pattern = rf"^{re.escape(routing.queue_name)}$"
+    name = f"health-policy-{routing.queue_name}"
+    definition = {"message-ttl": 5000, "expires": 3600 * 1000}
+    return AMQPPolicy(
+        name=name,
+        pattern=pattern,
+        definition=definition,
+        apply_to=ApplyTo.QUEUES,
+        priority=AMQP_HEALTH_POLICY_PRIORITY,
     )
 
 

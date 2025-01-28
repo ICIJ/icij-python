@@ -242,3 +242,37 @@ async def test_task_manager_cancel(
     assert isinstance(datetime.fromisoformat(created_at), datetime)
     expected_json = {"@type": "CancelEvent", "requeue": requeue, "taskId": "some-id"}
     assert cancel_evt_json == expected_json
+
+
+async def test_get_health(
+    test_amqp_task_manager: TestableAMQPTaskManager,
+):
+    # Given
+    task_manager = test_amqp_task_manager
+    # When
+    async with task_manager:
+        health = await task_manager.get_health()
+    # Then
+    assert health == {"storage": True, "amqp": True}
+
+
+async def test_get_health_should_fail(
+    monkeypatch,
+    management_client: AMQPManagementClient,
+    fs_storage: TestableFSKeyValueStorage,
+    rabbit_mq: str,
+    test_async_app: AsyncApp,
+):
+    # Given
+    task_manager = TestableAMQPTaskManager(
+        test_async_app, fs_storage, management_client, broker_url=rabbit_mq
+    )
+
+    def _failing_len(self):
+        raise OSError("failing...")
+
+    monkeypatch.setattr("icij_worker.task_storage.fs.SqliteDict.__len__", _failing_len)
+    # When
+    health = await task_manager.get_health()
+    # Then
+    assert health == {"storage": False, "amqp": False}

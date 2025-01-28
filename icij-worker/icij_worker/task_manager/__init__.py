@@ -3,7 +3,7 @@ import logging
 from abc import ABC, abstractmethod
 from asyncio import Task as AsyncIOTask
 from functools import cached_property
-from typing import ClassVar, Optional, final
+from typing import ClassVar, Dict, Optional, final
 
 from pydantic import Field
 
@@ -177,3 +177,6 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
 
     @abstractmethod
     async def _requeue(self, task: Task): ...
+
+    @abstractmethod
+    async def get_health(self) -> Dict[str, bool]: ...

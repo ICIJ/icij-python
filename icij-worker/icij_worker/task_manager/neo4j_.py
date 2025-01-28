@@ -125,6 +125,9 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
             async with self._db_session(db.name) as sess:
                 await sess.execute_write(_shutdown_workers_tx)
 
+    async def get_health(self) -> bool:
+        return await super(Neo4jConsumerMixin, self).get_health()
+
 
 async def _enqueue_task_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str, max_queue_size: int

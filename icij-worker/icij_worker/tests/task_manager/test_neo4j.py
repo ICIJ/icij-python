@@ -675,3 +675,34 @@ RETURN event"""
     event = ShutdownEvent.from_neo4j(recs[0])
     # Then
     assert event.created_at < datetime.now(timezone.utc)
+
+
+async def test_get_health(
+    neo4j_task_manager: TestableNeo4JTaskManager,
+):
+    # Given
+    task_manager = neo4j_task_manager
+    # When
+    async with task_manager:
+        health = await task_manager.get_health()
+    # Then
+    assert health
+
+
+async def test_get_health_should_fail(
+    monkeypatch,
+    neo4j_task_manager: TestableNeo4JTaskManager,
+):
+    # Given
+    task_manager = neo4j_task_manager
+
+    def _failing_session():
+        raise ConnectionError("failing...")
+
+    monkeypatch.setattr(
+        "icij_worker.task_storage.neo4j_.registry_db_session", _failing_session
+    )
+    # When
+    health = await task_manager.get_health()
+    # Then
+    assert not health
