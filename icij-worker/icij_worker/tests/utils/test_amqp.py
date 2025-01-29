@@ -1,4 +1,5 @@
 import asyncio
+import re
 from functools import partial
 
 import pytest
@@ -8,10 +9,12 @@ from aio_pika.abc import AbstractRobustQueue
 from icij_worker.task_storage.postgres.postgres import logger
 from icij_worker.utils.amqp import (
     AMQPManagementClient,
+    AMQPMixin,
     AMQPPolicy,
     ApplyTo,
     parse_consumer_timeout,
     RobustConnection,
+    worker_events_policy,
 )
 
 
@@ -83,3 +86,21 @@ async def test_robust_channel_should_handle_consumer_timeout(rabbit_mq_session: 
         with pytest.raises(asyncio.CancelledError):
             await task
         assert channel.is_closed
+
+
+async def test_worker_events_policy():
+    # Given
+    routing = AMQPMixin.worker_evt_routing()
+    # When
+    policy = worker_events_policy(routing)
+    # Then
+    expected = AMQPPolicy(
+        name="worker-events-policy",
+        pattern="WORKER_EVENT-*",
+        definition={"expires": 600000},
+        apply_to=ApplyTo.QUEUES,
+        priority=1000,
+    )
+    assert policy == expected
+    worker_queue_name = "WORKER_EVENT-some-service"
+    assert re.match(policy.pattern, worker_queue_name)
