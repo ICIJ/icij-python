@@ -34,6 +34,7 @@ from icij_worker.utils.amqp import (
     AMQPManagementClient,
     AMQPMixin,
     amqp_task_group_policy,
+    worker_events_policy,
 )
 
 # TODO: remove this when project information is inside the tasks
@@ -141,6 +142,8 @@ class AMQPWorker(Worker, AMQPMixin):
                 self._task_routing, task_group, self._app.config.max_task_queue_size
             )
             await self._management_client.set_policy(group_policy)
+            worker_event_policy = worker_events_policy(self._worker_evt_routing)
+            await self._management_client.set_policy(worker_event_policy)
 
     async def _bind_worker_event_queue(self):
         self._worker_evt_queue_iterator, _, _ = await self._get_queue_iterator(

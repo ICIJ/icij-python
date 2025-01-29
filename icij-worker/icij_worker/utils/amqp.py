@@ -336,7 +336,7 @@ class AMQPMixin:
                 routing_key=health_routing.routing_key,
                 mandatory=True,  # This is important
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("amqp health failed: %s", e)
             return False
         return True
@@ -389,6 +389,19 @@ def amqp_task_group_policy(
         max_task_queue_size = group.max_task_queue_size
     if max_task_queue_size is not None:
         definition["max-length"] = max_task_queue_size
+    return AMQPPolicy(
+        name=name,
+        pattern=pattern,
+        definition=definition,
+        apply_to=ApplyTo.QUEUES,
+        priority=AMQP_TASK_QUEUE_PRIORITY,
+    )
+
+
+def worker_events_policy(routing: Routing) -> AMQPPolicy:
+    pattern = rf"{re.escape(routing.queue_name)}-*"
+    name = "worker-events-policy"
+    definition = {"expires": 10 * 60 * 1000}
     return AMQPPolicy(
         name=name,
         pattern=pattern,
