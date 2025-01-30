@@ -336,7 +336,7 @@ class AMQPMixin:
                 b"",
                 exchange=health_x,
                 routing_key=health_routing.routing_key,
-                mandatory=True,  # This is important
+                mandatory=False,
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("amqp health failed: %s", e)
