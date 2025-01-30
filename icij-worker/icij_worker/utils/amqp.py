@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
@@ -60,8 +61,9 @@ from icij_worker.constants import (
 )
 from icij_worker.exceptions import WorkerTimeoutError
 from icij_worker.routing_strategy import Exchange, Routing, RoutingStrategy
-from icij_worker.task_storage.postgres.postgres import logger
 from icij_worker.utils.http import AiohttpClient
+
+logger = logging.getLogger(__name__)
 
 _DELIVERY_ACK_TIMEOUT_RE = re.compile(
     r"delivery acknowledgement on channel .+ timed out", re.MULTILINE
