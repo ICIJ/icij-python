@@ -3,8 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union
 
+from icij_worker.dag.dag import TaskDAG
 from icij_worker import ResultEvent, Task, TaskState
-from icij_worker.objects import ErrorEvent, ProgressEvent
+from icij_worker.objects import ErrorEvent
 from icij_worker.routing_strategy import RoutingStrategy
 
 
@@ -39,14 +40,6 @@ class TaskStorage(ABC):
         **kwargs,
     ) -> List[Task]: ...
 
-    async def _save_progress_event(self, event: ProgressEvent):
-        # Might be better to be overridden to be performed in a transactional manner
-        # when possible
-        task = await self.get_task(event.task_id)
-        task = task.as_resolved(event)
-        group = await self.get_task_group(event.task_id)
-        await self.save_task_(task, group=group)
-
     @abstractmethod
     async def save_task_(self, task: Task, group: Optional[str]) -> bool: ...
 
@@ -58,3 +51,15 @@ class TaskStorage(ABC):
 
     @abstractmethod
     async def get_health(self) -> bool: ...
+
+
+class DAGTaskStorage(TaskStorage):
+    @abstractmethod
+    async def get_task_dag(self, task_id: str) -> Optional[TaskDAG]:
+        pass
+
+    @abstractmethod
+    async def save_dag_dependency(
+        self, task_id: str, *, parent_id: str, provided_arg: str
+    ):
+        pass

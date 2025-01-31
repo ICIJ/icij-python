@@ -1,11 +1,12 @@
 # pylint: disable=redefined-outer-name
-from typing import List, Optional
+import re
+from typing import Annotated, List, Optional
 
 import pytest
 
 from icij_common.test_utils import fail_if_exception
 from icij_worker import AsyncApp, RoutingStrategy
-from icij_worker.app import TaskGroup
+from icij_worker.app import Depends, TaskGroup
 
 
 class DummyRouting(RoutingStrategy):
@@ -47,6 +48,27 @@ def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: List[str
 
     # Then
     assert app.registered_keys == expected_keys
+
+
+def test_load_app_should_raise_for_conflicting_argument_names_in_dag():
+    # Given
+    app = AsyncApp("conflicting_app")
+
+    # When
+    @app.task
+    def i_m_a() -> str:
+        return "I'm a"
+
+    @app.task
+    def i_m_b() -> str:
+        return "I'm b"
+
+    msg = "Found several dependencies (['i_m_a', 'i_m_b']) for arg name for \"i_m_c\""
+    with pytest.raises(ValueError, match=re.escape(msg)):
+
+        @app.task
+        def i_m_c(name: Annotated[str, Depends(on=i_m_a), Depends(on=i_m_b)]) -> str:
+            return f"hello {name}, my name is c"
 
 
 def test_validate_group_name_should_not_raise():

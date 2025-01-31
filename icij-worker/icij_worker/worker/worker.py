@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import inspect
 import logging
 import os
 import socket
@@ -11,7 +10,6 @@ import traceback
 from abc import abstractmethod
 from asyncio import TimerHandle
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from copy import deepcopy
 from datetime import datetime, timezone
 from inspect import isawaitable
 from typing import (
@@ -51,7 +49,7 @@ from icij_worker.objects import (
     WorkerEvent,
 )
 from icij_worker.routing_strategy import RoutingStrategy
-from icij_worker.utils import RegistrableFromConfig
+from icij_worker.utils import RegistrableFromConfig, add_missing_args
 from icij_worker.worker.process import HandleSignalsMixin
 
 logger = logging.getLogger(__name__)
@@ -664,23 +662,6 @@ async def _retry_task(
     async with worker.event_lock:
         await worker.publish_result_event(task_res, task)
     return task
-
-
-def add_missing_args(fn: Callable, args: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-    # We make the choice not to raise in case of missing argument here, the error will
-    # be correctly raise when the function is called
-    from_kwargs = dict()
-    sig = inspect.signature(fn)
-    for param_name in sig.parameters:
-        if param_name in args:
-            continue
-        kwargs_value = kwargs.get(param_name)
-        if kwargs_value is not None:
-            from_kwargs[param_name] = kwargs_value
-    if from_kwargs:
-        args = deepcopy(args)
-        args.update(from_kwargs)
-    return args
 
 
 def _format_error(error: BaseException) -> str:

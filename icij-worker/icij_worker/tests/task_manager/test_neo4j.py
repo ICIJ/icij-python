@@ -113,12 +113,11 @@ RETURN task, result"""
                 args={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
-                retries_left=1,
             ),
             {
                 "id": "task-3",
                 "args": '{"greeted": "3"}',
-                "retriesLeft": 1,
+                "maxRetries": 3,
                 "state": "CREATED",
                 "name": "hello_world",
                 "createdAt": datetime.now(),
@@ -134,12 +133,10 @@ RETURN task, result"""
                 args={"greeted": "3"},
                 state=TaskState.CREATED,
                 created_at=_NOW,
-                retries_left=1,
             ),
             {
                 "id": "task-3",
                 "args": '{"greeted": "3"}',
-                "retriesLeft": 1,
                 "maxRetries": 3,
                 "state": "CREATED",
                 "name": "grouped_hello_world",
@@ -442,7 +439,7 @@ async def test_task_manager_enqueue(
     queued = await neo4j_task_manager.enqueue(task)
 
     # Then
-    update = {"state": TaskState.QUEUED}
+    update = {"state": TaskState.QUEUED, "retries_left": 3, "max_retries": 3}
     expected = safe_copy(task, update=update)
     assert queued == expected
 
@@ -504,7 +501,15 @@ async def test_task_manager_requeue(neo4j_task_manager: TestableNeo4JTaskManager
     saved = await task_manager.get_task(task_id=task.id)
 
     # Then
-    expected = safe_copy(task, update={"state": TaskState.QUEUED, "progress": 0.0})
+    expected = safe_copy(
+        task,
+        update={
+            "state": TaskState.QUEUED,
+            "progress": 0.0,
+            "max_retries": 3,
+            "retries_left": 3,
+        },
+    )
     assert saved == expected
 
 
@@ -576,7 +581,9 @@ async def test_task_manager_cancel(
 
     # When
     task = await neo4j_task_manager.enqueue(task)
-    await neo4j_task_manager.cancel(task_id=task.id, requeue=requeue)
+    await neo4j_task_manager._cancel(  # pylint: disable=protected-access
+        task_id=task.id, requeue=requeue
+    )
     query = """MATCH (task:_Task { id: $taskId })-[
     :_CANCELLED_BY]->(event:_CancelEvent)
 RETURN task, event"""

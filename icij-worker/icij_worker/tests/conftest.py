@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Iterator, List, Optional
+from typing import Annotated, AsyncGenerator, Dict, Iterator, List, Optional
 
 import aio_pika
 import aiohttp
@@ -38,7 +38,7 @@ from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
 # noinspection PyUnresolvedReferences
 from icij_common.test_utils import reset_env  # pylint: disable=unused-import
 from icij_worker import AsyncApp, Neo4JTaskManager, Task
-from icij_worker.app import AsyncAppConfig
+from icij_worker.app import AsyncAppConfig, Depends
 from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.objects import CancelEvent, ManagerEvent, ShutdownEvent, TaskState
 from icij_worker.task_manager.amqp import AMQPTaskManager
@@ -600,3 +600,29 @@ def mock_worker(fs_storage_path: Path, request) -> MockWorker:
         teardown_dependencies=False,
     )
     return worker
+
+
+@pytest.fixture(scope="session")
+def test_dag_app() -> AsyncApp:
+    app = AsyncApp("test-app")
+
+    @app.task
+    def a(a_input: str) -> str:
+        return a_input + " a"
+
+    @app.task(localns=locals())
+    def b(b_input: Annotated[str, Depends(on=a)]) -> str:
+        return b_input + " b"
+
+    @app.task(localns=locals())
+    def c(c_input: Annotated[str, Depends(on=a)]) -> str:
+        return c_input + " c"
+
+    @app.task(localns=locals())
+    def d(
+        left_input: Annotated[str, Depends(on=b)],
+        right_input: Annotated[str, Depends(on=c)],
+    ) -> str:
+        return f"{left_input} d {right_input}"
+
+    return app

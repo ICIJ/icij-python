@@ -15,6 +15,7 @@ from psycopg_pool import AsyncConnectionPool
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import TEST_DB
 from icij_worker import (
+    AsyncApp,
     RoutingStrategy,
     PostgresConnectionInfo,
     PostgresStorage,
@@ -24,6 +25,7 @@ from icij_worker import (
     TaskState,
     init_postgres_database,
 )
+from icij_worker.dag.dag import TaskDAG
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, StacktraceItem, TaskError, TaskResult
 from icij_worker.task_storage.postgres.postgres import create_databases_registry_db
@@ -682,3 +684,42 @@ async def test_get_health_should_fail(
     health = await test_postgres_storage.get_health()
     # Then
     assert not health
+
+
+async def _save_task_dag(storage: PostgresStorage, dag_task: Task, dag: TaskDAG):
+    await storage.save_task_(dag_task, None)
+    for t in dag.created_tasks:
+        await storage.save_task_(t, None)
+    for child, parents in dag.arg_providers.items():
+        for provided_arg, parent in parents.items():
+            await storage.save_dag_dependency(
+                child, parent_id=parent, provided_arg=provided_arg
+            )
+
+
+async def test_get_task_dag(
+    test_postgres_storage: PostgresStorage, test_dag_app: AsyncApp
+):
+    # Given
+    storage = test_postgres_storage
+    app = test_dag_app
+    dag_task_id = "dag-task-id"
+    args = {"a_input": "some-input"}
+    dag_task = Task.create(
+        task_id=dag_task_id, task_name="d", args=args
+    ).with_max_retries(app)
+    dag = TaskDAG.from_app(app, dag_task)
+
+    await _save_task_dag(storage, dag_task, dag)
+
+    # When
+    db_dag = await storage.get_task_dag(dag_task.id)
+
+    # Then
+    assert db_dag == dag
+
+    for t in dag.created_tasks:
+        # When
+        db_dag = await storage.get_task_dag(t.id)
+        # Then
+        assert db_dag == dag

@@ -93,8 +93,6 @@ async def test_task_manager_enqueue_with_group(
         "state": "CREATED",
         "name": "grouped_hello_world",
         "args": {"greeted": "world"},
-        "retriesLeft": 3,
-        "maxRetries": 3,
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
@@ -225,7 +223,9 @@ async def test_task_manager_cancel(
     await task_manager.save_task(task)
 
     # When
-    await task_manager.cancel(task_id=task.id, requeue=requeue)
+    await task_manager._cancel(  # pylint: disable=protected-access
+        task_id=task.id, requeue=requeue
+    )
 
     # Then
     channel = task_manager.channel

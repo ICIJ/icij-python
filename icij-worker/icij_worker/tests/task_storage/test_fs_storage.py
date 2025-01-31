@@ -96,11 +96,7 @@ async def test_save_task_should_not_update_non_updatable_field(
     # Given
     task = hello_world_task
     await fs_storage.save_task_(task, None)
-    updates = {
-        "name": "another-type",
-        "created_at": datetime.now(),
-        "args": {"other": "input"},
-    }
+    updates = {"name": "another-type", "created_at": datetime.now()}
     updated = safe_copy(task, update=updates)
     # When
     is_new = await fs_storage.save_task_(updated, None)
