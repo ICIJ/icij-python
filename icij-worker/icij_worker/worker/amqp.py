@@ -142,7 +142,9 @@ class AMQPWorker(Worker, AMQPMixin):
                 self._task_routing, task_group, self._app.config.max_task_queue_size
             )
             await self._management_client.set_policy(group_policy)
-            worker_event_policy = worker_events_policy(self._worker_evt_routing)
+            worker_event_policy = worker_events_policy(
+                self.__class__.worker_evt_routing()
+            )
             await self._management_client.set_policy(worker_event_policy)
 
     async def _bind_worker_event_queue(self):
