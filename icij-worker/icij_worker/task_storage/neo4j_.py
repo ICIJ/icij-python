@@ -121,7 +121,7 @@ class Neo4jStorage(TaskStorage):
 
     async def save_result(self, result: ResultEvent):
         async with self._task_session(result.task_id) as sess:
-            res_str = json.dumps(jsonable_encoder(result.result))
+            res_str = json.dumps(jsonable_encoder(result.result.value))
             await sess.execute_write(
                 _save_result_tx,
                 task_id=result.task_id,
@@ -182,7 +182,7 @@ class Neo4jStorage(TaskStorage):
             async with registry_db_session(self._driver) as sess:
                 res = await sess.run("RETURN 1 AS health_check")
                 await res.single()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("neo4j health failed: %s", e)
             return False
         return True

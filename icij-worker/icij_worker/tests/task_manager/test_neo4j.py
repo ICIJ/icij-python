@@ -29,6 +29,7 @@ from icij_worker.objects import (
     ProgressEvent,
     ShutdownEvent,
     StacktraceItem,
+    TaskResult,
 )
 from icij_worker.tests.conftest import TestableNeo4JTaskManager
 
@@ -405,7 +406,9 @@ async def test_get_task_errors(
         ("task-1", None),
         (
             "task-2",
-            ResultEvent(task_id="task-2", result="Hello 2", created_at=_AFTER),
+            ResultEvent(
+                task_id="task-2", result=TaskResult(value="Hello 2"), created_at=_AFTER
+            ),
         ),
     ],
 )
@@ -634,7 +637,9 @@ async def test_task_manager_save_result(
     task = hello_world_task
     await neo4j_task_manager.save_task(task)
     result = ResultEvent(
-        task_id=task.id, result="some result", created_at=datetime.now()
+        task_id=task.id,
+        result=TaskResult(value="some result"),
+        created_at=datetime.now(),
     )
     # When
     await neo4j_task_manager.save_result(result)

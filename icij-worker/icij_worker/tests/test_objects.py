@@ -16,6 +16,7 @@ from icij_worker.objects import (
     StacktraceItem,
     Task,
     TaskError,
+    TaskResult,
     TaskState,
     TaskUpdate,
 )
@@ -92,7 +93,9 @@ def test_precedence_sanity_check():
                 created_at=_CREATED_AT,
             ),
             ResultEvent(
-                task_id="task-id", result="some-result", created_at=_ANOTHER_TIME
+                task_id="task-id",
+                result=TaskResult(value="some-result"),
+                created_at=_ANOTHER_TIME,
             ),
             Task(
                 id="task-id",

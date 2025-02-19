@@ -44,6 +44,7 @@ from icij_worker.constants import (
     TASK_NAME,
     TASK_RESULT_CREATED_AT,
     TASK_RESULT_RESULT,
+    TASK_RESULT_RESULT_VALUE,
     TASK_RESULT_TASK_ID,
     TASK_STATE,
 )
@@ -193,7 +194,9 @@ class PostgresStorage(TaskStorage):
         )
         pool = await self._pool_manager.get_pool(task_db)
         async with pool.connection() as conn:
-            params[TASK_RESULT_RESULT] = ujson.dumps(params[TASK_RESULT_RESULT])
+            params[TASK_RESULT_RESULT] = ujson.dumps(
+                params[TASK_RESULT_RESULT][TASK_RESULT_RESULT_VALUE]
+            )
             async with conn.cursor() as cur:
                 await cur.execute(_INSERT_RESULT_QUERY, params)
 
@@ -284,7 +287,7 @@ class PostgresStorage(TaskStorage):
                 health_query = sql.SQL("SELECT 1;")
                 async with conn.cursor() as cur:
                     await cur.execute(health_query)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("postgres health check failed: %s", e)
             return False
         return True

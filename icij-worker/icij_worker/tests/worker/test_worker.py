@@ -20,7 +20,7 @@ from icij_worker.exceptions import (
     TaskAlreadyCancelled,
     WorkerTimeoutError,
 )
-from icij_worker.objects import ErrorEvent, ProgressEvent
+from icij_worker.objects import ErrorEvent, ProgressEvent, TaskResult
 from icij_worker.utils.tests import MockManager, MockWorker
 from icij_worker.worker.worker import add_missing_args, task_wrapper
 
@@ -98,7 +98,9 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
             ProgressEvent(task_id="some-id", progress=0.1, created_at=datetime.now()),
             ProgressEvent(task_id="some-id", progress=0.99, created_at=datetime.now()),
             ResultEvent(
-                task_id="some-id", result="Hello world !", created_at=completed_at
+                task_id="some-id",
+                result=TaskResult(value="Hello world !"),
+                created_at=completed_at,
             ),
         ]
         expected_events = [
@@ -113,7 +115,9 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
             e.pop("createdAt")
         assert worker_events == expected_events
         expected_result = ResultEvent(
-            task_id="some-id", result="Hello world !", created_at=completed_at
+            task_id="some-id",
+            result=TaskResult(value="Hello world !"),
+            created_at=completed_at,
         ).dict(by_alias=True)
         expected_result.pop("createdAt")
         saved_result = saved_result.dict(by_alias=True)
@@ -173,7 +177,9 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         expected_events = [
             ProgressEvent(task_id="some-id", progress=0.0, created_at=datetime.now()),
             ResultEvent(
-                task_id="some-id", result="Hello world !", created_at=completed_at
+                task_id="some-id",
+                result=TaskResult(value="Hello world !"),
+                created_at=completed_at,
             ),
         ]
         expected_events = [
@@ -188,7 +194,9 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
             e.pop("createdAt")
         assert worker_events == expected_events
         expected_result = ResultEvent(
-            task_id="some-id", result="Hello world !", created_at=completed_at
+            task_id="some-id",
+            result=TaskResult(value="Hello world !"),
+            created_at=completed_at,
         ).dict(by_alias=True)
         expected_result.pop("createdAt")
         saved_result = saved_result.dict(by_alias=True)
@@ -265,7 +273,7 @@ async def test_worker_should_recover_from_recoverable_error(
         # However we expect the worker to have logged them somewhere in the events
         expected_result = ResultEvent(
             task_id="some-id",
-            result="i told you i could recover",
+            result=TaskResult(value="i told you i could recover"),
             created_at=datetime.now(),
         )
         assert saved_result.dict(exclude={"created_at"}) == expected_result.dict(
@@ -284,7 +292,7 @@ async def test_worker_should_recover_from_recoverable_error(
             ProgressEvent(task_id="some-id", progress=0.0, created_at=datetime.now()),
             ResultEvent(
                 task_id="some-id",
-                result="i told you i could recover",
+                result=TaskResult(value="i told you i could recover"),
                 created_at=completed_at,
             ),
         ]
