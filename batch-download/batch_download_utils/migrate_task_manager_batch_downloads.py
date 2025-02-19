@@ -129,36 +129,13 @@ async def main(args: dict) -> None:
     await client.copy(DS_TASK_MANAGER, DS_TASK_MANAGER + ":backup")
     for k, v in tasks.items():
         task = loads(v)
-        new_task = rename_field(task, "properties", "args")
-        if (
-            get_value_from_json_path(new_task, "args.batchDownload.projects")
-            is not None
-        ):
-            new_task = change_value(
-                new_task, "args.batchDownload.projects", lambda v: v[1]
-            )
-            new_task = change_value(
-                new_task, "args.batchDownload.projects[].sourcePath", lambda v: v[1]
-            )
-        if (
-            get_value_from_json_path(new_task, "args.batchDownload.filename")
-            is not None
-        ):
-            new_task = change_value(
-                new_task, "args.batchDownload.filename", lambda v: v[1]
-            )
+        if "BatchSearch" in task.get("name"):
+            projects = get_value_from_json_path(task, "args.batchRecord.projects")
+            if projects is not None and any(not isinstance(item, (str)) for item in projects) :
 
-        new_task = rename_field(new_task, "@class", "@type")
-        new_task = rename_value(
-            new_task, "org.icij.datashare.asynctasks.TaskView", "Task"
-        )
-        new_task = add_field(new_task, "retriesLeft", 3)
-        new_task = add_field(
-            new_task, "createdAt", int(get_date_from_task(task).timestamp() * 1000)
-        )
-        new_task = move_field(new_task, "user", "args.user")
-
-        await client.hset(DS_TASK_MANAGER, task.get("id"), dumps(new_task))
+                project_names = [p['name'] for p in projects]
+                new_task = change_value(task,"args.batchRecord.projects", lambda p: project_names)
+                await client.hset(DS_TASK_MANAGER, task.get("id"), dumps(new_task))
 
 
 def parse_args(argv) -> dict:
