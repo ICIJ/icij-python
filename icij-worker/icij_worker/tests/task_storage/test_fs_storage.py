@@ -10,7 +10,7 @@ from sqlitedict import SqliteDict
 
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import ResultEvent, Task, TaskError
-from icij_worker.objects import ErrorEvent, StacktraceItem, TaskState
+from icij_worker.objects import ErrorEvent, StacktraceItem, TaskResult, TaskState
 from icij_worker.tests.conftest import TestableFSKeyValueStorage
 
 
@@ -115,7 +115,9 @@ async def test_save_result(fs_storage: TestableFSKeyValueStorage):
     task = task_1()
     await fs_storage.save_task_(task, None)
     result = ResultEvent(
-        task_id="task-1", result="some_result", created_at=datetime.now()
+        task_id="task-1",
+        result=TaskResult(value="some_result"),
+        created_at=datetime.now(),
     )
     result_db = _make_db(fs_storage.db_path, table_name="results")
     # When
@@ -198,7 +200,9 @@ async def test_get_result(fs_storage: TestableFSKeyValueStorage):
     storage = fs_storage
     db = _make_db(fs_storage.db_path, table_name="results")
     res = ResultEvent(
-        task_id="some-id", result="Hello world !", created_at=datetime.now()
+        task_id="some-id",
+        result=TaskResult(value="Hello world !"),
+        created_at=datetime.now(),
     )
     with db:
         db["task-0"] = res.dict()

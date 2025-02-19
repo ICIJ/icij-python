@@ -25,7 +25,7 @@ from icij_worker import (
     init_postgres_database,
 )
 from icij_worker.exceptions import UnknownTask
-from icij_worker.objects import ErrorEvent, StacktraceItem, TaskError
+from icij_worker.objects import ErrorEvent, StacktraceItem, TaskError, TaskResult
 from icij_worker.task_storage.postgres.postgres import create_databases_registry_db
 from icij_worker.utils.config import SettingsWithTM, TM
 
@@ -290,7 +290,7 @@ async def test_save_result_should_raise_for_unknown_task(
     storage = test_postgres_storage
     result = ResultEvent(
         task_id="i_dont_exists",
-        result="some-results-here",
+        result=TaskResult(value="some-results-here"),
         created_at=datetime.now(timezone.utc),
     )
     # When
@@ -427,7 +427,9 @@ async def test_get_task_result(
 
     # When
     db_res = await storage.get_task_result(task_id)
-    expected = ResultEvent(task_id=task_id, created_at=created_at, result=result)
+    expected = ResultEvent(
+        task_id=task_id, created_at=created_at, result=TaskResult(value=result)
+    )
     assert db_res == expected
 
 

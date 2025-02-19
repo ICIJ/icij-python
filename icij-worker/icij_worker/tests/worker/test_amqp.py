@@ -33,6 +33,7 @@ from icij_worker.objects import (
     ManagerEvent,
     ProgressEvent,
     StacktraceItem,
+    TaskResult,
     TaskUpdate,
 )
 from icij_worker.routing_strategy import RoutingStrategy
@@ -221,7 +222,9 @@ async def test_worker_work_forever(
                 pytest.fail(f"Failed to receive result in less than {receive_timeout}")
         task = populate_tasks[0]
         expected_result = ResultEvent(
-            task_id=task.id, result="Hello world !", created_at=msg.created_at
+            task_id=task.id,
+            result=TaskResult(value="Hello world !"),
+            created_at=msg.created_at,
         )
         assert msg == expected_result
 
@@ -528,7 +531,7 @@ async def test_publish_result_event(
                 break
         expected_json = {
             "@type": "ResultEvent",
-            "result": "hello world !",
+            "result": {"@type": "TaskResult", "value": "hello world !"},
             "taskId": "task-0",
         }
         created_at = received_result.pop("createdAt")

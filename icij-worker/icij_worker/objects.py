@@ -440,6 +440,11 @@ class TaskError(Message, LowerCamelCaseModel):
         return error
 
 
+@Message.register("TaskResult")
+class TaskResult(Message, LowerCamelCaseModel):
+    value: object
+
+
 class TaskEvent(
     TaskMessage, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, FromTask, ABC
 ):
@@ -514,14 +519,14 @@ class CancelledEvent(ManagerEvent):
 
 @Message.register("ResultEvent")
 class ResultEvent(ManagerEvent):
-    result: object
+    result: TaskResult
 
     @classmethod
     def from_task(cls, task: Task, result: object, **kwargs) -> ResultEvent:
         # pylint: disable=arguments-differ
         return cls(
             task_id=task.id,
-            result=result,
+            result=TaskResult(value=result),
             created_at=datetime.now(timezone.utc),
             **kwargs,
         )
@@ -536,7 +541,7 @@ class ResultEvent(ManagerEvent):
     ) -> ResultEvent:
         result = record.get(result_key)
         if result is not None:
-            result = json.loads(result[NEO4J_TASK_RESULT_RESULT])
+            result = TaskResult(value=json.loads(result[NEO4J_TASK_RESULT_RESULT]))
         task_id = record[task_key][NEO4J_TASK_ID]
         completed_at = record[task_key][NEO4J_TASK_COMPLETED_AT]
         as_dict = {"result": result, "task_id": task_id, "created_at": completed_at}
@@ -551,8 +556,8 @@ class ResultEvent(ManagerEvent):
             import ujson
 
             as_dict = {k.name: v for k, v in zip(cursor.description, values)}
-            as_dict[NEO4J_TASK_RESULT_RESULT] = ujson.loads(
-                as_dict[NEO4J_TASK_RESULT_RESULT]
+            as_dict[NEO4J_TASK_RESULT_RESULT] = TaskResult(
+                value=ujson.loads(as_dict[NEO4J_TASK_RESULT_RESULT])
             )
             return cls(**as_dict)
 
