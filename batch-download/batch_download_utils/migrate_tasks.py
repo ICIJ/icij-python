@@ -2,14 +2,16 @@ import asyncio
 import sys
 from datetime import datetime
 from functools import reduce
-from json import loads, dumps
+from json import dumps, loads
 from os.path import basename
-from typing import Callable, Any
-from urllib.parse import urlparse, unquote
+from typing import Any, Callable
+from urllib.parse import unquote, urlparse
 
 import redis.asyncio as redis
 
 from batch_download_utils.hmap_cleaner import DS_TASK_MANAGER
+
+DS_TASK_MANAGER_TASKS = "ds:task:manager:tasks"
 
 
 def rename_field(task: dict, old_name: str, new_name: str) -> dict:
@@ -27,8 +29,7 @@ def rename_field(task: dict, old_name: str, new_name: str) -> dict:
             else:
                 new_task[k] = v
         return new_task
-    else:
-        return task
+    return task
 
 
 def rename_value(task: dict, old_value: str, new_value: str) -> dict:
@@ -66,7 +67,8 @@ def move_field(task, source_json_path, dest_json_path) -> dict:
     dest_fields = dest_json_path.split(".")
     # get the "leaf" value = final value of the source_json_path
     value = get_value_from_json_path(task, source_json_path)
-    # build one way dest_fields dictionary with the original value {c:value} if we have "a.b.c" path
+    # build one way dest_fields dictionary with the original value {c:value} if we have
+    # "a.b.c" path
     dest_path_result = reduce(
         lambda d, k: {k: d}, reversed(dest_fields[0:-1]), {dest_fields[-1]: value}
     )
@@ -80,7 +82,7 @@ def move_field(task, source_json_path, dest_json_path) -> dict:
 def get_date_from_task(task: dict) -> datetime:
     if task.get("createdAt"):
         return datetime.fromtimestamp(task.get("createdAt") / 1000)
-    elif task.get("args") and task.get("args").get("batchDownload"):
+    if task.get("args") and task.get("args").get("batchDownload"):
         batch_download = task.get("args").get("batchDownload")
         filename_with_path = batch_download.get("filename")[1]
         parse_result = urlparse(unquote(filename_with_path))
@@ -91,8 +93,7 @@ def get_date_from_task(task: dict) -> datetime:
         date_str = date_str.replace("Z[GMT]", "")
         date_str = date_str.replace("_", ":")
         return datetime.fromisoformat(date_str)
-    else:
-        return datetime.now()
+    return datetime.now()
 
 
 def change_value(task: dict, dict_path: str, change_func: Callable) -> dict:
@@ -108,7 +109,7 @@ def change_value(task: dict, dict_path: str, change_func: Callable) -> dict:
                     item, ".".join(fields[field_index + 1 :]), change_func
                 )
             break
-        elif field_index == len(fields) - 1:
+        if field_index == len(fields) - 1:
             value[field] = change_func(value[field])
         else:
             value = value.get(field)
@@ -122,26 +123,45 @@ def get_value_from_json_path(task: dict, path: str) -> Any:
         return None
 
 
-async def main(args: dict) -> None:
-    pool = redis.ConnectionPool.from_url(args.get("redis_url"))
-    client = redis.Redis.from_pool(pool)
+async def migrate_batch_search_projects(client):
     tasks = await client.hgetall(DS_TASK_MANAGER)
-    await client.copy(DS_TASK_MANAGER, DS_TASK_MANAGER + ":backup")
-    for k, v in tasks.items():
+    for v in tasks.values():
         task = loads(v)
         if "BatchSearch" in task.get("name"):
             projects = get_value_from_json_path(task, "args.batchRecord.projects")
-            if projects is not None and any(not isinstance(item, (str)) for item in projects) :
-
-                project_names = [p['name'] for p in projects]
-                new_task = change_value(task,"args.batchRecord.projects", lambda p: project_names)
+            if projects is not None and any(
+                not isinstance(item, str) for item in projects
+            ):
+                project_names = [p["name"] for p in projects]
+                new_task = change_value(
+                    task,
+                    "args.batchRecord.projects",
+                    lambda p: project_names,  # pylint: disable=cell-var-from-loop
+                )
                 await client.hset(DS_TASK_MANAGER, task.get("id"), dumps(new_task))
+
+
+async def migrate_task_to_task_metadata(client: redis.Redis):
+    tasks = await client.hgetall(DS_TASK_MANAGER_TASKS)
+    for task_key, task in tasks.items():
+        task = loads(task)
+        task_group = task["args"].pop("group")
+        task_metadata = {"task": task, "group": task_group}
+        await client.hset(DS_TASK_MANAGER_TASKS, task_key, dumps(task_metadata))
+
+
+async def main(args: dict) -> None:
+    pool = redis.ConnectionPool.from_url(args.get("redis_url"))
+    client = redis.Redis.from_pool(pool)
+    await client.copy(DS_TASK_MANAGER, DS_TASK_MANAGER + ":backup")
+    await migrate_batch_search_projects(client)
+    await migrate_task_to_task_metadata(client)
 
 
 def parse_args(argv) -> dict:
     if len(argv) != 2:
         print(f"usage: {argv[0]} <redis_url (ex: redis://localhost:6379)>")
-        exit(1)
+        sys.exit(1)
     return {"redis_url": argv[1]}
 
 

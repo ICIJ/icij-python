@@ -24,9 +24,9 @@ pip3 install batch_download_utils-0.1.0.tar.gz
 hmap-cleaner redis://my-redis-host:6379 /path/to/download/archive/files
 ```
 
-## Migrate data 
+## Migrate task related data model 
 
-Batch download JSON structure is evolving along the Java models. To avoid any errors when accessing to batch downloads it is necessary to migrate the data in Redis accordingly. The script is provided to modify the data structure of the objects in the redis hashmap.
+Tasks JSON structure is evolving along the Java models. To avoid any errors when accessing to task and their results it is necessary to migrate the data in Redis accordingly. The script is provided to modify the data structure of the objects in the redis hashmap.
 
 To apply the script to the server, a SSH bridge can be used like this:
 ```shell

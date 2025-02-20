@@ -1,6 +1,6 @@
 import datetime
 
-from batch_download_utils.migrate_task_manager_batch_downloads import (
+from batch_download_utils.migrate_tasks import (
     rename_field,
     rename_value,
     add_field,
@@ -64,7 +64,8 @@ def test_get_date_from_task_for_batch_download():
                 "batchDownload": {
                     "filename": [
                         "java.nio.file.Path",
-                        "file:///home/dev/.local/share/datashare/tmp/archive_local_2024-08-20T07_27_42.192Z%5BGMT%5D.zip",
+                        "file:///home/dev/.local/share/datashare/tmp/"
+                        "archive_local_2024-08-20T07_27_42.192Z%5BGMT%5D.zip",
                     ]
                 }
             }
