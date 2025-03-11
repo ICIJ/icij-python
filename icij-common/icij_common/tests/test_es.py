@@ -1,7 +1,7 @@
 import abc
 import contextlib
 import sys
-from typing import Any, AsyncGenerator, Collection, Dict, List, Optional, Type
+from typing import Any, AsyncGenerator, Collection
 from unittest.mock import patch
 
 import pytest
@@ -16,8 +16,8 @@ class MockedESClient(ESClient):
     def __init__(
         self,
         n_hits: int,
-        failure: Optional[Exception],
-        fail_at: List[int] = None,
+        failure: Exception | None,
+        fail_at: list[int] = None,
         **kwargs,
     ):
         super().__init__(pagination=1, **kwargs)
@@ -29,7 +29,7 @@ class MockedESClient(ESClient):
         self._failure = failure
         self._n_hits = n_hits
 
-    async def search(self, **kwargs) -> Dict[str, Any]:
+    async def search(self, **kwargs) -> dict[str, Any]:
         # pylint: disable=arguments-differ
         return await self._mocked_search(**kwargs)
 
@@ -48,7 +48,7 @@ class MockedESClient(ESClient):
         index: str,
         keep_alive: str,
         **kwargs,
-    ) -> AsyncGenerator[Optional[PointInTime], None]:
+    ) -> AsyncGenerator[PointInTime | None, None]:
         # pylint: disable=unused-argument
         yield dict()
 
@@ -56,7 +56,7 @@ class MockedESClient(ESClient):
     async def _mocked_search(self, **kwargs):
         pass
 
-    def _make_hits(self) -> List[Dict[str, Any]]:
+    def _make_hits(self) -> list[dict[str, Any]]:
         # pylint: disable=unused-argument
         if isinstance(self._failure, Exception) and self._n_calls in self._fail_at:
             self._n_calls += 1
@@ -67,9 +67,7 @@ class MockedESClient(ESClient):
         return hits
 
 
-async def _mocked_search(
-    *, body: Optional[Dict], index: Optional[str], size: int, **kwargs
-):
+async def _mocked_search(*, body: dict | None, index: str | None, size: int, **kwargs):
     # pylint: disable=unused-argument
     return {}
 
@@ -94,8 +92,8 @@ class _MockFailingClient(MockedESClient, metaclass=abc.ABCMeta):
     def __init__(
         self,
         n_hits: int,
-        failure: Optional[Exception],
-        fail_at: List[int] = None,
+        failure: Exception | None,
+        fail_at: list[int] = None,
         **kwargs,
     ):
         super().__init__(n_hits=n_hits, failure=failure, **kwargs)
@@ -111,12 +109,12 @@ class _MockFailingClient(MockedESClient, metaclass=abc.ABCMeta):
     async def supports_pit(self) -> bool:
         return True
 
-    async def _mocked_search(self, **kwargs) -> Dict[str, Any]:
+    async def _mocked_search(self, **kwargs) -> dict[str, Any]:
         # pylint: disable=unused-argument
         hits = self._make_hits()
         return {HITS: {HITS: hits}}
 
-    def _make_hits(self) -> List[Dict[str, Any]]:
+    def _make_hits(self) -> list[dict[str, Any]]:
         # pylint: disable=unused-argument
         if isinstance(self._failure, Exception) and self._n_calls in self._fail_at:
             self._n_calls += 1
@@ -152,10 +150,10 @@ def _make_transport_error(error_code: int) -> TransportError:
     ],
 )
 async def test_poll_search_pages_should_retry(
-    fail_at: Optional[int],
+    fail_at: int | None,
     max_retries: int,
-    failure: Optional[Exception],
-    raised: Optional[Type[Exception]],
+    failure: Exception | None,
+    raised: type[Exception] | None,
 ):
     # Given
     n_hits = 3
@@ -191,7 +189,7 @@ async def test_poll_search_pages_should_retry(
 )
 def test_retry_if_error_code(
     error_codes: Collection[int],
-    raised: Optional[Exception],
+    raised: Exception | None,
     expected_should_retry: bool,
 ):
     # Given

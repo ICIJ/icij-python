@@ -4,19 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from functools import cached_property
-from typing import (
-    Any,
-    AsyncGenerator,
-    Collection,
-    Dict,
-    List,
-    Mapping,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, AsyncGenerator, Collection, Mapping, Sequence
 
 from elasticsearch import AsyncElasticsearch, TransportError
 from tenacity import (
@@ -29,10 +17,10 @@ from tenacity import (
 )
 
 logger = logging.getLogger(__name__)
-_ES_CLIENTS: Dict[str, AsyncElasticsearch] = dict()
-ESSort = Union[Sequence[Union[str, Mapping[str, Any]]], str, Mapping[str, Any], None]
+_ES_CLIENTS: dict[str, AsyncElasticsearch] = dict()
+ESSort = Sequence[str | Mapping[str, Any]] | str | Mapping[str, Any] | None
 
-PointInTime = Dict[str, Any]
+PointInTime = dict[str, Any]
 
 ASC = "asc"
 BOOL = "bool"
@@ -108,7 +96,7 @@ DOC_SOURCES = [
 
 
 class ESClient(AsyncElasticsearch):
-    _recoverable_error_codes: Set[int] = {429}
+    _recoverable_error_codes: set[int] = {429}
 
     def __init__(
         self,
@@ -117,8 +105,8 @@ class ESClient(AsyncElasticsearch):
         keep_alive: str = "1m",
         max_concurrency: int = 5,
         max_retries: int = 0,
-        max_retry_wait_s: Union[int, float] = 60,
-        api_key: Optional[str] = None,
+        max_retry_wait_s: int | float = 60,
+        api_key: str | None = None,
         **kwargs,
     ):
         AsyncElasticsearch.__init__(self, **kwargs)
@@ -153,8 +141,8 @@ class ESClient(AsyncElasticsearch):
         )
 
     async def poll_search_pages(
-        self, body: Dict, sort: ESSort = None, **kwargs
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        self, body: dict, sort: ESSort = None, **kwargs
+    ) -> AsyncGenerator[dict[str, Any], None]:
         retrying = self._async_retrying()
         if sort is None:
             sort = self.default_sort(**kwargs)
@@ -172,8 +160,8 @@ class ESClient(AsyncElasticsearch):
 
     @asynccontextmanager
     async def pit(
-        self, *, index: str, keep_alive: Optional[str] = None, **kwargs
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        self, *, index: str, keep_alive: str | None = None, **kwargs
+    ) -> AsyncGenerator[dict[str, Any], None]:
         if keep_alive is None:
             keep_alive = self._keep_alive
         pit_id = None
@@ -186,19 +174,17 @@ class ESClient(AsyncElasticsearch):
             if pit_id is not None:
                 await self._close_pit(pit_id)
 
-    def _with_headers(self, headers: Dict) -> Dict:
+    def _with_headers(self, headers: dict) -> dict:
         if self._api_key is not None:
             headers["Authorization"] = f"bearer {self._api_key}"
         return headers
 
-    async def count(
-        self, body: Optional[Dict] = None, index: Optional[str] = None, **kwargs
-    ):
+    async def count(self, body: dict | None = None, index: str | None = None, **kwargs):
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
         return await super().count(body=body, index=index, headers=headers, **kwargs)
 
-    async def search(self, body: Optional[Dict], **kwargs):
+    async def search(self, body: dict | None, **kwargs):
         # pylint: disable=unexpected-keyword-arg
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
@@ -219,7 +205,7 @@ class ESClient(AsyncElasticsearch):
         await self.close_point_in_time(body={ID: pit_id})
 
 
-def _hash_params(params: Dict) -> str:
+def _hash_params(params: dict) -> str:
     # TODO not very robust by should be enough
     hashed = json.dumps(params, sort_keys=True)
     return hashlib.md5(hashed).hexdigest()
@@ -238,46 +224,46 @@ class retry_if_error_code(retry_base):  # pylint: disable=invalid-name
         return False
 
 
-def bool_query(query: Dict) -> Dict:
+def bool_query(query: dict) -> dict:
     return {QUERY: {BOOL: query}}
 
 
-def and_query(*queries: Dict) -> Dict:
+def and_query(*queries: dict) -> dict:
     return bool_query({MUST: list(queries)})
 
 
-def or_query(*queries: Dict) -> Dict:
+def or_query(*queries: dict) -> dict:
     return bool_query({SHOULD: list(queries)})
 
 
-def must(*queries: Dict) -> Dict:
+def must(*queries: dict) -> dict:
     return {MUST: list(queries)}
 
 
-def must_no(*queries: Dict) -> Dict:
+def must_no(*queries: dict) -> dict:
     return {MUST_NOT: list(queries)}
 
 
 must_not = must_no
 
 
-def with_sort(*, query: Dict, sort: Dict) -> Dict:
+def with_sort(*, query: dict, sort: dict) -> dict:
     if SORT not in query:
         query[SORT] = []
     return query[SORT].append(sort)
 
 
-def with_source(query: Dict, sources: List[str]) -> Dict:
+def with_source(query: dict, sources: list[str]) -> dict:
     query[SOURCE] = sources
     return query
 
 
-def with_pit(query: Dict, pit: PointInTime) -> Dict:
+def with_pit(query: dict, pit: PointInTime) -> dict:
     query[PIT] = pit
     return query
 
 
-def with_limit(query: Dict, limit: int) -> Dict:
+def with_limit(query: dict, limit: int) -> dict:
     query[SIZE] = limit
     return query
 
@@ -291,7 +277,7 @@ _RANDOM_SCORE = {
 }
 
 
-def with_random_score(query: Dict) -> Dict:
+def with_random_score(query: dict) -> dict:
     if FUNCTION_SCORE in query[QUERY]:
         raise ValueError(f"query already has an existing {FUNCTION_SCORE}")
     new_query = deepcopy(_RANDOM_SCORE)
@@ -300,30 +286,30 @@ def with_random_score(query: Dict) -> Dict:
     return query
 
 
-def has_type(*, type_field: str, type_value: str) -> Dict:
+def has_type(*, type_field: str, type_value: str) -> dict:
     return {TERM: {type_field: type_value}}
 
 
-def has_id(ids: List[str]) -> Dict:
+def has_id(ids: list[str]) -> dict:
     return {IDS: {VALUES: ids}}
 
 
-def function_score(*, query: Dict, **kwargs) -> Dict:
+def function_score(*, query: dict, **kwargs) -> dict:
     query = {FUNCTION_SCORE: {QUERY: query}}
     if kwargs:
         query[FUNCTION_SCORE].update(kwargs)
     return query
 
 
-def match_all_query() -> Dict:
+def match_all_query() -> dict:
     return {QUERY: match_all()}
 
 
 def make_document_query(
-    es_query: Optional[Dict],
-    sources: Optional[List[str]] = None,
+    es_query: dict | None,
+    sources: list[str] | None = None,
     es_doc_type_field: str = "type",
-) -> Dict:
+) -> dict:
     document_type_query = has_type(
         type_field=es_doc_type_field, type_value=ES_DOCUMENT_TYPE
     )
@@ -336,15 +322,15 @@ def make_document_query(
     return es_query
 
 
-def match_all() -> Dict:
+def match_all() -> dict:
     return {MATCH_ALL: {}}
 
 
-def ids_query(ids: List[str]) -> Dict:
+def ids_query(ids: list[str]) -> dict:
     return {IDS: {VALUES: ids}}
 
 
-def get_scroll_id(res: Dict) -> str:
+def get_scroll_id(res: dict) -> str:
     scroll_id = res.get(SCROLL_ID_)
     if scroll_id is None:
         msg = "Missing scroll ID, this response is probably not from a scroll search"
@@ -352,11 +338,11 @@ def get_scroll_id(res: Dict) -> str:
     return scroll_id
 
 
-def get_total_hits(res: Dict) -> int:
+def get_total_hits(res: dict) -> int:
     return res[HITS][TOTAL][VALUE]
 
 
-def add_url_to_document(doc: Dict[str, Any], base_url: str) -> Dict[str, Any]:
+def add_url_to_document(doc: dict[str, Any], base_url: str) -> dict[str, Any]:
     sources = doc[SOURCE]
     doc_index = doc[INDEX_]
     doc_id = doc[ID_]
@@ -366,8 +352,8 @@ def add_url_to_document(doc: Dict[str, Any], base_url: str) -> Dict[str, Any]:
 
 
 def mget_doc_body(
-    index_and_ids: List[Tuple[str, str]] = None,
-) -> Dict:
+    index_and_ids: list[tuple[str, str]] = None,
+) -> dict:
     body = {
         DOCS: [
             {ID_: doc_id, INDEX_: doc_index} for (doc_id, doc_index) in index_and_ids

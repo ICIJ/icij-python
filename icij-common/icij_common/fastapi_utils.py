@@ -1,6 +1,5 @@
 import logging
 import traceback
-from typing import Dict
 
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -17,7 +16,7 @@ _REQUEST_VALIDATION_ERROR = "Request Validation Error"
 logger = logging.getLogger(__name__)
 
 
-def json_error(*, title, detail, **kwargs) -> Dict:
+def json_error(*, title, detail, **kwargs) -> dict:
     error = {"title": title, "detail": detail}
     error.update(kwargs)
     return error

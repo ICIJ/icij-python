@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -28,7 +28,7 @@ worker_app = typer.Typer(name="workers")
 def start(
     app: Annotated[str, typer.Argument(help=_APP_HELP)],
     config: Annotated[
-        Optional[Path], typer.Option("-c", "--config", help=_CONFIG_HELP)
+        Path | None, typer.Option("-c", "--config", help=_CONFIG_HELP)
     ] = None,
     n: Annotated[int, typer.Option("--n-workers", "-n", help=_N_HELP)] = 1,
     backend: Annotated[
@@ -40,7 +40,7 @@ def start(
         ),
     ] = _DEFAULT_BACKEND,
     group: Annotated[
-        Optional[str],
+        str | None,
         typer.Option("--group", "-g", help=_GROUP_HELP),
     ] = None,
 ):

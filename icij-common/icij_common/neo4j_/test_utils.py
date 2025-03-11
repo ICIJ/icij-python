@@ -7,7 +7,7 @@ import pytest
 from neo4j import AsyncGraphDatabase
 
 import icij_common
-from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
+from icij_common.neo4j_.db import NEO4J_COMMUNITY_DB
 
 NEO4J_TEST_PORT = 7688
 NEO4J_TEST_USER = "neo4j"
@@ -112,12 +112,12 @@ def mock_enterprise(monkeypatch):
 
 def mock_enterprise_(monkeypatch):
     monkeypatch.setattr(
-        icij_common.neo4j.db, "db_specific_session", _mocked_db_specific_session
+        icij_common.neo4j_.db, "db_specific_session", _mocked_db_specific_session
     )
     monkeypatch.setattr(
-        icij_common.neo4j.migrate, "db_specific_session", _mocked_db_specific_session
+        icij_common.neo4j_.migrate, "db_specific_session", _mocked_db_specific_session
     )
     monkeypatch.setattr(
-        icij_common.neo4j.db, "database_registry_db", _mocked_db_registry_db
+        icij_common.neo4j_.db, "database_registry_db", _mocked_db_registry_db
     )
-    monkeypatch.setattr(icij_common.neo4j.db, "is_enterprise", mocked_is_enterprise)
+    monkeypatch.setattr(icij_common.neo4j_.db, "is_enterprise", mocked_is_enterprise)

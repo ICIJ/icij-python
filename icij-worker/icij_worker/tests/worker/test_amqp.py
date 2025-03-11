@@ -4,7 +4,7 @@ import functools
 import itertools
 import json
 from datetime import datetime
-from typing import ClassVar, Dict, List, Optional, Type
+from typing import ClassVar
 
 import pytest
 from aio_pika import (
@@ -55,7 +55,7 @@ from icij_worker.worker.worker import WE
 
 @WorkerConfig.register("test-amqp")
 class TestableAMQPWorkerConfig(AMQPWorkerConfig):
-    type: ClassVar[str] = Field(const=True, default="test-amqp")
+    type: ClassVar[str] = Field(frozen=True, default="test-amqp")
 
 
 @Worker.register("test-amqp")
@@ -67,9 +67,9 @@ class TestableAMQPWorker(AMQPWorker):
         management_client: AMQPManagementClient,
         worker_id: str,
         *,
-        group: Optional[str],
+        group: str | None,
         broker_url: str,
-        inactive_after_s: Optional[float] = None,
+        inactive_after_s: float | None = None,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
         **kwargs,
@@ -96,7 +96,7 @@ class TestableAMQPWorker(AMQPWorker):
         return self._app
 
     @property
-    def worker_events(self) -> Dict[Type[WE], Dict[str, WE]]:
+    def worker_events(self) -> dict[type[WE], dict[str, WE]]:
         return self._worker_events
 
     @property
@@ -189,13 +189,13 @@ async def populate_tasks(rabbit_mq: str, request):
         )
         await task_queue.bind(task_ex, routing_key=task_routing.routing_key)
         for task in tasks:
-            msg = AMQPMessage(task.json().encode())
+            msg = AMQPMessage(task.model_dump_json().encode())
             await task_ex.publish(msg, task_routing.routing_key)
     return tasks
 
 
 async def test_worker_work_forever(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
+    populate_tasks: list[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
     # pylint: disable=protected-access,unused-argument
     # Given
@@ -214,7 +214,7 @@ async def test_worker_work_forever(
         async with res_queue.iterator(timeout=receive_timeout) as messages:
             try:
                 async for message in messages:
-                    msg = Message.parse_raw(message.body)
+                    msg = Message.model_validate_json(message.body)
                     if not isinstance(msg, ResultEvent):
                         continue
                     break
@@ -241,7 +241,7 @@ async def test_worker_work_forever(
     indirect=["populate_tasks", "amqp_worker"],
 )
 async def test_worker_consume_task(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
+    populate_tasks: list[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
     # pylint: disable=protected-access,unused-argument
     # When
@@ -298,7 +298,7 @@ async def test_worker_should_nack_queue_unregistered_task(
     indirect=["populate_tasks", "amqp_worker"],
 )
 async def test_should_not_consume_task_from_other_group(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
+    populate_tasks: list[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
     # pylint: disable=protected-access,unused-argument
     # When
@@ -362,8 +362,8 @@ async def test_worker_consume_cancel_events(
         received_event = amqp_worker.worker_events[CancelEvent].pop("some-id")
         expected_event = CancelEvent(
             task_id="some-id", requeue=requeue, created_at=datetime.now()
-        ).dict(exclude={"created_at"})
-        received_event = received_event.dict()
+        ).model_dump(exclude={"created_at"})
+        received_event = received_event.model_dump()
         created_at = received_event.pop("created_at")
         assert isinstance(created_at, datetime)
         assert received_event == expected_event
@@ -373,7 +373,7 @@ async def test_worker_consume_cancel_events(
     "amqp_worker", [{"app": "test_async_app_late"}], indirect=["amqp_worker"]
 )
 async def test_worker_negatively_acknowledge(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker
+    populate_tasks: list[Task], amqp_worker: TestableAMQPWorker
 ):
     # pylint: disable=protected-access,unused-argument
     # When
@@ -403,8 +403,8 @@ _CREATED_AT = datetime.now()
     [
         (
             ProgressEvent(task_id="some-id", progress=0.5, created_at=_CREATED_AT),
-            f'{{"taskId": "some-id", "createdAt": "{_CREATED_AT.isoformat()}",'
-            ' "progress": 0.5, "@type": "ProgressEvent"}',
+            f'{{"taskId":"some-id","createdAt":"{_CREATED_AT.isoformat()}",'
+            '"progress":0.5,"@type":"ProgressEvent"}',
         ),
         (
             ErrorEvent(
@@ -421,12 +421,12 @@ _CREATED_AT = datetime.now()
                 ),
                 created_at=_CREATED_AT,
             ),
-            '{"taskId": "some-id", '
-            f'"createdAt": "{_CREATED_AT.isoformat()}", "retriesLeft": 4, '
-            '"error": {'
-            '"name": "some-error", "message": "some message", "stacktrace": [{"name": '
-            '"SomeError", "file": "some details", "lineno": 666}],'
-            ' "@type": "TaskError"}, "@type": "ErrorEvent"}',
+            '{"taskId":"some-id",'
+            f'"createdAt":"{_CREATED_AT.isoformat()}","retriesLeft":4,'
+            '"error":{'
+            '"name":"some-error","message":"some message","stacktrace":[{"name":'
+            '"SomeError","file":"some details","lineno":666}],'
+            '"@type":"TaskError"},"@type":"ErrorEvent"}',
         ),
     ],
 )
@@ -454,12 +454,12 @@ async def test_publish_event(
                 received_event_json = message.body.decode()
                 break
         assert received_event_json == expected_json
-        assert Message.parse_obj(json.loads(received_event_json)) == event
+        assert Message.model_validate(json.loads(received_event_json)) == event
 
 
 @pytest.mark.parametrize("retries_left", [0, 1])
 async def test_publish_error(
-    populate_tasks: List[Task],
+    populate_tasks: list[Task],
     amqp_worker: TestableAMQPWorker,
     rabbit_mq: str,
     retries_left: int,
@@ -505,7 +505,7 @@ async def test_publish_error(
 
 
 async def test_publish_result_event(
-    populate_tasks: List[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
+    populate_tasks: list[Task], amqp_worker: TestableAMQPWorker, rabbit_mq: str
 ):
     # pylint: disable=unused-argument
     # Given
@@ -513,7 +513,7 @@ async def test_publish_result_event(
     task = populate_tasks[0]
     completed_at = datetime.now()
     task = safe_copy(
-        task, update=TaskUpdate.done(completed_at).dict(exclude_unset=True)
+        task, update=TaskUpdate.done(completed_at).model_dump(exclude_unset=True)
     )
     result = "hello world !"
 

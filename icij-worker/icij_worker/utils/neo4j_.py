@@ -1,27 +1,27 @@
 import asyncio
 from abc import ABC
-from typing import Awaitable, Callable, Dict, Optional, Tuple, TypeVar
+from typing import Awaitable, Callable, TypeVar
 
 import neo4j
 
-from icij_common.neo4j.migrate import retrieve_dbs
+from icij_common.neo4j_.migrate import retrieve_dbs
 from icij_worker.objects import TaskEvent
 from icij_worker.task_storage.neo4j_ import Neo4jStorage
 
 T = TypeVar("T", bound=TaskEvent)
-ConsumeT = Callable[[neo4j.AsyncTransaction, ...], Awaitable[Optional[T]]]
+ConsumeT = Callable[[neo4j.AsyncTransaction, ...], Awaitable[T | None]]
 
 
 class Neo4jConsumerMixin(Neo4jStorage, ABC):
     _driver: neo4j.AsyncDriver
     _db_driver: neo4j.AsyncDriver
-    _task_meta: Dict[str, Tuple[str, str]] = dict()
+    _task_meta: dict[str, tuple[str, str]] = dict()
 
     async def _consume_(
         self,
         consume_tx: ConsumeT,
         refresh_interval_s: float,
-        db_filter: Optional[Callable[[str], bool]],
+        db_filter: Callable[[str], bool] | None,
     ) -> T:
         dbs = []
         refresh_dbs_i = 0

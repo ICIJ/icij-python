@@ -5,38 +5,36 @@ https://github.com/allenai/allennlp
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from pathlib import Path
-from typing import (
-    Callable,
-    ClassVar,
-    DefaultDict,
-    Dict,
-    List,
-    Optional,
-    Protocol,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from copy import deepcopy
+from typing import Any, Callable, ClassVar, DefaultDict, TypeVar, cast
 
-from pydantic import BaseModel, Field
-from pydantic.parse import load_file
+from pydantic import (
+    BaseModel,
+    Field,
+    ModelWrapValidatorHandler,
+    model_serializer,
+    model_validator,
+)
+from pydantic_core.core_schema import (
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    ValidatorFunctionWrapHandler,
+)
 from typing_extensions import Self
 
-from icij_common.pydantic_utils import ICIJSettings
-from icij_worker.utils.imports import VariableNotFound, import_variable
+from icij_common.import_utils import VariableNotFound, import_variable
+from icij_common.pydantic_utils import ICIJSettings, icij_config
 
 logger = logging.getLogger(__name__)
 
 _RegistrableT = TypeVar("_RegistrableT", bound="Registrable")
-_SubclassRegistry = Dict[str, _RegistrableT]
-_SubclssNames = Dict[_SubclassRegistry, str]
+_SubclassRegistry = dict[str, _RegistrableT]
+_SubclssNames = dict[_SubclassRegistry, str]
 
 T = TypeVar("T", bound="FromConfig")
 
@@ -45,19 +43,17 @@ class RegistrableMixin(ABC):
     _registry: ClassVar[DefaultDict[type, _SubclassRegistry]] = defaultdict(dict)
     _registered_names: ClassVar[DefaultDict[type, _SubclssNames]] = defaultdict(dict)
 
-    default_implementation: Optional[str] = None
-
     @classmethod
     def register(
-        cls, name: Optional[str] = None, exist_ok: bool = False
-    ) -> Callable[[Type[RegistrableMixin]], Type[RegistrableMixin]]:
+        cls, name: str | None = None, exist_ok: bool = False
+    ) -> Callable[[type[RegistrableMixin]], type[RegistrableMixin]]:
         # pylint: disable=protected-access
         registry = RegistrableMixin._registry[cls]
         registered_names = RegistrableMixin._registered_names[cls]
 
         def add_subclass_to_registry(
-            subclass: Type[RegistrableMixin],
-        ) -> Type[RegistrableMixin]:
+            subclass: type[RegistrableMixin],
+        ) -> type[RegistrableMixin]:
             registered_name = name
             if registered_name is None:
                 registered_key = subclass.registry_key.default
@@ -88,13 +84,13 @@ class RegistrableMixin(ABC):
         return add_subclass_to_registry
 
     @classmethod
-    def by_name(cls: Type[_RegistrableT], name: str) -> Callable[..., _RegistrableT]:
+    def by_name(cls: type[_RegistrableT], name: str) -> Callable[..., _RegistrableT]:
         logger.debug("instantiating registered subclass %s of %s", name, cls)
         subclass = cls.resolve_class_name(name)
-        return cast(Type[_RegistrableT], subclass)
+        return cast(type[_RegistrableT], subclass)
 
     @classmethod
-    def resolve_class_name(cls: Type[_RegistrableT], name: str) -> Type[_RegistrableT]:
+    def resolve_class_name(cls: type[_RegistrableT], name: str) -> type[_RegistrableT]:
         # pylint: disable=protected-access
         sub_registry = RegistrableMixin._registry.get(cls, None)
         if sub_registry is None:
@@ -132,7 +128,7 @@ If your registered class comes from custom code, you'll need to import the\
         raise ValueError(msg)
 
     @classmethod
-    def list_available(cls) -> List[str]:
+    def list_available(cls) -> list[str]:
         # pylint: disable=protected-access
         keys = list(RegistrableMixin._registry[cls].keys())
         return keys
@@ -152,39 +148,31 @@ If your registered class comes from custom code, you'll need to import the\
 
 
 class RegistrableConfig(BaseModel, RegistrableMixin):
-    registry_key: ClassVar[str] = Field(const=True, default="name")
+    registry_key: ClassVar[str] = Field(frozen=True, default="name")
 
+    @model_validator(mode="wrap")
     @classmethod
-    def parse_file(
-        cls,
-        path: Union[str, Path],
-        *,
-        content_type: str = None,
-        encoding: str = "utf8",
-        proto: Protocol = None,
-        allow_pickle: bool = False,
+    def deserialize_with_registry_key(
+        cls, value: Any, handler: ValidatorFunctionWrapHandler
     ) -> RegistrableConfig:
-        obj = load_file(
-            path,
-            proto=proto,
-            content_type=content_type,
-            encoding=encoding,
-            allow_pickle=allow_pickle,
-            json_loads=cls.__config__.json_loads,
-        )
-        key = obj.pop(cls.registry_key.default)
-        subcls = cls.resolve_class_name(key)
-        return subcls(**obj)
+        if isinstance(value, dict):
+            copied = deepcopy(value)
+            registry_key = copied.get(cls.registry_key.default)
+            if registry_key is None:
+                return handler(copied)
+            subcls = cls.resolve_class_name(registry_key)
+            return subcls.model_validate(copied)
+        return handler(value)
 
 
 class RegistrableSettings(RegistrableConfig, ICIJSettings):
-
     @classmethod
     def from_env(cls):
         key = cls.registry_key.default
-        if cls.__config__.env_prefix is not None:
-            key = cls.__config__.env_prefix + key
-        registry_key = find_in_env(key, cls.__config__.case_sensitive)
+        prefix = cls.model_config["env_prefix"]
+        if prefix is not None:
+            key = prefix + key
+        registry_key = find_in_env(key, cls.model_config["case_sensitive"])
         subcls = cls.resolve_class_name(registry_key)
         return subcls()
 
@@ -203,7 +191,7 @@ class RegistrableFromConfig(RegistrableMixin, FromConfig, ABC):
         return subcls._from_config(config, **extras)  # pylint: disable=protected-access
 
 
-def find_variable_loc_in_env(variable: str, case_sensitive: bool) -> Tuple[str, str]:
+def find_variable_loc_in_env(variable: str, case_sensitive: bool) -> tuple[str, str]:
     if case_sensitive:
         try:
             return variable, os.environ[variable]
@@ -218,3 +206,59 @@ def find_variable_loc_in_env(variable: str, case_sensitive: bool) -> Tuple[str, 
 
 def find_in_env(variable: str, case_sensitive: bool) -> str:
     return find_variable_loc_in_env(variable, case_sensitive)[1]
+
+
+class Registrable(BaseModel, RegistrableMixin, ABC):
+    model_config = icij_config()
+
+    registry_key: ClassVar[str] = Field(frozen=True, default="@type")
+
+    @classmethod
+    def model_validate_json(
+        cls,
+        json_data: str | bytes | bytearray,
+        *,
+        strict: bool | None = None,
+        context: Any | None = None,
+    ) -> Self:
+        if isinstance(json_data, bytes):
+            data = json.loads(json_data.decode("utf-8"))
+        elif isinstance(json_data, str):
+            data = json.loads(json_data)
+        elif isinstance(json_data, bytearray):
+            data = json.loads(str(json_data, encoding="utf-8"))
+        else:
+            raise TypeError(
+                f"unsupported type {type(json_data)}, expected bytes, str or bytearray"
+            )
+        key = data[cls.registry_key.default]
+        subcls = cls.resolve_class_name(key)
+        # TODO: try to use model_validate_json instead
+        return subcls.model_validate(data, strict=strict, context=context)
+
+    @model_serializer(mode="wrap")
+    def serialize_with_registry_key(
+        self, nxt: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> RegistrableConfig:
+        serialized = nxt(self)
+        include_key = bool(info.include) and self.registry_key.default in info.include
+        include_key = include_key or not (
+            bool(info.exclude) and self.registry_key.default in info.exclude
+        )
+        if include_key:
+            serialized[self.registry_key.default] = self.registered_name
+        return serialized
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def deserialize_with_registry_key(
+        cls, value: Any, handler: ModelWrapValidatorHandler[Self]
+    ) -> Registrable:
+        if isinstance(value, dict):
+            copied = deepcopy(value)
+            registry_key = copied.pop(cls.registry_key.default, None)
+            if registry_key is None:
+                return handler(copied)
+            subcls = cls.resolve_class_name(registry_key)
+            return subcls.model_validate(copied)
+        return handler(value)

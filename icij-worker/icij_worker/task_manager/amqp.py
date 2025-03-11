@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import ClassVar, Dict, List, Optional, TypeVar, Union, cast
+from typing import ClassVar, TypeVar, cast
 
 from aio_pika import connect_robust
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
@@ -44,8 +44,8 @@ S = TypeVar("S", bound=TaskStorage)
 
 @TaskManagerConfig.register()
 class AMQPTaskManagerConfig(TaskManagerConfig, AMQPConfigMixin):
-    backend: ClassVar[AsyncBackend] = Field(const=True, default=AsyncBackend.amqp)
-    storage: Union[FSKeyValueStorageConfig, PostgresStorageConfig]
+    backend: ClassVar[AsyncBackend] = Field(frozen=True, default=AsyncBackend.amqp)
+    storage: FSKeyValueStorageConfig | PostgresStorageConfig
 
 
 @TaskManager.register(AsyncBackend.amqp)
@@ -59,7 +59,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
-        inactive_after_s: Optional[float] = None,
+        inactive_after_s: float | None = None,
         is_qpid: bool = False,
     ):
         super().__init__(app)
@@ -72,12 +72,12 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         )
         self._management_client = management_client
         self._storage = task_store
-        self._task_x: Optional[AbstractExchange] = None
-        self._worker_evt_x: Optional[AbstractExchange] = None
-        self._health_x: Optional[AbstractExchange] = None
-        self._manager_messages_it: Optional[AbstractQueueIterator] = None
+        self._task_x: AbstractExchange | None = None
+        self._worker_evt_x: AbstractExchange | None = None
+        self._health_x: AbstractExchange | None = None
+        self._manager_messages_it: AbstractQueueIterator | None = None
 
-        self._task_groups: Dict[str, Optional[str]] = dict()
+        self._task_groups: dict[str, str | None] = dict()
 
     @classmethod
     def _from_config(cls, config: AMQPTaskManagerConfig, **extras) -> AMQPTaskManager:
@@ -119,10 +119,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def get_task(self, task_id: str) -> Task:
         return await self._storage.get_task(task_id)
 
-    async def get_task_group(self, task_id: str) -> Optional[str]:
+    async def get_task_group(self, task_id: str) -> str | None:
         return await self._storage.get_task_group(task_id)
 
-    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
+    async def get_task_errors(self, task_id: str) -> list[ErrorEvent]:
         return await self._storage.get_task_errors(task_id)
 
     async def get_task_result(self, task_id: str) -> ResultEvent:
@@ -130,15 +130,15 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     async def get_tasks(
         self,
-        group: Optional[str],
+        group: str | None,
         *,
-        task_name: Optional[str] = None,
-        state: Optional[Union[List[TaskState], TaskState]] = None,
+        task_name: str | None = None,
+        state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> List[Task]:
+    ) -> list[Task]:
         return await self._storage.get_tasks(group, task_name=task_name, state=state)
 
-    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
+    async def save_task_(self, task: Task, group: str | None) -> bool:
         return await self._storage.save_task_(task, group)
 
     async def save_result(self, result: ResultEvent):
@@ -151,7 +151,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         # pylint: disable=unnecessary-dunder-call
         msg = await self._manager_messages_it.__anext__()
         try:
-            message = cast(ManagerEvent, Message.parse_raw(msg.body))
+            message = cast(ManagerEvent, Message.model_validate_json(msg.body))
         except Exception as e:
             msg = f"invalid manager event body {msg.body}"
             raise MessageDeserializationError(msg) from e
@@ -262,7 +262,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         logger.info("connection workflow complete")
 
     @cached_property
-    def _other_routings(self) -> List[Routing]:
+    def _other_routings(self) -> list[Routing]:
         worker_events_routing = AMQPMixin.worker_evt_routing()
         manager_events_routing = AMQPMixin.manager_evt_routing()
         return [worker_events_routing, manager_events_routing]
@@ -286,7 +286,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
                 routing, declare_exchanges=True, declare_queues=True
             )
 
-    async def get_health(self) -> Dict[str, bool]:
+    async def get_health(self) -> dict[str, bool]:
         storage_health = await self._storage.get_health()
         amqp_health = await self._get_amqp_health()
         return {"storage": storage_health, "amqp": amqp_health}

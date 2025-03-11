@@ -4,15 +4,14 @@ import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
-from typing import AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import AsyncGenerator
 
 import neo4j
 from neo4j import AsyncTransaction
 from neo4j.exceptions import ResultNotSingleError
 
-from icij_common.neo4j.db import db_specific_session, registry_db_session
-from icij_common.neo4j.migrate import retrieve_dbs
-from icij_common.pydantic_utils import jsonable_encoder
+from icij_common.neo4j_.db import db_specific_session, registry_db_session
+from icij_common.neo4j_.migrate import retrieve_dbs
 from icij_worker.constants import (
     NEO4J_SHUTDOWN_EVENT_CREATED_AT,
     NEO4J_SHUTDOWN_EVENT_NODE,
@@ -67,13 +66,13 @@ logger = logging.getLogger(__name__)
 class Neo4jStorage(TaskStorage):
     def __init__(self, driver: neo4j.AsyncDriver):
         self._driver = driver
-        self._task_meta: Dict[str, Tuple[str, str]] = dict()
+        self._task_meta: dict[str, tuple[str, str]] = dict()
 
     async def get_task(self, task_id: str) -> Task:
         async with self._task_session(task_id) as sess:
             return await sess.execute_read(_get_task_tx, task_id=task_id)
 
-    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
+    async def get_task_errors(self, task_id: str) -> list[ErrorEvent]:
         async with self._task_session(task_id) as sess:
             recs = await sess.execute_read(_get_task_errors_tx, task_id=task_id)
         errors = [ErrorEvent.from_neo4j(rec) for rec in recs]
@@ -85,19 +84,19 @@ class Neo4jStorage(TaskStorage):
 
     async def get_tasks(
         self,
-        group: Optional[str],
+        group: str | None,
         *,
-        task_name: Optional[str] = None,
-        state: Optional[Union[List[TaskState], TaskState]] = None,
+        task_name: str | None = None,
+        state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> List[Task]:
+    ) -> list[Task]:
         db = self._routing_strategy.neo4j_db(group)
         async with self._db_session(db) as sess:
             recs = await _get_tasks(sess, state=state, task_name=task_name, group=group)
         tasks = [Task.from_neo4j(r) for r in recs]
         return tasks
 
-    async def get_task_group(self, task_id: str) -> Optional[str]:
+    async def get_task_group(self, task_id: str) -> str | None:
         if task_id not in self._task_meta:
             await self._refresh_task_meta()
         try:
@@ -105,10 +104,10 @@ class Neo4jStorage(TaskStorage):
         except KeyError as e:
             raise UnknownTask(task_id) from e
 
-    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
+    async def save_task_(self, task: Task, group: str | None) -> bool:
         db = self._routing_strategy.neo4j_db(group)
         async with self._db_session(db) as sess:
-            task_props = task.dict(by_alias=True, exclude_unset=True)
+            task_props = task.model_dump(by_alias=True, exclude_unset=True)
             new_task = await sess.execute_write(
                 _save_task_tx,
                 task_id=task.id,
@@ -121,7 +120,7 @@ class Neo4jStorage(TaskStorage):
 
     async def save_result(self, result: ResultEvent):
         async with self._task_session(result.task_id) as sess:
-            res_str = json.dumps(jsonable_encoder(result.result.value))
+            res_str = json.dumps(result.result.value)
             await sess.execute_write(
                 _save_result_tx,
                 task_id=result.task_id,
@@ -131,7 +130,7 @@ class Neo4jStorage(TaskStorage):
 
     async def save_error(self, error: ErrorEvent):
         async with self._task_session(error.task_id) as sess:
-            error_props = error.error.dict(by_alias=True)
+            error_props = error.error.model_dump(by_alias=True)
             error_props.pop("@type")
             error_props["stacktrace"] = [
                 json.dumps(item) for item in error_props["stacktrace"]
@@ -188,7 +187,7 @@ class Neo4jStorage(TaskStorage):
         return True
 
 
-async def _get_tasks_meta_tx(tx: neo4j.AsyncTransaction) -> List[neo4j.Record]:
+async def _get_tasks_meta_tx(tx: neo4j.AsyncTransaction) -> list[neo4j.Record]:
     query = f"""MATCH (task:{NEO4J_TASK_NODE})
 RETURN task.{NEO4J_TASK_ID} as taskId, task.{NEO4J_TASK_GROUP} as taskNs"""
     res = await tx.run(query)
@@ -200,8 +199,8 @@ async def _save_task_tx(
     tx: neo4j.AsyncTransaction,
     *,
     task_id: str,
-    task_props: Dict,
-    group: Optional[str],
+    task_props: dict,
+    group: str | None,
 ) -> bool:
     query = f"MATCH (task:{NEO4J_TASK_NODE} {{{NEO4J_TASK_ID}: $taskId }}) RETURN task"
     res = await tx.run(query, taskId=task_id)
@@ -217,7 +216,7 @@ async def _save_task_tx(
     else:
         task_obj = {"id": task_id}
         task_obj.update(task_props)
-        task_props = TaskUpdate.from_task(Task.parse_obj(task_obj)).dict(
+        task_props = TaskUpdate.from_task(Task.model_validate(task_obj)).model_dump(
             by_alias=True, exclude_unset=True
         )
     task_props.pop("@type", None)
@@ -265,7 +264,7 @@ async def _save_error_tx(
     tx: neo4j.AsyncTransaction,
     task_id: str,
     *,
-    error_props: Dict,
+    error_props: dict,
     retries_left: int,
     created_at: datetime,
 ):
@@ -323,10 +322,10 @@ ON (lock.{NEO4J_TASK_LOCK_WORKER_ID})"""
 
 async def _get_tasks(
     sess: neo4j.AsyncSession,
-    state: Optional[Union[List[TaskState], TaskState]],
-    task_name: Optional[str],
-    group: Optional[str],
-) -> List[neo4j.Record]:
+    state: list[TaskState] | TaskState | None,
+    task_name: str | None,
+    group: str | None,
+) -> list[neo4j.Record]:
     if isinstance(state, TaskState):
         state = [state]
     if state is not None:
@@ -347,11 +346,11 @@ async def _get_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str) -> Task:
 
 async def _get_tasks_tx(
     tx: neo4j.AsyncTransaction,
-    state: Optional[List[str]],
+    state: list[str] | None,
     *,
-    task_name: Optional[str],
-    group: Optional[str],
-) -> List[neo4j.Record]:
+    task_name: str | None,
+    group: str | None,
+) -> list[neo4j.Record]:
     where = ""
     if task_name:
         where = f"WHERE task.{NEO4J_TASK_NAME} = $type"
@@ -385,7 +384,7 @@ ORDER BY task.{NEO4J_TASK_CREATED_AT} DESC"""
 
 async def _get_task_errors_tx(
     tx: neo4j.AsyncTransaction, *, task_id: str
-) -> List[neo4j.Record]:
+) -> list[neo4j.Record]:
     query = f"""MATCH (task:{NEO4J_TASK_NODE} {{ {NEO4J_TASK_ID}: $taskId }})
 MATCH (error:{NEO4J_TASK_ERROR_NODE})-[rel:{NEO4J_TASK_ERROR_OCCURRED_TYPE}]->(task)
 RETURN error, rel, task

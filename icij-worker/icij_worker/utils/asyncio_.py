@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +8,7 @@ class Seq:
     pass
 
 
-def stop_other_tasks_when_exc(t: asyncio.Task, others: List[asyncio.Task]) -> None:
+def stop_other_tasks_when_exc(t: asyncio.Task, others: list[asyncio.Task]) -> None:
     try:
         exc = t.exception()
     except asyncio.CancelledError:

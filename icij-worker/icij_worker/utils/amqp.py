@@ -7,7 +7,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from enum import Enum, unique
 from functools import cached_property, lru_cache
-from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
+from typing import Any, cast
 from urllib import parse
 
 import aiormq
@@ -30,11 +30,12 @@ from aio_pika.exceptions import ChannelPreconditionFailed
 from aiohttp import BasicAuth
 from aiormq import Connection as AiormqConnection
 from aiormq.abc import ArgumentsType, ConfirmationFrameType, URLorStr
+from icij_common.pydantic_utils import icij_config, merge_configs, no_enum_config
 from mdurl import URL
 from pamqp.commands import Basic
 from pamqp.common import FieldTable
+from pydantic import BaseModel
 
-from icij_common.pydantic_utils import ICIJModel, NoEnumModel
 from icij_worker import Message
 from icij_worker.app import TaskGroup
 from icij_worker.constants import (
@@ -80,12 +81,14 @@ class ApplyTo(str, Enum):
     ALL = "all"
 
 
-class AMQPPolicy(NoEnumModel):
+class AMQPPolicy(BaseModel):
+    model_config = merge_configs(icij_config(), no_enum_config())
+
     name: str
     pattern: str
-    definition: Dict[str, Any]
-    apply_to: Optional[ApplyTo] = None
-    priority: Optional[int] = None
+    definition: dict[str, Any]
+    apply_to: ApplyTo | None = None
+    priority: int | None = None
 
 
 _DELIVERY_ACK_TIMEOUT_RE = re.compile(
@@ -93,15 +96,17 @@ _DELIVERY_ACK_TIMEOUT_RE = re.compile(
 )
 
 
-class AMQPConfigMixin(ICIJModel):
+class AMQPConfigMixin(BaseModel):
+    model_config = icij_config()
+
     connection_timeout_s: float = 5.0
     reconnection_wait_s: float = 5.0
     rabbitmq_host: str = "127.0.0.1"
     rabbitmq_password: str = "guest"
-    rabbitmq_port: Optional[int] = 5672
-    rabbitmq_management_port: Optional[int] = 15672
-    rabbitmq_user: Optional[str] = "guest"
-    rabbitmq_vhost: Optional[str] = "%2F"
+    rabbitmq_port: int | None = 5672
+    rabbitmq_management_port: int | None = 15672
+    rabbitmq_user: str | None = "guest"
+    rabbitmq_vhost: str | None = "%2F"
     rabbitmq_is_qpid: bool = False
 
     @cached_property
@@ -143,7 +148,7 @@ class AMQPMixin:
     _channel_: AbstractRobustChannel
     _routing_strategy: RoutingStrategy
     _task_x: AbstractExchange
-    max_task_queue_size: Optional[int]
+    max_task_queue_size: int | None
     _always_include = {"createdAt", "retriesLeft"}
 
     def __init__(
@@ -161,20 +166,20 @@ class AMQPMixin:
         self._connection_timeout_s = connection_timeout_s
         self._inactive_after_s = inactive_after_s
         self._publisher_confirms = not is_qpid
-        self._connection_: Optional[AbstractRobustConnection] = None
+        self._connection_: AbstractRobustConnection | None = None
         self._exit_stack = AsyncExitStack()
 
     async def _publish_message(
         self,
-        message: Union[Message, bytes],
+        message: Message | bytes,
         *,
         exchange: AbstractExchange,
         delivery_mode: DeliveryMode = DeliveryMode.PERSISTENT,
-        routing_key: Optional[str],
+        routing_key: str | None,
         mandatory: bool,
-    ) -> Optional[ConfirmationFrameType]:
+    ) -> ConfirmationFrameType | None:
         if isinstance(message, Message):
-            message = message.json(
+            message = message.model_dump_json(
                 exclude_unset=True, by_alias=True, exclude_none=True
             ).encode()
         message = AioPikaMessage(
@@ -269,7 +274,7 @@ class AMQPMixin:
         *,
         declare_exchanges: bool,
         declare_queues: bool = True,
-    ) -> Tuple[AbstractQueueIterator, AbstractExchange, Optional[AbstractExchange]]:
+    ) -> tuple[AbstractQueueIterator, AbstractExchange, AbstractExchange | None]:
         await self._exit_stack.enter_async_context(
             cast(AbstractAsyncContextManager, self._channel)
         )
@@ -365,7 +370,7 @@ class AMQPManagementClient(AiohttpClient):
         async with self._put(url, json=data):
             pass
 
-    async def list_policies(self) -> List[Dict]:
+    async def list_policies(self) -> list[dict]:
         url = f"/api/policies/{self._vhost}"
         async with self._get(url) as res:
             return await res.json()
@@ -380,8 +385,8 @@ class AMQPManagementClient(AiohttpClient):
 
 def amqp_task_group_policy(
     routing: Routing,
-    group: Optional[TaskGroup],
-    app_max_task_queue_size: Optional[int],
+    group: TaskGroup | None,
+    app_max_task_queue_size: int | None,
 ) -> AMQPPolicy:
     pattern = rf"^{re.escape(routing.queue_name)}$"
     name = f"task-group-policy-{routing.queue_name}"
@@ -436,7 +441,7 @@ class RobustChannel(RobustChannel_):
 
 
 class RobustConnection(RobustConnection_):
-    CHANNEL_CLASS: Type[RobustChannel] = RobustChannel
+    CHANNEL_CLASS: type[RobustChannel] = RobustChannel
 
     # Defined async context manager attributes to be able to enter and exit this
     # in ExitStack
@@ -474,7 +479,7 @@ class QpidUnderlayConnection(UnderlayConnection):
 async def aiormq_qpid_connect(
     url: URLorStr,
     *args: Any,
-    client_properties: Optional[FieldTable] = None,
+    client_properties: FieldTable | None = None,
     **kwargs: Any,
 ) -> QpidConnection:
     connection = QpidConnection(url, *args, **kwargs)
@@ -491,7 +496,7 @@ class QpidConnection(AiormqConnection):
         return self.server_properties.get("capabilities", self.QPID_CAPABILITIES)
 
 
-def parse_consumer_timeout(exc: BaseException) -> Optional[WorkerTimeoutError]:
+def parse_consumer_timeout(exc: BaseException) -> WorkerTimeoutError | None:
     if not isinstance(exc, ChannelPreconditionFailed):
         return None
     if not exc.args:

@@ -7,8 +7,8 @@ from typing import ClassVar
 import pytest
 from pydantic import Field
 
+from icij_common.registrable import RegistrableConfig, RegistrableFromConfig
 from icij_common.test_utils import fail_if_exception
-from icij_worker.utils import RegistrableConfig, RegistrableFromConfig
 
 
 class _MockedBaseClass(RegistrableFromConfig, ABC):
@@ -112,9 +112,9 @@ def test_registrable_from_config(
     base_class = _MockedBaseClass
 
     class _MockedBaseClassConfig(RegistrableConfig):
-        registry_key: ClassVar[str] = Field(const=True, default="some_key")
+        registry_key: ClassVar[str] = Field(frozen=True, default="some_key")
         some_attr: str
-        some_key: ClassVar[str] = Field(const=True, default="registered")
+        some_key: ClassVar[str] = Field(frozen=True, default="registered")
 
     @base_class.register("registered")
     class Registered(base_class):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
 
 from icij_worker import ResultEvent, Task, TaskState
 from icij_worker.objects import ErrorEvent, ProgressEvent
@@ -21,23 +20,23 @@ class TaskStorage(ABC):
     async def get_task(self, task_id: str) -> Task: ...
 
     @abstractmethod
-    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]: ...
+    async def get_task_errors(self, task_id: str) -> list[ErrorEvent]: ...
 
     @abstractmethod
     async def get_task_result(self, task_id: str) -> ResultEvent: ...
 
     @abstractmethod
-    async def get_task_group(self, task_id: str) -> Optional[str]: ...
+    async def get_task_group(self, task_id: str) -> str | None: ...
 
     @abstractmethod
     async def get_tasks(
         self,
-        group: Optional[str],
+        group: str | None,
         *,
-        task_name: Optional[str] = None,
-        state: Optional[Union[List[TaskState], TaskState]] = None,
+        task_name: str | None = None,
+        state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> List[Task]: ...
+    ) -> list[Task]: ...
 
     async def _save_progress_event(self, event: ProgressEvent):
         # Might be better to be overridden to be performed in a transactional manner
@@ -48,7 +47,7 @@ class TaskStorage(ABC):
         await self.save_task_(task, group=group)
 
     @abstractmethod
-    async def save_task_(self, task: Task, group: Optional[str]) -> bool: ...
+    async def save_task_(self, task: Task, group: str | None) -> bool: ...
 
     @abstractmethod
     async def save_result(self, result: ResultEvent): ...

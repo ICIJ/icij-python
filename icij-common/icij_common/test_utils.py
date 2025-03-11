@@ -4,7 +4,7 @@ import os
 import traceback
 from copy import copy
 from time import monotonic, sleep
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 import pytest
 
@@ -45,7 +45,7 @@ async def async_true_after(
 
 
 @contextlib.contextmanager
-def fail_if_exception(msg: Optional[str] = None):
+def fail_if_exception(msg: str | None = None):
     try:
         yield
     except Exception as e:  # pylint: disable=W0703

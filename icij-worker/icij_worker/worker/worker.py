@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from asyncio import TimerHandle
+
 import asyncio
 import functools
 import inspect
@@ -9,25 +11,15 @@ import socket
 import threading
 import traceback
 from abc import abstractmethod
-from asyncio import TimerHandle
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from inspect import isawaitable
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Optional,
-    Tuple,
-    Type,
-    TypeVar,
-    final,
-)
-
+from typing import Any, Callable, Dict, Optional, TypeVar, final
 from typing_extensions import Self
 
 from icij_common.pydantic_utils import safe_copy, to_lower_snake_case
+from icij_common.registrable import RegistrableFromConfig
 from icij_worker import AsyncApp, ResultEvent, Task, TaskError, TaskState
 from icij_worker.app import RegisteredTask, supports_progress
 from icij_worker.event_publisher.event_publisher import EventPublisher
@@ -51,7 +43,6 @@ from icij_worker.objects import (
     WorkerEvent,
 )
 from icij_worker.routing_strategy import RoutingStrategy
-from icij_worker.utils import RegistrableFromConfig
 from icij_worker.worker.process import HandleSignalsMixin
 
 logger = logging.getLogger(__name__)
@@ -69,9 +60,9 @@ class Worker(
     def __init__(
         self,
         app: AsyncApp,
-        worker_id: Optional[str] = None,
+        worker_id: str | None = None,
         *,
-        group: Optional[str],
+        group: str | None,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
     ):
@@ -86,13 +77,13 @@ class Worker(
         self._teardown_dependencies = teardown_dependencies
         self._graceful_shutdown = True
         self._loop = asyncio.get_event_loop()
-        self._work_forever_task: Optional[asyncio.Task] = None
-        self._work_once_task: Optional[asyncio.Task] = None
-        self._watch_events: Optional[asyncio.Task] = None
+        self._work_forever_task: asyncio.Task | None = None
+        self._work_once_task: asyncio.Task | None = None
+        self._watch_events: asyncio.Task | None = None
         self._already_exiting: bool = False
         self._shutdown_asked: bool = False
         self._current: Optional[Task] = None
-        self._worker_events: Dict[Type[WE], Dict[str, WE]] = {
+        self._worker_events: dict[type[WE], dict[str, WE]] = {
             CancelEvent: dict(),
             ShutdownEvent: dict(),
         }
@@ -165,7 +156,7 @@ class Worker(
                 self.info("tried to consume a cancelled task, skipping...")
                 continue
 
-    def _get_worker_event(self, task: Task, type: Type[WE]) -> WE:
+    def _get_worker_event(self, task: Task, type: type[WE]) -> WE:
         try:
             return self._worker_events[type][task.id]
         except KeyError as e:
@@ -452,7 +443,7 @@ class Worker(
         await self.publish_event(cancelled_event)
 
     @final
-    def parse_task(self, task: Task) -> Tuple[Callable, Tuple[Type[Exception], ...]]:
+    def parse_task(self, task: Task) -> tuple[Callable, tuple[type[Exception], ...]]:
         registered = _retrieve_registered_task(task, self._app)
         recoverable = registered.recover_from
         task_fn = registered.task
@@ -643,7 +634,7 @@ async def _retry_task(
     task: Task,
     task_fn: Callable,
     task_args: Dict,
-    recoverable_errors: Tuple[Type[Exception], ...],
+    recoverable_errors: tuple[type[Exception], ...],
 ) -> Task:
     retries = task.retries_left
     if retries != task.max_retries:
@@ -659,14 +650,14 @@ async def _retry_task(
         worker.check_retries(task, e)
         raise RecoverableError(e) from e
     update = TaskUpdate.done(datetime.now(timezone.utc))
-    task = safe_copy(task, update=update.dict(exclude_unset=True))
+    task = safe_copy(task, update=update.model_dump(exclude_unset=True))
     worker.info('Task(id="%s") complete, saving result...', task.id)
     async with worker.event_lock:
         await worker.publish_result_event(task_res, task)
     return task
 
 
-def add_missing_args(fn: Callable, args: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+def add_missing_args(fn: Callable, args: dict[str, Any], **kwargs) -> dict[str, Any]:
     # We make the choice not to raise in case of missing argument here, the error will
     # be correctly raise when the function is called
     from_kwargs = dict()

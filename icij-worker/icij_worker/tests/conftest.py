@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Iterator, List, Optional
+from typing import AsyncGenerator, Iterator
 
 import aio_pika
 import aiohttp
@@ -23,15 +23,15 @@ from icij_common.logging_utils import (
     DATE_FMT,
     STREAM_HANDLER_FMT,
 )
-from icij_common.neo4j.db import (
+from icij_common.neo4j_.db import (
     NEO4J_COMMUNITY_DB,
     add_multidatabase_support_migration_tx,
     db_specific_session,
 )
-from icij_common.neo4j.migrate import Migration, init_database
+from icij_common.neo4j_.migrate import Migration, init_database
 
 # noinspection PyUnresolvedReferences
-from icij_common.neo4j.test_utils import (  # pylint: disable=unused-import
+from icij_common.neo4j_.test_utils import (  # pylint: disable=unused-import
     neo4j_test_driver,
 )
 
@@ -186,7 +186,7 @@ _NOW = datetime.now()
 @pytest.fixture(scope="function")
 async def populate_tasks(
     neo4j_async_app_driver: neo4j.AsyncDriver, request
-) -> List[Task]:
+) -> list[Task]:
     group = getattr(request, "param", None)
     task_name = "hello_world"
     if group is not None:
@@ -222,8 +222,8 @@ RETURN task"""
 
 @pytest.fixture(scope="function")
 async def populate_cancel_events(
-    populate_tasks: List[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
-) -> List[CancelEvent]:
+    populate_tasks: list[Task], neo4j_async_app_driver: neo4j.AsyncDriver, request
+) -> list[CancelEvent]:
     group = getattr(request, "param", None)
     query_0 = """MATCH (task:_Task { id: $taskId })
 SET task.group = $group
@@ -238,7 +238,7 @@ RETURN task, event"""
 @pytest.fixture(scope="function")
 async def populate_shutdown_events(
     neo4j_async_app_driver: neo4j.AsyncDriver,
-) -> List[CancelEvent]:
+) -> list[CancelEvent]:
     query_0 = """CREATE (event:_ShutdownEvent { createdAt: $now })
 RETURN event"""
     recs_0, _, _ = await neo4j_async_app_driver.execute_query(
@@ -261,7 +261,7 @@ def test_failing_async_app_late_ack(late_ack_app_config: AsyncAppConfig) -> Asyn
     return _make_app(late_ack_app_config)
 
 
-def _make_app(config: Optional[AsyncAppConfig] = None) -> AsyncApp:
+def _make_app(config: AsyncAppConfig | None = None) -> AsyncApp:
     # TODO: add log deps here if it helps to debug
     app = AsyncApp(name="test-app", dependencies=[])
     if config is not None:
@@ -277,7 +277,7 @@ def _make_app(config: Optional[AsyncAppConfig] = None) -> AsyncApp:
         raise Recoverable("i can recover from this")
 
     @app.task("fatal_error_task")
-    async def _fatal_error_task(progress: Optional[RateProgress] = None):
+    async def _fatal_error_task(progress: RateProgress | None = None):
         if progress is not None:
             await progress(0.1)
         raise ValueError("this is fatal")
@@ -393,7 +393,7 @@ async def exchange_exists(name: str) -> bool:
         return False
 
 
-async def get_queue(name: str) -> Dict:
+async def get_queue(name: str) -> dict:
     url = get_test_management_url(f"/api/queues/{DEFAULT_VHOST}/{name}")
     async with rabbit_mq_test_session() as sess:
         async with sess.get(url) as res:
@@ -426,13 +426,13 @@ class TestableAMQPPublisher(AMQPPublisher):
 
     def __init__(
         self,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         *,
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         is_qpid: bool = False,
-        app_id: Optional[str] = None,
+        app_id: str | None = None,
     ):
         # declare and bind the queues
         super().__init__(
@@ -510,7 +510,7 @@ class TestableAMQPTaskManager(AMQPTaskManager):
         broker_url: str,
     ):
         super().__init__(app, task_store, management_client, broker_url=broker_url)
-        self.consumed: List[ManagerEvent] = []
+        self.consumed: list[ManagerEvent] = []
 
     @cached_property
     def channel(self) -> AbstractRobustChannel:
@@ -553,7 +553,7 @@ async def test_amqp_task_manager(
 class TestableNeo4JTaskManager(Neo4JTaskManager):
     def __init__(self, app: AsyncApp, driver: neo4j.AsyncDriver):
         super().__init__(app, driver)
-        self.consumed: List[ManagerEvent] = []
+        self.consumed: list[ManagerEvent] = []
 
     async def _consume(self) -> ManagerEvent:
         event = await super()._consume()

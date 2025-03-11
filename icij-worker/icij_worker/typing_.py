@@ -1,21 +1,9 @@
 from types import TracebackType
-from typing import (
-    Any,
-    Awaitable,
-    Callable,
-    Coroutine,
-    Dict,
-    Mapping,
-    Optional,
-    Protocol,
-    Tuple,
-    Type,
-    Union,
-)
+from typing import Any, Awaitable, Callable, Coroutine, Mapping, Protocol
 
 from typing_extensions import AbstractSet
 
-DependencyLabel = Optional[str]
+DependencyLabel = str | None
 DependencySetup = Callable[..., None]
 DependencyAsyncSetup = Callable[..., Coroutine[None, None, None]]
 
@@ -24,8 +12,8 @@ RateProgress = Callable[[float], Awaitable[None]]
 PercentProgress = RateProgress
 RawProgress = Callable[[int], Awaitable[None]]
 
-DictStrAny = Dict[str, Any]
-IntStr = Union[int, str]
+DictStrAny = dict[str, Any]
+IntStr = int | str
 AbstractSetIntStr = AbstractSet[IntStr]
 MappingIntStrAny = Mapping[IntStr, Any]
 
@@ -33,23 +21,23 @@ MappingIntStrAny = Mapping[IntStr, Any]
 class DependencyTeardown(Protocol):
     def __call__(
         self,
-        exc_type: Optional[Type[Exception]],
-        exc_value: Optional[Exception],
-        traceback: Optional[TracebackType],
+        exc_type: type[Exception] | None,
+        exc_value: Exception | None,
+        traceback: TracebackType | None,
     ) -> None: ...
 
 
 class DependencyAsyncTeardown(Protocol):
     async def __call__(
         self,
-        exc_type: Optional[Type[Exception]],
-        exc_value: Optional[Exception],
-        traceback: Optional[TracebackType],
+        exc_type: type[Exception] | None,
+        exc_value: Exception | None,
+        traceback: TracebackType | None,
     ) -> None: ...
 
 
-Dependency = Tuple[
+Dependency = tuple[
     DependencyLabel,
-    Union[DependencySetup, DependencyAsyncSetup],
-    Optional[Union[DependencyTeardown, DependencyAsyncTeardown]],
+    DependencySetup | DependencyAsyncSetup,
+    DependencyTeardown | DependencyAsyncTeardown | None,
 ]

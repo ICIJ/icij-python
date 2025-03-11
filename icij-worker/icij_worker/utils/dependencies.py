@@ -1,7 +1,7 @@
 import inspect
 import logging
 from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator
 
 import sys
 
@@ -26,7 +26,7 @@ def _log_exception_and_continue():
 
 @asynccontextmanager
 async def run_deps(
-    dependencies: List[Dependency], ctx: str, **kwargs
+    dependencies: list[Dependency], ctx: str, **kwargs
 ) -> AsyncGenerator[None, None]:
     to_close = []
     original_ex = None

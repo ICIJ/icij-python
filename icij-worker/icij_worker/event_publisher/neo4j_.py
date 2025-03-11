@@ -24,7 +24,7 @@ class Neo4jEventPublisher(Neo4jStorage, EventPublisher):
 
 
 async def _publish_event(sess: neo4j.AsyncSession, event: ManagerEvent):
-    as_json = event.json(exclude_none=True)
+    as_json = event.model_dump_json(exclude_none=True)
     await sess.execute_write(
         _publish_manager_event_tx, as_json, created_at=event.created_at
     )

@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock
 
-from icij_common.neo4j.db import create_databases_registry_db
+from icij_common.neo4j_.db import create_databases_registry_db
 
 
 async def test_should_create_databases_registry_db_with_enterprise_distribution(
