@@ -56,7 +56,7 @@ async def test_task_manager_enqueue(
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
-    amqp_task = Task.parse_obj(task_json)
+    amqp_task = Task.model_validate(task_json)
     assert amqp_task == task
 
 
@@ -99,8 +99,8 @@ async def test_task_manager_enqueue_with_group(
     assert task_json == expected_json
     task_json["createdAt"] = created_at
     expected_json["createdAt"] = created_at
-    amqp_task = Task.parse_obj(task_json)
-    assert amqp_task == task.parse_obj(expected_json)
+    amqp_task = Task.model_validate(task_json)
+    assert amqp_task == task.model_validate(expected_json)
 
 
 async def test_task_manager_enqueue_should_raise_for_existing_task(
@@ -186,7 +186,7 @@ async def test_task_manager_requeue(
     }
     assert task_json == expected_json
     task_json["createdAt"] = created_at
-    amqp_task = Task.parse_obj(task_json)
+    amqp_task = Task.model_validate(task_json)
     expected = safe_copy(task, update={"progress": 0.0, "state": TaskState.QUEUED})
     assert amqp_task == expected
 
@@ -199,7 +199,7 @@ async def test_task_manager_should_consume(
     event = ProgressEvent(
         task_id="some-task-id", progress=1.0, created_at=datetime.now()
     )
-    message = event.json().encode()
+    message = event.model_dump_json().encode()
     channel = task_manager.channel
     # When
     exchange = await channel.get_exchange("exchangeManagerEvents")

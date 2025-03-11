@@ -7,20 +7,27 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import Enum, unique
 from functools import lru_cache
-from typing import Callable, ClassVar, Sequence, Union, cast
+from typing import Sequence
 
-from pydantic import Field, root_validator, validator
-from pydantic.utils import ROOT_KEY
-from typing_extensions import Any, Dict, List, Optional, Self, final
-
-from icij_common import neo4j
+from icij_common import neo4j_
 from icij_common.pydantic_utils import (
-    ICIJModel,
     ISODatetime,
-    LowerCamelCaseModel,
-    NoEnumModel,
+    icij_config,
+    lowercamel_case_config,
+    merge_configs,
+    no_enum_config,
     safe_copy,
 )
+from icij_common.registrable import Registrable
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    field_validator,
+    model_validator,
+)
+from typing_extensions import Annotated, Any, Self, final
+
 from icij_worker.constants import (
     NEO4J_SHUTDOWN_EVENT_CREATED_AT,
     NEO4J_TASK_CANCEL_EVENT_CANCELLED_AT,
@@ -35,8 +42,6 @@ from icij_worker.constants import (
     NEO4J_TASK_NODE,
     NEO4J_TASK_RESULT_RESULT,
 )
-from icij_worker.typing_ import AbstractSetIntStr, DictStrAny, MappingIntStrAny
-from icij_worker.utils.registrable import RegistrableMixin
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +60,6 @@ class AsyncBackend(str, Enum):
 
 
 class FromTask(ABC):
-
     @classmethod
     @abstractmethod
     def from_task(cls, task: Task, **kwargs) -> FromTask: ...
@@ -122,114 +126,57 @@ def state_precedence(state: TaskState) -> int:
     return PRECEDENCE_LOOKUP[state]
 
 
-class Neo4jDatetimeMixin(ISODatetime):
-    @classmethod
-    def _validate_neo4j_datetime(cls, value: Any) -> datetime:
-        # Trick to avoid having to import neo4j here
-        if not isinstance(value, datetime) and hasattr(value, "to_native"):
-            value = value.to_native()
-        return value
+def _deserialize_datetime_from_neo4j(value: Any) -> datetime:
+    if not isinstance(value, datetime) and hasattr(value, "to_native"):
+        value = value.to_native()
+    return value
 
 
-def _encode_registrable(v, **kwargs):
-    return json.dumps(v.dict(exclude_unset=True), **kwargs)
+Neo4jDatetime = Annotated[
+    ISODatetime, BeforeValidator(_deserialize_datetime_from_neo4j)
+]
 
 
-class Registrable(ICIJModel, RegistrableMixin, ABC):
-    registry_key: ClassVar[str] = Field(const=True, default="@type")
-
-    class Config:
-        json_encoders = {"Registrable": _encode_registrable}
-
-    @root_validator(pre=True)
-    def validate_type(cls, values):  # pylint: disable=no-self-argument
-        values.pop("@type", None)
-        return values
-
-    @classmethod
-    def parse_obj(cls, obj: Dict) -> Registrable:
-        key = obj.pop(cls.registry_key.default)
-        subcls = cls.resolve_class_name(key)
-        return subcls(**obj)
-
-    def dict(
-        self,
-        *,
-        include: Optional[Union[AbstractSetIntStr, MappingIntStrAny]] = None,
-        exclude: Optional[Union[AbstractSetIntStr, MappingIntStrAny]] = None,
-        by_alias: bool = False,
-        skip_defaults: Optional[bool] = None,
-        exclude_unset: bool = False,
-        exclude_defaults: bool = False,
-        exclude_none: bool = False,
-    ) -> DictStrAny:
-        as_dict = super().dict(
-            include=include,
-            exclude=exclude,
-            by_alias=by_alias,
-            skip_defaults=skip_defaults,
-            exclude_unset=exclude_unset,
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-        )
-        if not exclude or self.__class__.registry_key.default not in exclude:
-            as_dict[self.__class__.registry_key.default] = (
-                self.__class__.registered_name
-            )
-        return as_dict
-
-    def json(
-        self,
-        *,
-        include: Optional[Union["AbstractSetIntStr", "MappingIntStrAny"]] = None,
-        exclude: Optional[Union["AbstractSetIntStr", "MappingIntStrAny"]] = None,
-        by_alias: bool = False,
-        exclude_unset: bool = False,
-        exclude_defaults: bool = False,
-        exclude_none: bool = False,
-        encoder: Optional[Callable[[Any], Any]] = None,
-        models_as_dict: bool = True,
-        **dumps_kwargs: Any,
-    ) -> str:
-        encoder = cast(Callable[[Any], Any], encoder or self.__json_encoder__)
-        data = dict(
-            self._iter(
-                to_dict=models_as_dict,
-                by_alias=by_alias,
-                include=include,
-                exclude=exclude,
-                exclude_unset=exclude_unset,
-                exclude_defaults=exclude_defaults,
-                exclude_none=exclude_none,
-            )
-        )
-        if self.__custom_root_type__:
-            data = data[ROOT_KEY]
-        data[self.__class__.registry_key.default] = self.__class__.registered_name
-        return self.__config__.json_dumps(data, default=encoder, **dumps_kwargs)
-
-
-class Message(Registrable): ...  # pylint: disable=multiple-statements
+class Message(Registrable):
+    model_config = merge_configs(lowercamel_case_config(), no_enum_config())
 
 
 class TaskMessage(Message):
     task_id: str
-    created_at: datetime
-    retries_left: Optional[int] = None
-    max_retries: Optional[int] = None
+    created_at: Neo4jDatetime
+    retries_left: int | None = None
+    max_retries: int | None = None
+
+
+def _validate_task_args(v: dict[str, Any] | str | None):
+    if v is None:
+        v = dict()
+    if isinstance(v, str):
+        v = json.loads(v)
+    return v
+
+
+def _validate_task_progress(value: float):
+    # pylint: disable=no-self-argument
+    if value is not None and not 0 <= value <= 1.0:
+        msg = f"progress is expected to be in [0.0, 1.0], found {value}"
+        raise ValueError(msg)
+    return value
 
 
 @Message.register("Task")
-class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
+class Task(Message):
     id: str
     name: str
-    args: Optional[Dict[str, object]] = None
+    args: Annotated[dict[str, object] | None, BeforeValidator(_validate_task_args)] = (
+        None
+    )
     state: TaskState
-    progress: Optional[float] = None
-    created_at: datetime
-    completed_at: Optional[datetime] = None
-    retries_left: Optional[int] = None
-    max_retries: Optional[int] = None
+    progress: Annotated[float | None, BeforeValidator(_validate_task_progress)] = None
+    created_at: Neo4jDatetime
+    completed_at: Neo4jDatetime | None = None
+    retries_left: int | None = None
+    max_retries: int | None = None
 
     _non_inherited_from_event = [
         "requeue",
@@ -242,17 +189,11 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         "retries_left",
     ]
 
-    @validator("args", pre=True, always=True)
-    def args_as_dict(cls, v: Optional[Dict[str, Any]]):
-        # pylint: disable=no-self-argument
-        if v is None:
-            v = dict()
-        return v
-
-    @root_validator(pre=True)
+    @model_validator(mode="before")
+    @classmethod
     def retries_left_should_default_to_max_retries_when_missing(
-        cls, values: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        cls, values: dict[str, Any]
+    ) -> dict[str, Any]:
         # pylint: disable=no-self-argument
         max_retries = values.get("max_retries")
         if values.get("retries_left") is None and max_retries is not None:
@@ -260,47 +201,21 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return values
 
     @classmethod
-    def create(cls, *, task_id: str, task_name: str, args: Dict[str, Any]) -> Task:
+    def create(cls, *, task_id: str, task_name: str, args: dict[str, Any]) -> Task:
         created_at = datetime.now(timezone.utc)
         state = TaskState.CREATED
         return cls(
-            id=task_id,
-            name=task_name,
-            args=args,
-            created_at=created_at,
-            state=state,
+            id=task_id, name=task_name, args=args, created_at=created_at, state=state
         )
 
-    def with_max_retries(self, max_retries: Optional[int]) -> Task:
-        as_dict = self.dict()
-        as_dict.pop("max_retries", None)
-        return Task(max_retries=max_retries, **as_dict)
-
-    @validator("args", pre=True)
-    def _validate_args(cls, value: Any):  # pylint: disable=no-self-argument
-        if isinstance(value, str):
-            value = json.loads(value)
-        return value
-
-    @validator("created_at", pre=True)
-    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
-
-    @validator("completed_at", pre=True)
-    def _validate_completed_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
-
-    @validator("progress")
-    def _validate_progress(cls, value: float):
-        # pylint: disable=no-self-argument
-        if value is not None and not 0 <= value <= 1.0:
-            msg = f"progress is expected to be in [0.0, 1.0], found {value}"
-            raise ValueError(msg)
-        return value
+    def with_max_retries(self, max_retries: int | None) -> Task:
+        as_dict = self.model_dump()
+        as_dict["max_retries"] = max_retries
+        return Task.model_validate(as_dict)
 
     @final
     @classmethod
-    def from_neo4j(cls, record: "neo4j.Record", *, key: str = "task") -> Task:
+    def from_neo4j(cls, record: "neo4j_.Record", *, key: str = "task") -> Task:
         node = record[key]
         labels = node.labels
         node = dict(node)
@@ -321,7 +236,6 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
 
     @classmethod
     def postgres_row_factory(cls, cursor: "BaseCursor[Any, Any]") -> "RowMaker[Task]":
-
         def as_row(values: Sequence[Any]) -> Task:
             as_dict = {
                 k.name: v
@@ -333,10 +247,10 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return as_row
 
     @final
-    def resolve_event(self, event: TaskEvent) -> Optional[TaskUpdate]:
+    def resolve_event(self, event: TaskEvent) -> TaskUpdate | None:
         if self.state in READY_STATES:
             return None
-        updated = event.dict(exclude_unset=True, by_alias=False)
+        updated = event.model_dump(exclude_unset=True, by_alias=False)
         for k in self._non_inherited_from_event:
             updated.pop(k, None)
         updated.pop(event.registry_key.default, None)
@@ -394,11 +308,11 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         update = self.resolve_event(event)
         if update is None:
             return self
-        return safe_copy(self, update=update.dict(exclude_unset=True))
+        return safe_copy(self, update=update.model_dump(exclude_unset=True))
 
     @final
     @classmethod
-    def _schema(cls, by_alias: bool) -> Dict[str, Any]:
+    def _schema(cls, by_alias: bool) -> dict[str, Any]:
         global _TASK_SCHEMA
         if _TASK_SCHEMA is None:
             _TASK_SCHEMA = dict()
@@ -407,20 +321,24 @@ class Task(Message, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return _TASK_SCHEMA[by_alias]
 
 
-class StacktraceItem(LowerCamelCaseModel):
+class StacktraceItem(BaseModel):
+    model_config = merge_configs(
+        icij_config(), no_enum_config(), lowercamel_case_config()
+    )
+
     name: str
     file: str
     lineno: int
 
 
 @Message.register("TaskError")
-class TaskError(Message, LowerCamelCaseModel):
+class TaskError(Message):
     # Follow the "problem detail" spec: https://datatracker.ietf.org/doc/html/rfc9457,
     # the type is omitted for now since we gave no URI to resolve errors yet
     name: str
     message: str
-    cause: Optional[str] = None
-    stacktrace: List[StacktraceItem] = Field(default_factory=list)
+    cause: str | None = None
+    stacktrace: list[StacktraceItem] = Field(default_factory=list)
 
     @classmethod
     def from_exception(cls, exception: BaseException) -> TaskError:
@@ -441,18 +359,12 @@ class TaskError(Message, LowerCamelCaseModel):
 
 
 @Message.register("TaskResult")
-class TaskResult(Message, LowerCamelCaseModel):
+class TaskResult(Message):
     value: object
 
 
-class TaskEvent(
-    TaskMessage, NoEnumModel, LowerCamelCaseModel, Neo4jDatetimeMixin, FromTask, ABC
-):
+class TaskEvent(TaskMessage, FromTask, ABC):
     retries_left: int = 3
-
-    @validator("created_at", pre=True)
-    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
 
 
 class WorkerEvent(Message, ABC): ...  # pylint: disable=multiple-statements
@@ -465,7 +377,8 @@ class ManagerEvent(TaskEvent, ABC): ...  # pylint: disable=multiple-statements
 class ProgressEvent(ManagerEvent):
     progress: float
 
-    @validator("progress")
+    @field_validator("progress")
+    @classmethod
     def _validate_progress(cls, value: float):
         # pylint: disable=no-self-argument
         if not 0 <= value <= 1.0:
@@ -488,7 +401,11 @@ class CancelEvent(WorkerEvent, TaskEvent):
 
     @classmethod
     def from_neo4j(
-        cls, record: "neo4j.Record", *, event_key: str = "event", task_key: str = "task"
+        cls,
+        record: "neo4j_.Record",
+        *,
+        event_key: str = "event",
+        task_key: str = "task",
     ) -> CancelEvent:
         task = record.get(task_key)
         event = record.get(event_key)
@@ -534,7 +451,7 @@ class ResultEvent(ManagerEvent):
     @classmethod
     def from_neo4j(
         cls,
-        record: "neo4j.Record",
+        record: "neo4j_.Record",
         *,
         task_key: str = "task",
         result_key: str = "result",
@@ -588,7 +505,7 @@ class ErrorEvent(ManagerEvent):
     @classmethod
     def from_neo4j(
         cls,
-        record: "neo4j.Record",
+        record: "neo4j_.Record",
         *,
         task_key: str = "task",
         error_key: str = "error",
@@ -639,17 +556,13 @@ class ErrorEvent(ManagerEvent):
 
 
 @Message.register("ShutdownEvent")
-class ShutdownEvent(WorkerEvent, LowerCamelCaseModel, Neo4jDatetimeMixin):
-    created_at: datetime
-
-    @validator("created_at", pre=True)
-    def _validate_created_at(cls, value: Any):  # pylint: disable=no-self-argument
-        return cls._validate_neo4j_datetime(value)
+class ShutdownEvent(WorkerEvent):
+    created_at: Neo4jDatetime
 
     @classmethod
     def from_neo4j(
         cls,
-        record: "neo4j.Record",
+        record: "neo4j_.Record",
         *,
         event_key: str = "event",
     ) -> Self:
@@ -658,23 +571,27 @@ class ShutdownEvent(WorkerEvent, LowerCamelCaseModel, Neo4jDatetimeMixin):
         return ShutdownEvent(created_at=created_at)
 
 
-class TaskUpdate(NoEnumModel, LowerCamelCaseModel, FromTask):
-    state: Optional[TaskState] = None
-    progress: Optional[float] = None
-    retries_left: Optional[int] = None
-    completed_at: Optional[datetime] = None
+class TaskUpdate(BaseModel, FromTask):
+    model_config = merge_configs(
+        icij_config(), lowercamel_case_config(), no_enum_config()
+    )
+
+    state: TaskState | None = None
+    progress: float | None = None
+    retries_left: int | None = None
+    completed_at: datetime | None = None
 
     _from_task = ["state", "progress", "retries_left", "completed_at"]
 
     @classmethod
     def from_task(cls, task: Task, **kwargs) -> TaskUpdate:
-        from_task = {attr: getattr(task, attr) for attr in cls._from_task}
+        from_task = {attr: getattr(task, attr) for attr in cls._from_task.default}
         from_task = {k: v for k, v in from_task.items() if v is not None}
-        return cls(**from_task)
+        return cls.model_validate(from_task)
 
     @classmethod
     @lru_cache(maxsize=1)
-    def done(cls, completed_at: Optional[datetime] = None) -> TaskUpdate:
+    def done(cls, completed_at: datetime | None = None) -> TaskUpdate:
         return cls(progress=1.0, completed_at=completed_at, state=TaskState.DONE)
 
 
@@ -685,6 +602,3 @@ def _id_title(title: str) -> str:
             id_title.append("-")
         id_title.append(letter.lower())
     return "".join(id_title)
-
-
-Registrable.update_forward_refs()

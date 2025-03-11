@@ -1,5 +1,4 @@
 import logging
-from typing import List, Optional
 
 import sys
 from pydantic.fields import FieldInfo
@@ -15,7 +14,7 @@ from icij_common.pydantic_utils import get_field_default_value
 
 
 class LogWithWorkerIDMixin:
-    def setup_loggers(self, worker_id: Optional[str] = None):
+    def setup_loggers(self, worker_id: str | None = None):
         # Ugly work around the Pydantic V1 limitations...
         all_loggers = self.loggers
         if isinstance(all_loggers, FieldInfo):
@@ -44,8 +43,8 @@ class LogWithWorkerIDMixin:
                 logger.addHandler(handler)
 
     def _handlers(
-        self, worker_id_filter: Optional[logging.Filter], log_level: int
-    ) -> List[logging.Handler]:
+        self, worker_id_filter: logging.Filter | None, log_level: int
+    ) -> list[logging.Handler]:
         stream_handler = logging.StreamHandler(sys.stderr)
         if worker_id_filter is not None:
             fmt = STREAM_HANDLER_FMT_WITH_WORKER_ID

@@ -1,7 +1,6 @@
 import logging
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from .connection_info import PostgresConnectionInfo
 
@@ -15,7 +14,7 @@ _DEFAULT_MIGRATE_ARG = ["--no-dump-schema", "--wait", "-d", str(MIGRATIONS_DIR)]
 def migrate(
     connection_info: PostgresConnectionInfo,
     db_name: str,
-    timeout_s: Optional[float] = None,
+    timeout_s: float | None = None,
 ):
     url = connection_info.url(db=db_name)
 

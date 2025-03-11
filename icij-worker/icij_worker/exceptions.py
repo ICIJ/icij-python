@@ -1,6 +1,6 @@
 # pylint: disable=multiple-statements
 from abc import ABC
-from typing import Optional, Sequence
+from typing import Sequence
 
 
 class ICIJWorkerError(ABC): ...
@@ -16,7 +16,7 @@ class RecoverableError(ICIJWorkerError, Exception): ...
 
 
 class UnknownTask(ICIJWorkerError, ValueError):
-    def __init__(self, task_id: str, worker_id: Optional[str] = None):
+    def __init__(self, task_id: str, worker_id: str | None = None):
         msg = f'Unknown task "{task_id}"'
         if worker_id is not None:
             msg += f" for {worker_id}"
@@ -24,7 +24,7 @@ class UnknownTask(ICIJWorkerError, ValueError):
 
 
 class TaskQueueIsFull(ICIJWorkerError, RuntimeError):
-    def __init__(self, max_queue_size: Optional[int]):
+    def __init__(self, max_queue_size: int | None):
         msg = "task queue is full"
         if max_queue_size is not None:
             msg += f" ({max_queue_size}/{max_queue_size})"
@@ -37,13 +37,13 @@ class TaskAlreadyCancelled(ICIJWorkerError, RuntimeError):
 
 
 class TaskAlreadyQueued(ICIJWorkerError, ValueError):
-    def __init__(self, task_id: Optional[str] = None):
+    def __init__(self, task_id: str | None = None):
         msg = f'task "{task_id}" is already queued'
         super().__init__(msg)
 
 
 class TaskAlreadyReserved(ICIJWorkerError, ValueError):
-    def __init__(self, task_id: Optional[str] = None):
+    def __init__(self, task_id: str | None = None):
         msg = "task "
         if task_id is not None:
             msg += f'"{task_id}" '

@@ -1,23 +1,34 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Callable, Dict, Optional
+from typing import Callable
 
-from icij_common.pydantic_utils import LowerCamelCaseModel, NoEnumModel
+from icij_common.pydantic_utils import (
+    icij_config,
+    lowercamel_case_config,
+    merge_configs,
+    no_enum_config,
+)
+from pydantic import BaseModel
 
 try:
     from aio_pika import ExchangeType
 
-    class Exchange(NoEnumModel, LowerCamelCaseModel):
+    class Exchange(BaseModel):
+        model_config = merge_configs(
+            icij_config(), no_enum_config(), lowercamel_case_config()
+        )
+
         name: str
         type: ExchangeType
 
-    class Routing(LowerCamelCaseModel):
+    class Routing(BaseModel):
+        model_config = merge_configs(icij_config(), lowercamel_case_config())
         exchange: Exchange
         routing_key: str
         queue_name: str
-        queue_args: Optional[Dict] = None
-        dead_letter_routing: Optional[Routing] = None
+        queue_args: dict | None = None
+        dead_letter_routing: Routing | None = None
 
 except ImportError:
     pass
@@ -30,7 +41,7 @@ class RoutingStrategy:
     and DBs, amqp queues and so on..."""
 
     def app_tasks_filter(
-        self, *, task_group: Optional["TaskGroup"], app_group_name: str
+        self, *, task_group: "TaskGroup" | None, app_group_name: str
     ) -> bool:
         """Used to filter app tasks so that the app can be started with a restricted
         group. Useful when tasks from the same app must be run by different workers
@@ -41,7 +52,7 @@ class RoutingStrategy:
 
     @classmethod
     @lru_cache
-    def amqp_task_routing(cls, task_group: Optional[str]) -> Routing:
+    def amqp_task_routing(cls, task_group: str | None) -> Routing:
         """Used to route task with the right AMQP routing key based on the group"""
         # Overriding this default might require overriding AMQPTaskManager/AMQPWorker
         # so that they communicate correctly
@@ -77,20 +88,20 @@ class RoutingStrategy:
         return lambda db_name: True
 
     @classmethod
-    def neo4j_db(cls, group: Optional[str]) -> str:
+    def neo4j_db(cls, group: str | None) -> str:
         # pylint: disable=unused-argument
         # By default, task from all groups are saved in the default neo4j db
-        from icij_common.neo4j.db import NEO4J_COMMUNITY_DB
+        from icij_common.neo4j_.db import NEO4J_COMMUNITY_DB
 
         return NEO4J_COMMUNITY_DB
 
     @classmethod
-    def postgres_db(cls, group: Optional[str]) -> str:
+    def postgres_db(cls, group: str | None) -> str:
         # pylint: disable=unused-argument
         return POSTGRES_DEFAULT
 
     @classmethod
-    def test_db(cls, group: Optional[str]) -> str:
+    def test_db(cls, group: str | None) -> str:
         # pylint: disable=unused-argument
         from icij_common.test_utils import TEST_DB
 

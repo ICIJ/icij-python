@@ -6,7 +6,7 @@ import sys
 from abc import ABC
 from datetime import datetime
 from functools import wraps
-from typing import List, Optional, final
+from typing import final
 
 TRACE = 5
 logging.TRACE = TRACE
@@ -61,9 +61,7 @@ class WorkerIdFilter(logging.Filter):
         return True
 
 
-def log_elapsed_time(
-    logger: logging.Logger, level: int, output_msg: Optional[str] = None
-):
+def log_elapsed_time(logger: logging.Logger, level: int, output_msg: str | None = None):
     if output_msg is None:
         output_msg = "Elapsed time ->:\n{elapsed_time}"
 
@@ -85,7 +83,7 @@ def log_elapsed_time(
 
 @contextlib.contextmanager
 def log_elapsed_time_cm(
-    logger: logging.Logger, level: int, output_msg: Optional[str] = None
+    logger: logging.Logger, level: int, output_msg: str | None = None
 ):
     if output_msg is None:
         output_msg = "Elapsed time ->:\n{elapsed_time}"
@@ -105,7 +103,7 @@ STREAM_HANDLER_FMT_WITH_WORKER_ID = (
 DATE_FMT = "%H:%M:%S"
 
 
-def setup_loggers(loggers: List[str], level: int = logging.INFO):
+def setup_loggers(loggers: list[str], level: int = logging.INFO):
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setLevel(level)
     stream_handler.setFormatter(logging.Formatter(STREAM_HANDLER_FMT, DATE_FMT))

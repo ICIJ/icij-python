@@ -2,7 +2,6 @@ import logging
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Optional
 
 from icij_worker import WorkerConfig
 from icij_worker.backend.mp import (
@@ -26,9 +25,9 @@ class WorkerBackend(str, Enum):
         *,
         n_workers: int,
         config: WorkerConfig,
-        worker_extras: Optional[Dict] = None,
-        app_deps_extras: Optional[Dict] = None,
-        group: Optional[str],
+        worker_extras: dict | None = None,
+        app_deps_extras: dict | None = None,
+        group: str | None,
     ):
         run_workers_with_multiprocessing(
             app,
@@ -49,9 +48,9 @@ class WorkerBackend(str, Enum):
         *,
         n_workers: int,
         config: WorkerConfig,
-        worker_extras: Optional[Dict] = None,
-        app_deps_extras: Optional[Dict] = None,
-        group: Optional[str],
+        worker_extras: dict | None = None,
+        app_deps_extras: dict | None = None,
+        group: str | None,
     ):
         if self is WorkerBackend.MULTIPROCESSING:
             with run_workers_with_multiprocessing_cm(
@@ -70,18 +69,18 @@ class WorkerBackend(str, Enum):
 def start_workers(
     app: str,
     n_workers: int,
-    config_path: Optional[Path],
+    config_path: Path | None,
     backend: WorkerBackend,
-    group: Optional[str],
+    group: str | None,
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >= 1")
     if config_path is not None:
         logger.info("Loading worker configuration from %s", config_path)
-        config = WorkerConfig.parse_file(config_path)
+        config = WorkerConfig.model_validate_json(config_path.read_text())
     else:
         logger.info("Loading worker configuration from env...")
         config = WorkerConfig.from_env()
-    logger.info("worker config: %s", config.json(indent=2))
+    logger.info("worker config: %s", config.model_dump_json(indent=2))
 
     backend.run(app, n_workers=n_workers, config=config, group=group)

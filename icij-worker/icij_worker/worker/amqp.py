@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from functools import lru_cache
-from typing import ClassVar, Dict, Optional, cast
+from typing import ClassVar, cast
 
 from aio_pika import RobustQueue
 from aio_pika.abc import (
@@ -43,7 +43,7 @@ _PROJECT_PLACEHOLDER = "placeholder_project_amqp"
 
 @WorkerConfig.register()
 class AMQPWorkerConfig(WorkerConfig, AMQPConfigMixin):
-    type: ClassVar[str] = Field(const=True, default=AsyncBackend.amqp.value)
+    type: ClassVar[str] = Field(frozen=True, default=AsyncBackend.amqp.value)
 
 
 @Worker.register(AsyncBackend.amqp)
@@ -53,13 +53,13 @@ class AMQPWorker(Worker, AMQPMixin):
         self,
         app: AsyncApp,
         management_client: AMQPManagementClient,
-        worker_id: Optional[str] = None,
+        worker_id: str | None = None,
         *,
-        group: Optional[str],
+        group: str | None,
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
-        inactive_after_s: Optional[float] = None,
+        inactive_after_s: float | None = None,
         is_qpid: bool = False,
         handle_signals: bool = True,
         teardown_dependencies: bool = False,
@@ -91,7 +91,7 @@ class AMQPWorker(Worker, AMQPMixin):
         self._task_queue_iterator: Optional[AbstractQueueIterator] = None
         self._worker_evt_queue_iterator: Optional[AbstractQueueIterator] = None
         self._task_routing: Optional[Routing] = None
-        self._delivered: Dict[str, AbstractIncomingMessage] = dict()
+        self._delivered: dict[str, AbstractIncomingMessage] = dict()
 
         self._declare_exchanges = True
 
@@ -164,7 +164,7 @@ class AMQPWorker(Worker, AMQPMixin):
             # pylint: disable=unnecessary-dunder-call
             message: AbstractIncomingMessage = await self._task_messages_it.__anext__()
             try:
-                task = Task.parse_raw(message.body)
+                task = Task.model_validate_json(message.body)
             except Exception as e:
                 msg = f"invalid task body {message.body}"
                 raise MessageDeserializationError(msg) from e
@@ -181,7 +181,7 @@ class AMQPWorker(Worker, AMQPMixin):
         message: AbstractIncomingMessage = await self._worker_events_it.__anext__()
         await message.ack()
         try:
-            event = cast(WorkerEvent, Message.parse_raw(message.body))
+            event = cast(WorkerEvent, Message.model_validate_json(message.body))
         except Exception as e:
             msg = f"invalid event body {message.body}"
             raise MessageDeserializationError(msg) from e
@@ -230,7 +230,7 @@ class AMQPWorker(Worker, AMQPMixin):
         await self._publisher.publish_error(error)
 
     @lru_cache()
-    def task_routing(self, group: Optional[str]) -> Routing:
+    def task_routing(self, group: str | None) -> Routing:
         routing = self._routing_strategy.amqp_task_routing(group)
         return routing
 

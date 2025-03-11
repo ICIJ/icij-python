@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from contextlib import AsyncExitStack
 from functools import cached_property
-from typing import List, Optional
 
 from aio_pika import (
     Exchange as AioPikaExchange,
@@ -28,7 +27,7 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         is_qpid: bool = False,
-        app_id: Optional[str] = None,
+        app_id: str | None = None,
         connection: Optional[AbstractRobustConnection] = None,
     ):
         super().__init__(
@@ -61,7 +60,7 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
     @cached_property
-    def _routings(self) -> List[Routing]:
+    def _routings(self) -> list[Routing]:
         return [self.manager_evt_routing()]
 
     async def _publish_event(self, event: ManagerEvent):

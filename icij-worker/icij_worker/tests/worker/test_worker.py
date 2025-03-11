@@ -7,7 +7,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 from signal import Signals
-from typing import Any, Dict, Optional
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -88,9 +88,9 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
         )
         completed_at = saved_task.completed_at
         assert isinstance(saved_task.completed_at, datetime)
-        saved_task = saved_task.dict(by_alias=True)
+        saved_task = saved_task.model_dump(by_alias=True)
         saved_task.pop("completedAt")
-        expected_task = expected_task.dict(by_alias=True)
+        expected_task = expected_task.model_dump(by_alias=True)
         expected_task.pop("completedAt")
         assert saved_task == expected_task
         expected_events = [
@@ -104,12 +104,13 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
             ),
         ]
         expected_events = [
-            d.dict(by_alias=True, exclude_unset=True) for d in expected_events
+            d.model_dump(by_alias=True, exclude_unset=True) for d in expected_events
         ]
         for e in expected_events:
             e.pop("createdAt")
         worker_events = [
-            d.dict(by_alias=True, exclude_unset=True) for d in worker.published_events
+            d.model_dump(by_alias=True, exclude_unset=True)
+            for d in worker.published_events
         ]
         for e in worker_events:
             e.pop("createdAt")
@@ -118,9 +119,9 @@ async def test_work_once_asyncio_task(mock_worker: MockWorker):
             task_id="some-id",
             result=TaskResult(value="Hello world !"),
             created_at=completed_at,
-        ).dict(by_alias=True)
+        ).model_dump(by_alias=True)
         expected_result.pop("createdAt")
-        saved_result = saved_result.dict(by_alias=True)
+        saved_result = saved_result.model_dump(by_alias=True)
         saved_result.pop("createdAt")
         assert saved_result == expected_result
 
@@ -169,9 +170,9 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
         )
         completed_at = saved_task.completed_at
         assert isinstance(saved_task.completed_at, datetime)
-        saved_task = saved_task.dict(by_alias=True)
+        saved_task = saved_task.model_dump(by_alias=True)
         saved_task.pop("completedAt")
-        expected_task = expected_task.dict(by_alias=True)
+        expected_task = expected_task.model_dump(by_alias=True)
         expected_task.pop("completedAt")
         assert saved_task == expected_task
         expected_events = [
@@ -183,12 +184,13 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
             ),
         ]
         expected_events = [
-            d.dict(by_alias=True, exclude_unset=True) for d in expected_events
+            d.model_dump(by_alias=True, exclude_unset=True) for d in expected_events
         ]
         for e in expected_events:
             e.pop("createdAt")
         worker_events = [
-            d.dict(by_alias=True, exclude_unset=True) for d in worker.published_events
+            d.model_dump(by_alias=True, exclude_unset=True)
+            for d in worker.published_events
         ]
         for e in worker_events:
             e.pop("createdAt")
@@ -197,9 +199,9 @@ async def test_work_once_run_sync_task(mock_worker: MockWorker):
             task_id="some-id",
             result=TaskResult(value="Hello world !"),
             created_at=completed_at,
-        ).dict(by_alias=True)
+        ).model_dump(by_alias=True)
         expected_result.pop("createdAt")
-        saved_result = saved_result.dict(by_alias=True)
+        saved_result = saved_result.model_dump(by_alias=True)
         saved_result.pop("createdAt")
         assert saved_result == expected_result
 
@@ -262,9 +264,9 @@ async def test_worker_should_recover_from_recoverable_error(
         )
         completed_at = saved_task.completed_at
         assert isinstance(completed_at, datetime)
-        saved_task = saved_task.dict(by_alias=True)
+        saved_task = saved_task.model_dump(by_alias=True)
         saved_task.pop("completedAt")
-        expected_task = expected_task.dict(by_alias=True)
+        expected_task = expected_task.model_dump(by_alias=True)
         expected_task.pop("completedAt")
         assert saved_task == expected_task
 
@@ -276,9 +278,9 @@ async def test_worker_should_recover_from_recoverable_error(
             result=TaskResult(value="i told you i could recover"),
             created_at=datetime.now(),
         )
-        assert saved_result.dict(exclude={"created_at"}) == expected_result.dict(
+        assert saved_result.model_dump(
             exclude={"created_at"}
-        )
+        ) == expected_result.model_dump(exclude={"created_at"})
 
         expected_events = [
             ProgressEvent(task_id="some-id", progress=0.0, created_at=datetime.now()),
@@ -297,7 +299,7 @@ async def test_worker_should_recover_from_recoverable_error(
             ),
         ]
         events = [
-            e.dict(by_alias=True, exclude={"created_at"})
+            e.model_dump(by_alias=True, exclude={"created_at"})
             for e in worker.published_events
         ]
         event_errors = [e.pop("error", None) for e in events]
@@ -314,7 +316,7 @@ async def test_worker_should_recover_from_recoverable_error(
             None,
         ]
         expected_events = [
-            e.dict(by_alias=True, exclude={"created_at"}) for e in expected_events
+            e.model_dump(by_alias=True, exclude={"created_at"}) for e in expected_events
         ]
         for e in expected_events:
             e.pop("error", None)
@@ -378,11 +380,11 @@ async def test_worker_should_handle_fatal_error(mock_failing_worker: MockWorker)
             ),
         ]
         worker_events = [
-            e.dict(by_alias=True, exclude_unset=True, exclude={"created_at"})
+            e.model_dump(by_alias=True, exclude_unset=True, exclude={"created_at"})
             for e in worker.published_events
         ]
         expected_events = [
-            e.dict(by_alias=True, exclude_unset=True, exclude={"created_at"})
+            e.model_dump(by_alias=True, exclude_unset=True, exclude={"created_at"})
             for e in expected_events
         ]
         assert len(worker_events) == len(expected_events)
@@ -454,11 +456,11 @@ async def test_worker_should_handle_unregistered_task(mock_worker: MockWorker):
             ),
         ]
         worker_events = [
-            e.dict(by_alias=True, exclude_unset=True, exclude={"created_at"})
+            e.model_dump(by_alias=True, exclude_unset=True, exclude={"created_at"})
             for e in worker.published_events
         ]
         expected_events = [
-            e.dict(by_alias=True, exclude_unset=True, exclude={"created_at"})
+            e.model_dump(by_alias=True, exclude_unset=True, exclude={"created_at"})
             for e in expected_events
         ]
         assert len(worker_events) == len(expected_events)
@@ -610,9 +612,9 @@ async def test_worker_should_terminate_task_and_cancellation_event_loops(
     ],
 )
 def test_add_missing_args(
-    provided_args: Dict[str, Any],
-    kwargs: Dict[str, Any],
-    maybe_output: Optional[str],
+    provided_args: dict[str, Any],
+    kwargs: dict[str, Any],
+    maybe_output: str | None,
 ):
     # Given
     def fn(a: str, b: str, c: str = "c") -> str:

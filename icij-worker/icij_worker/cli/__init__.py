@@ -1,6 +1,6 @@
 import importlib.metadata
 import os
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -27,7 +27,7 @@ def pretty_exc_callback(value: bool):
 @cli_app.callback(name="icij-worker")
 def main(
     version: Annotated[  # pylint: disable=unused-argument
-        Optional[bool],
+        bool | None,
         typer.Option(  # pylint: disable=unused-argument
             "--version", callback=version_callback, is_eager=True
         ),

@@ -3,45 +3,48 @@ import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from inspect import iscoroutinefunction, signature
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union, final
+from typing import Callable, final
 
-from pydantic import validator
+from pydantic import BaseModel, field_validator, ConfigDict
 from typing_extensions import Self
 
-from icij_common.pydantic_utils import ICIJModel, ICIJSettings
+from icij_common.import_utils import import_variable
+from icij_common.pydantic_utils import ICIJSettings, icij_config
 from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.typing_ import Dependency
 from icij_worker.utils import run_deps
-from icij_worker.utils.imports import import_variable
 
 logger = logging.getLogger(__name__)
 
 PROGRESS_HANDLER_ARG = "progress"
 
 
-class TaskGroup(ICIJModel):
+class TaskGroup(BaseModel):
+    model_config = icij_config()
+
     name: str
-    timeout_s: Optional[int] = None
-    max_task_queue_size: Optional[int] = None
+    timeout_s: int | None = None
+    max_task_queue_size: int | None = None
 
 
 class AsyncAppConfig(ICIJSettings):
     late_ack: bool = True
     recover_from_worker_timeout: bool = False
-    max_task_queue_size: Optional[int] = None
-
-    class Config:
-        env_prefix = "ICIJ_APP_"
+    max_task_queue_size: int | None = None
+    model_config = ConfigDict(env_prefix="ICIJ_APP_")
 
 
-class RegisteredTask(ICIJModel):
+class RegisteredTask(BaseModel):
+    model_config = icij_config()
+
     task: Callable
-    recover_from: Tuple[Type[Exception], ...] = tuple()
-    max_retries: Optional[int]
-    group: Optional[TaskGroup]
-    timeout_s: Optional[int]
+    recover_from: tuple[type[Exception], ...] = tuple()
+    max_retries: int | None
+    group: TaskGroup | None
+    timeout_s: int | None
 
-    @validator("group", pre=True)
+    @field_validator("group", mode="before")
+    @classmethod
     def validate_group_instance(cls, v):  # pylint: disable=no-self-argument
         if isinstance(v, str):
             v = TaskGroup(name=v)
@@ -53,8 +56,8 @@ class AsyncApp:
         self,
         name: str,
         config: AsyncAppConfig = None,
-        dependencies: Optional[List[Dependency]] = None,
-        routing_strategy: Optional[RoutingStrategy] = None,
+        dependencies: list[Dependency] | None = None,
+        routing_strategy: RoutingStrategy | None = None,
     ):
         self._name = name
         if config is None:
@@ -80,11 +83,11 @@ class AsyncApp:
         return self
 
     @property
-    def registry(self) -> Dict[str, RegisteredTask]:
+    def registry(self) -> dict[str, RegisteredTask]:
         return self._registry
 
     @property
-    def registered_keys(self) -> List[str]:
+    def registered_keys(self) -> list[str]:
         return sorted(self._registry)
 
     @functools.cached_property
@@ -101,17 +104,18 @@ class AsyncApp:
 
     def task(
         self,
-        name: Optional[str] = None,
-        recover_from: Tuple[Type[Exception]] = tuple(),
-        max_retries: Optional[int] = None,
+        name: str | None = None,
+        recover_from: tuple[type[Exception]] = tuple(),
+        max_retries: int | None = None,
         *,
-        group: Optional[Union[str, TaskGroup]] = None,
+        group: str | TaskGroup | None = None,
+        timeout_s: int | None = None,
     ) -> Callable:
         if callable(name) and not recover_from and max_retries is None:
             f = name
-            return functools.partial(self._register_task, name=f.__name__, group=group)(
-                f
-            )
+            return functools.partial(
+                self._register_task, name=f.__name__, group=group, timeout_s=None
+            )(f)
         if max_retries is None:
             max_retries = 3
         return functools.partial(
@@ -120,13 +124,14 @@ class AsyncApp:
             recover_from=recover_from,
             max_retries=max_retries,
             group=group,
+            timeout_s=timeout_s,
         )
 
-    def task_group(self, name: str) -> Optional[TaskGroup]:
+    def task_group(self, name: str) -> TaskGroup | None:
         return self._groups.get(name)
 
     @property
-    def task_groups(self) -> List[TaskGroup]:
+    def task_groups(self) -> list[TaskGroup]:
         return list(self._groups.values())
 
     @final
@@ -140,10 +145,11 @@ class AsyncApp:
         self,
         f: Callable,
         *,
-        name: Optional[str] = None,
-        recover_from: Tuple[Type[Exception]] = tuple(),
-        max_retries: Optional[int] = None,
-        group: Optional[Union[str, TaskGroup]] = None,
+        name: str | None = None,
+        recover_from: tuple[type[Exception]] = tuple(),
+        max_retries: int | None = None,
+        group: str | TaskGroup | None = None,
+        timeout_s: int | None,
     ) -> Callable:
         if not iscoroutinefunction(f) and supports_progress(f):
             msg = (
@@ -158,7 +164,11 @@ class AsyncApp:
         if registered is not None:
             raise ValueError(f'Task "{name}" is already registered: {registered}')
         registered = RegisteredTask(
-            task=f, max_retries=max_retries, recover_from=recover_from, group=group
+            task=f,
+            max_retries=max_retries,
+            recover_from=recover_from,
+            group=group,
+            timeout_s=timeout_s,
         )
         self._validate_group(registered)
         self._registry[name] = registered
@@ -183,13 +193,13 @@ class AsyncApp:
             raise ValueError(msg)
 
     @classmethod
-    def load(cls, app_path: str, config: Optional[AsyncAppConfig] = None) -> Self:
+    def load(cls, app_path: str, config: AsyncAppConfig | None = None) -> Self:
         app = deepcopy(import_variable(app_path))
         if config is not None:
             app.with_config(config)
         return app
 
-    def filter_tasks(self, group: Optional[str]) -> Self:
+    def filter_tasks(self, group: str | None) -> Self:
         if group is None:
             return self
         kept = {

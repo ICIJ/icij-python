@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from typing import Any, AsyncContextManager, Optional
+from typing import Any, AsyncContextManager
 
 from aiohttp import BasicAuth, ClientResponse, ClientResponseError, ClientSession
 from aiohttp.client import _RequestOptions
@@ -15,12 +15,12 @@ class AiohttpClient(AsyncContextManager):
     def __init__(
         self,
         base_url: str,
-        auth: Optional[BasicAuth] = None,
+        auth: BasicAuth | None = None,
         headers: dict | None = None,
     ):
         self._base_url = base_url
         self._auth = auth
-        self._session: Optional[ClientSession] = None
+        self._session: ClientSession | None = None
         if headers is None:
             headers = dict()
         self._headers = headers

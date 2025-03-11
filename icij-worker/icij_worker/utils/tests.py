@@ -9,25 +9,12 @@ import uuid
 from abc import ABC
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    ClassVar,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    TypeVar,
-    cast,
-)
+from typing import Any, Callable, ClassVar, TypeVar, cast
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 import icij_worker
-from icij_common.pydantic_utils import (
-    ICIJModel,
-    IgnoreExtraModel,
-)
+from icij_common.pydantic_utils import icij_config, ignore_extra_config
 from icij_worker import (
     AsyncApp,
     AsyncBackend,
@@ -69,7 +56,6 @@ except ImportError:
     pass
 
 if _has_pytest:
-
     # TODO: make this one a MockStorage
     class DBMixin(FSKeyValueStorage, ABC):
         _locks_db_name = "locks"
@@ -80,9 +66,9 @@ if _has_pytest:
 
         def __init__(self, db_path: Path) -> None:
             super().__init__(db_path)
-            self._task_meta: Dict[str, Tuple[str, str]] = dict()
+            self._task_meta: dict[str, tuple[str, str]] = dict()
 
-        def _make_group_dbs(self) -> Dict:
+        def _make_group_dbs(self) -> dict:
             dbs = dict()
             for k in [
                 self._tasks_db_name,
@@ -100,7 +86,7 @@ if _has_pytest:
             return self._db_path
 
         @staticmethod
-        def _order_events(events: List[Dict]) -> float:
+        def _order_events(events: list[dict]) -> float:
             events = [
                 datetime.fromisoformat(evt["createdAt"]).timestamp() for evt in events
             ]
@@ -111,9 +97,9 @@ if _has_pytest:
             db_name: str,
             sleep_interval: float,
             factory: Callable[[Any], R],
-            group: Optional[str] = None,
-            select: Optional[Callable[[R], bool]] = None,
-            order: Optional[Callable[[R], Any]] = None,
+            group: str | None = None,
+            select: Callable[[R], bool] | None = None,
+            order: Callable[[R], Any] | None = None,
         ) -> R:
             while "i'm waiting until I find something interesting":
                 selected = dict(self._dbs[db_name].items())
@@ -142,17 +128,21 @@ if _has_pytest:
                     return t
                 await asyncio.sleep(sleep_interval)
 
-    class MockAppConfig(ICIJModel, LogWithWorkerIDMixin):
+    class MockAppConfig(BaseModel, LogWithWorkerIDMixin):
+        model_config = icij_config()
+
         # Just provide logging stuff to be able to see nice logs while doing TDD
         log_level: str = "DEBUG"
-        loggers: List[str] = [icij_worker.__name__]
+        loggers: list[str] = [icij_worker.__name__]
 
-    _MOCKED_CONFIG: Optional[MockAppConfig] = None
+    _MOCKED_CONFIG: MockAppConfig | None = None
 
     async def mock_async_config_enter(**_):
         global _MOCKED_CONFIG
         _MOCKED_CONFIG = MockAppConfig()
-        logger.info("Loading mocked configuration %s", _MOCKED_CONFIG.json(indent=2))
+        logger.info(
+            "Loading mocked configuration %s", _MOCKED_CONFIG.model_dump_json(indent=2)
+        )
 
     def lifespan_config() -> MockAppConfig:
         if _MOCKED_CONFIG is None:
@@ -171,9 +161,7 @@ if _has_pytest:
 
     APP = AsyncApp(name="test-app", dependencies=mocked_app_deps)
 
-    async def _hello_world(
-        greeted: str, progress: Optional[RateProgress] = None
-    ) -> str:
+    async def _hello_world(greeted: str, progress: RateProgress | None = None) -> str:
         if progress is not None:
             await progress(0.1)
         greeting = f"Hello {greeted} !"
@@ -182,12 +170,12 @@ if _has_pytest:
         return greeting
 
     @APP.task
-    async def hello_world(greeted: str, progress: Optional[RateProgress] = None) -> str:
+    async def hello_world(greeted: str, progress: RateProgress | None = None) -> str:
         return await _hello_world(greeted, progress)
 
     @APP.task(group="hello")
     async def grouped_hello_world(
-        greeted: str, progress: Optional[RateProgress] = None
+        greeted: str, progress: RateProgress | None = None
     ) -> str:
         return await _hello_world(greeted, progress)
 
@@ -197,7 +185,7 @@ if _has_pytest:
         return greeting
 
     async def _sleep_for(
-        duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
+        duration: float, s: float = 0.01, progress: RateProgress | None = None
     ):
         start = datetime.now()
         elapsed = 0
@@ -210,7 +198,7 @@ if _has_pytest:
 
     @APP.task(max_retries=1)
     async def sleep_for(
-        duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
+        duration: float, s: float = 0.01, progress: RateProgress | None = None
     ):
         await _sleep_for(duration, s, progress)
 
@@ -219,7 +207,7 @@ if _has_pytest:
 
     @APP.task(max_retries=3, group=short_tasks_group)
     async def sleep_for_short(
-        duration: float, s: float = 0.01, progress: Optional[RateProgress] = None
+        duration: float, s: float = 0.01, progress: RateProgress | None = None
     ):
         await _sleep_for(duration, s, progress)
 
@@ -248,13 +236,12 @@ if _has_pytest:
         return AsyncApp.load(f"{__name__}.APP", config=late_ack_app_config)
 
     class MockManagerConfig(TaskManagerConfig):
-        backend: ClassVar[AsyncBackend] = Field(const=True, default=AsyncBackend.mock)
+        backend: ClassVar[AsyncBackend] = Field(frozen=True, default=AsyncBackend.mock)
         db_path: Path
         event_refresh_interval_s: float = 0.1
 
     @TaskManager.register(AsyncBackend.mock)
     class MockManager(TaskManager, DBMixin):
-
         def __init__(
             self, app: AsyncApp, db_path: Path, event_refresh_interval_s: float = 0.1
         ):
@@ -304,7 +291,7 @@ if _has_pytest:
             manager_events_db = self._dbs[self._manager_events_db_name]
             manager_events_db[key] = events[1:]
             manager_events_db.commit(blocking=True)
-            return cast(ManagerEvent, Message.parse_obj(event))
+            return cast(ManagerEvent, Message.model_validate(event))
 
         async def cancel(self, task_id: str, *, requeue: bool):
             cancel_event = CancelEvent(
@@ -313,7 +300,7 @@ if _has_pytest:
             key = self._key(task_id=task_id, obj_cls=CancelEvent)
             worker_events = self._dbs[self._worker_events_db_name]
             events = worker_events.get(key, [])
-            event_dict = cancel_event.dict(exclude_unset=True, by_alias=True)
+            event_dict = cancel_event.model_dump(exclude_unset=True, by_alias=True)
             events.append(event_dict)
             worker_events[key] = events
             worker_events.commit(blocking=True)
@@ -323,7 +310,7 @@ if _has_pytest:
             key = self._key(task_id=f"shutdown-({uuid.uuid4()})", obj_cls=CancelEvent)
             worker_events = self._dbs[self._worker_events_db_name]
             events = worker_events.get(key, [])
-            event_dict = shutdown_event.dict(by_alias=True, exclude_none=True)
+            event_dict = shutdown_event.model_dump(by_alias=True, exclude_none=True)
             events.append(event_dict)
             worker_events[key] = events
             worker_events.commit(blocking=True)
@@ -337,7 +324,7 @@ if _has_pytest:
             )
             return tm
 
-        async def get_health(self) -> Dict[str, bool]:
+        async def get_health(self) -> dict[str, bool]:
             return {"db": True}
 
     R = TypeVar("R")
@@ -352,7 +339,7 @@ if _has_pytest:
         async def _publish_event(self, event: ManagerEvent):
             key = self._key(event.task_id, ManagerEvent)
             manager_events_db = self._dbs[self._manager_events_db_name]
-            event_dict = event.dict(exclude_unset=True, by_alias=True)
+            event_dict = event.model_dump(exclude_unset=True, by_alias=True)
             events = manager_events_db.get(key, [])
             events.append(event_dict)
             manager_events_db[key] = events
@@ -363,12 +350,14 @@ if _has_pytest:
         return [icij_worker.__name__]
 
     @WorkerConfig.register()
-    class MockWorkerConfig(WorkerConfig, IgnoreExtraModel):
-        type: ClassVar[str] = Field(const=True, default=AsyncBackend.mock.value)
+    class MockWorkerConfig(WorkerConfig):
+        model_config = ignore_extra_config()
+
+        type: ClassVar[str] = Field(frozen=True, default=AsyncBackend.mock.value)
 
         db_path: Path
         log_level: str = "DEBUG"
-        loggers: List[str] = Field(default_factory=_default_loggers)
+        loggers: list[str] = Field(default_factory=_default_loggers)
         task_queue_poll_interval_s: float = 2.0
 
     @Worker.register(AsyncBackend.mock)
@@ -376,9 +365,9 @@ if _has_pytest:
         def __init__(
             self,
             app: AsyncApp,
-            worker_id: Optional[str] = None,
+            worker_id: str | None = None,
             *,
-            group: Optional[str],
+            group: str | None,
             db_path: Path,
             poll_interval_s: float,
             **kwargs,
@@ -396,18 +385,18 @@ if _has_pytest:
             return self._app
 
         @property
-        def watch_events(self) -> Optional[asyncio.Task]:
+        def watch_events(self) -> asyncio.Task | None:
             return self._watch_events
 
         async def work_forever_async(self):
             await self._work_forever_async()
 
         @property
-        def work_forever_task(self) -> Optional[asyncio.Task]:
+        def work_forever_task(self) -> asyncio.Task | None:
             return self._work_forever_task
 
         @property
-        def work_once_task(self) -> Optional[asyncio.Task]:
+        def work_once_task(self) -> asyncio.Task | None:
             return self._work_once_task
 
         @property
@@ -415,11 +404,11 @@ if _has_pytest:
             return self._successful_exit
 
         @property
-        def current(self) -> Optional[Task]:
+        def current(self) -> Task | None:
             return self._current
 
         @current.setter
-        def current(self, value: Optional[Task]):
+        def current(self, value: Task | None):
             self._current = value
 
         @property
@@ -458,10 +447,10 @@ if _has_pytest:
             locks.commit()
 
         @staticmethod
-        def _task_factory(obj: Dict) -> Task:
+        def _task_factory(obj: dict) -> Task:
             obj.pop("group", None)
             try:
-                task = Task.parse_obj(obj)
+                task = Task.model_validate(obj)
             except Exception as e:
                 msg = f"invalid task object {obj}"
                 raise MessageDeserializationError(msg) from e
@@ -497,7 +486,7 @@ if _has_pytest:
             )
             event = events[0]
             try:
-                event = cast(WorkerEvent, Message.parse_obj(event))
+                event = cast(WorkerEvent, Message.model_validate(event))
             except Exception as e:
                 msg = f"invalid event object {event}"
                 raise MessageDeserializationError(msg) from e

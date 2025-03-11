@@ -2,14 +2,14 @@
 import asyncio
 import json
 from datetime import datetime
-from typing import Callable, List
+from typing import Callable
 
 import itertools
 import neo4j
 import pytest
 from neo4j.exceptions import ClientError
 
-from icij_common.neo4j.db import Database, NEO4J_COMMUNITY_DB, db_specific_session
+from icij_common.neo4j_.db import Database, NEO4J_COMMUNITY_DB, db_specific_session
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import fail_if_exception
 from icij_worker import (
@@ -59,7 +59,7 @@ def worker(neo4j_async_app_driver: neo4j.AsyncDriver, request) -> Neo4jWorker:
     [("some-group", {"group": "some-group"}), (None, None)],
     indirect=["populate_tasks", "worker"],
 )
-async def test_worker_consume_task(populate_tasks: List[Task], worker: Neo4jWorker):
+async def test_worker_consume_task(populate_tasks: list[Task], worker: Neo4jWorker):
     # pylint: disable=unused-argument
     # When
     task = asyncio.create_task(worker.consume())
@@ -83,7 +83,7 @@ async def test_should_consume_with_group(
     # Given
     mocked_other_db = "other-db"
 
-    async def _mocked_retrieved_db(driver: neo4j.AsyncDriver) -> List[Database]:
+    async def _mocked_retrieved_db(driver: neo4j.AsyncDriver) -> list[Database]:
         # pylint: disable=unused-argument
         return [Database(name=mocked_other_db)]
 
@@ -127,7 +127,7 @@ async def test_should_consume_with_group(
 
 @pytest.mark.parametrize("worker", [None], indirect=["worker"])
 async def test_worker_consume_cancel_event(
-    populate_cancel_events: List[CancelEvent], worker: Neo4jWorker
+    populate_cancel_events: list[CancelEvent], worker: Neo4jWorker
 ):
     # pylint: disable=unused-argument,protected-access
     # When
@@ -150,7 +150,7 @@ async def test_worker_consume_cancel_event(
     indirect=["worker"],
 )
 async def test_worker_negatively_acknowledge(
-    populate_tasks: List[Task],
+    populate_tasks: list[Task],
     worker: Neo4jWorker,
     neo4j_task_manager: Neo4JTaskManager,
     nacked_state: TaskState,
@@ -210,12 +210,12 @@ async def test_worker_publish_event(
 
     assert len(saved_events) == 1
     saved = saved_events[0]
-    saved = Message.parse_obj(json.loads(saved["event"]["event"]))
+    saved = Message.model_validate(json.loads(saved["event"]["event"]))
     assert saved == event
 
 
 async def test_worker_ack_cm(
-    populate_tasks: List[Task],
+    populate_tasks: list[Task],
     worker: Neo4jWorker,
     neo4j_task_manager: Neo4JTaskManager,
 ):
@@ -233,10 +233,10 @@ async def test_worker_ack_cm(
     # Then
     task = await task_manager.get_task(task_id=created.id)
     update = {"progress": 1.0, "state": TaskState.DONE}
-    expected_task = safe_copy(task, update=update).dict(by_alias=True)
+    expected_task = safe_copy(task, update=update).model_dump(by_alias=True)
     expected_task.pop("completedAt")
     assert task.completed_at is not None
-    task = task.dict(by_alias=True)
+    task = task.model_dump(by_alias=True)
     task.pop("completedAt")
     assert task == expected_task
     # Now let's check that no lock if left in the DB
@@ -247,7 +247,7 @@ async def test_worker_ack_cm(
 
 @pytest.mark.parametrize("worker", [None], indirect=["worker"])
 async def test_worker_consume_shutdown_event(
-    worker: Neo4jWorker, populate_shutdown_events: List[ShutdownEvent]
+    worker: Neo4jWorker, populate_shutdown_events: list[ShutdownEvent]
 ):
     # pylint: disable=unused-argument,protected-access
     # When

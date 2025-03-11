@@ -1,31 +1,39 @@
 import logging
+
 from datetime import datetime
-from typing import List, Set
 from unittest import mock
 
 import neo4j
 import pytest
+
 from neo4j.exceptions import ClientError
+from packaging.version import Version
+from pydantic import BaseModel, ConfigDict
 
 import icij_common
-from icij_common.neo4j import migrate
-from icij_common.neo4j.constants import DATABASE_REGISTRY_DB
-from icij_common.neo4j.migrate import (
-    Migration,
-    MigrationError,
-    MigrationStatus,
-    Neo4jMigration,
-    init_database,
-    migrate_db_schemas,
-    migrate_db_schema,
-    retrieve_dbs,
-)
-from icij_common.neo4j.db import (
+from icij_common.neo4j_ import migrate
+from icij_common.neo4j_.constants import DATABASE_REGISTRY_DB
+from icij_common.neo4j_.db import (
     Database,
     NEO4J_COMMUNITY_DB,
     add_multidatabase_support_migration_tx,
 )
-from icij_common.neo4j.test_utils import mock_enterprise_, mocked_is_enterprise, wipe_db
+from icij_common.neo4j_.migrate import (
+    Migration,
+    MigrationError,
+    MigrationStatus,
+    MigrationVersion,
+    Neo4jMigration,
+    init_database,
+    migrate_db_schema,
+    migrate_db_schemas,
+    retrieve_dbs,
+)
+from icij_common.neo4j_.test_utils import (
+    mock_enterprise_,
+    mocked_is_enterprise,
+    wipe_db,
+)
 from icij_common.test_utils import TEST_DB, fail_if_exception
 
 V_0_1_0 = Migration(
@@ -86,6 +94,20 @@ _MIGRATION_1 = Migration(
 )
 
 
+def test_migration_version_from_str():
+    # Given
+    class SomeModel(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+
+        version: MigrationVersion
+
+    # When
+    m = SomeModel(version="0.3.0")
+
+    # Then
+    assert m.version == Version("0.3.0")
+
+
 @pytest.mark.parametrize(
     "registry,expected_indexes,not_expected_indexes",
     [
@@ -104,9 +126,9 @@ _MIGRATION_1 = Migration(
 async def test_migrate_db_schema(
     _migration_index_and_constraint: neo4j.AsyncDriver,
     # pylint: disable=invalid-name
-    registry: List[Migration],
-    expected_indexes: Set[str],
-    not_expected_indexes: Set[str],
+    registry: list[Migration],
+    expected_indexes: set[str],
+    not_expected_indexes: set[str],
 ):
     # Given
     neo4j_driver = _migration_index_and_constraint
@@ -177,8 +199,10 @@ async def test_migrate_db_schema_should_wait_when_other_migration_in_progress(
     caplog.set_level(logging.INFO, logger=icij_common.__name__)
 
     async def mocked_get_migrations(
-        sess: neo4j.AsyncSession, db: str  # pylint: disable=unused-argument
-    ) -> List[Neo4jMigration]:
+        sess: neo4j.AsyncSession,
+        db: str,
+    ) -> list[Neo4jMigration]:
+        # pylint: disable=unused-argument
         return [
             Neo4jMigration(
                 db=TEST_DB,
@@ -204,7 +228,7 @@ async def test_migrate_db_schema_should_wait_when_other_migration_in_progress(
         )
     # Check that we've slept at least once otherwise timeout must be increased...
     assert any(
-        rec.name == "icij_common.neo4j.migrate"
+        rec.name == "icij_common.neo4j_.migrate"
         and f"waiting for {wait_s}" in rec.message
         for rec in caplog.records
     )
@@ -221,8 +245,9 @@ async def test_migrate_db_schema_should_wait_when_other_migration_just_started(
     caplog.set_level(logging.INFO, logger=icij_common.__name__)
 
     async def mocked_get_migrations(
-        sess: neo4j.AsyncSession, db: str  # pylint: disable=unused-argument
-    ) -> List[Neo4jMigration]:
+        sess: neo4j.AsyncSession, db: str
+    ) -> list[Neo4jMigration]:
+        # pylint: disable=unused-argument
         return []
 
     # No migration in progress
@@ -259,7 +284,7 @@ async def test_migrate_db_schema_should_wait_when_other_migration_just_started(
             )
         # Check that we've slept at least once otherwise timeout must be increased...
         assert any(
-            rec.name == "icij_common.neo4j.migrate" and "just started" in rec.message
+            rec.name == "icij_common.neo4j_.migrate" and "just started" in rec.message
             for rec in caplog.records
         )
     finally:
@@ -295,7 +320,7 @@ async def test_migrate_should_use_registry_db_when_with_enterprise_support(
     # Given
     registry = _BASE_REGISTRY
 
-    monkeypatch.setattr(icij_common.neo4j.db, "is_enterprise", mocked_is_enterprise)
+    monkeypatch.setattr(icij_common.neo4j_.db, "is_enterprise", mocked_is_enterprise)
     neo4j_driver = _migration_index_and_constraint
 
     # When/Then
@@ -397,12 +422,12 @@ async def test_migrate_project_db_schema_should_read_migrations_from_registry(
     monkeypatch,
 ):
     # Given
-    registry = [V_0_1_0.copy(update={"status": MigrationStatus.DONE})]
-    monkeypatch.setattr(icij_common.neo4j.db, "is_enterprise", mocked_is_enterprise)
+    registry = [V_0_1_0.model_copy(update={"status": MigrationStatus.DONE})]
+    monkeypatch.setattr(icij_common.neo4j_.db, "is_enterprise", mocked_is_enterprise)
     with mock.patch(
-        "icij_common.neo4j.migrate.registry_db_session"
+        "icij_common.neo4j_.migrate.registry_db_session"
     ) as mocked_registry_sess:
-        with mock.patch("icij_common.neo4j.migrate.db_specific_session"):
+        with mock.patch("icij_common.neo4j_.migrate.db_specific_session"):
             mocked_sess = mock.AsyncMock()
             mocked_registry_sess.return_value.__aenter__.return_value = mocked_sess
             mocked_sess.execute_read.return_value = registry

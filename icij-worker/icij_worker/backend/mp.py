@@ -11,7 +11,7 @@ from concurrent.futures import (
     as_completed,
 )
 from contextlib import contextmanager
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable
 
 import icij_worker
 from icij_common.logging_utils import setup_loggers
@@ -30,9 +30,9 @@ def _mp_work_forever(
     app: str,
     config: WorkerConfig,
     *,
-    worker_group: Optional[str],
-    worker_extras: Optional[Dict] = None,
-    app_deps_extras: Optional[Dict] = None,
+    worker_group: str | None,
+    worker_extras: dict | None = None,
+    app_deps_extras: dict | None = None,
 ):
     setup_loggers(["__main__", icij_worker.__name__])
     try:
@@ -88,10 +88,10 @@ def _get_mp_async_runner(
     config: WorkerConfig,
     n_workers: int,
     *,
-    worker_extras: Optional[Dict] = None,
-    app_deps_extras: Optional[Dict] = None,
-    worker_group: Optional[str],
-) -> List[Callable[[], Future]]:
+    worker_extras: dict | None = None,
+    app_deps_extras: dict | None = None,
+    worker_group: str | None,
+) -> list[Callable[[], Future]]:
     # This function is here to avoid code duplication, it will be removed
 
     # Here we set maxtasksperchild to 1. Each worker has a single never ending task
@@ -113,7 +113,7 @@ def _get_mp_async_runner(
     return futures
 
 
-def _cancel_other_callback(errored: Future, others: List[Future]):
+def _cancel_other_callback(errored: Future, others: list[Future]):
     try:
         e = errored.exception()
     except CancelledError:
@@ -131,8 +131,8 @@ def _cancel_other_callback(errored: Future, others: List[Future]):
 
 @contextmanager
 def _handle_executor_termination(
-    termination_cb: Optional[TerminationCallback],
-    futures: Set[Future],
+    termination_cb: TerminationCallback | None,
+    futures: set[Future],
     handle_signals: bool,
 ):
     try:
@@ -167,9 +167,9 @@ def run_workers_with_multiprocessing_cm(
     n_workers: int,
     config: WorkerConfig,
     *,
-    worker_extras: Optional[Dict] = None,
-    app_deps_extras: Optional[Dict] = None,
-    group: Optional[str],
+    worker_extras: dict | None = None,
+    app_deps_extras: dict | None = None,
+    group: str | None,
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")
@@ -217,9 +217,9 @@ def run_workers_with_multiprocessing(
     n_workers: int,
     config: WorkerConfig,
     *,
-    worker_extras: Optional[Dict] = None,
-    app_deps_extras: Optional[Dict] = None,
-    group: Optional[str],
+    worker_extras: dict | None = None,
+    app_deps_extras: dict | None = None,
+    group: str | None,
 ):
     if n_workers < 1:
         raise ValueError("n_workers must be >=1")

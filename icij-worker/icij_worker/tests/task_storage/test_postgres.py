@@ -4,22 +4,23 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import ClassVar, Dict, Generic, List, Optional
+from typing import ClassVar, Generic
 
 import pytest
+from icij_common.pydantic_utils import safe_copy
+from icij_common.test_utils import TEST_DB
 from psycopg import AsyncClientCursor, AsyncConnection, sql
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from pydantic_settings import SettingsConfigDict
 
-from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_DB
 from icij_worker import (
-    RoutingStrategy,
     PostgresConnectionInfo,
     PostgresStorage,
     PostgresStorageConfig,
     ResultEvent,
+    RoutingStrategy,
     Task,
     TaskState,
     init_postgres_database,
@@ -149,7 +150,7 @@ async def test_postgres_conn_session(
         await _wipe_registry(conn)
         await create_databases_registry_db(conn, registry_db_name)
 
-    connection_pools: Dict[str, AsyncConnectionPool] = dict()
+    connection_pools: dict[str, AsyncConnectionPool] = dict()
 
     async def _factory(db_name: str) -> AsyncConnectionPool:
         if db_name not in connection_pools:
@@ -190,9 +191,9 @@ async def test_postgres_conn(
 
 
 @pytest.fixture()
-async def populate_task(test_postgres_conn: AsyncConnection) -> List[Task]:
+async def populate_task(test_postgres_conn: AsyncConnection) -> list[Task]:
     tasks = [task_0(), task_1()]
-    task_tuples = [t.dict() for t in tasks]
+    task_tuples = [t.model_dump() for t in tasks]
     for i, t in enumerate(task_tuples):
         t["args"] = json.dumps(t["args"])
         t["group_id"] = "some-group" if i % 2 == 0 else None
@@ -235,7 +236,7 @@ async def test_save_task(
 async def test_save_existing_task(
     test_postgres_storage: PostgresStorage,
     test_postgres_conn: AsyncConnection,
-    populate_task: List[Task],
+    populate_task: list[Task],
 ) -> None:
     # pylint: disable=unused-argument
     # Given
@@ -264,7 +265,7 @@ async def test_save_existing_task(
 async def test_save_result(
     test_postgres_storage: PostgresStorage,
     test_postgres_conn: AsyncConnection,
-    populate_task: List[Task],
+    populate_task: list[Task],
 ) -> None:
     # pylint: disable=unused-argument
     # Given
@@ -302,7 +303,7 @@ async def test_save_result_should_raise_for_unknown_task(
 async def test_save_error(
     test_postgres_storage: PostgresStorage,
     test_postgres_conn: AsyncConnection,
-    populate_task: List[Task],
+    populate_task: list[Task],
 ) -> None:
     # pylint: disable=unused-argument
     # Given
@@ -356,7 +357,7 @@ async def test_save_error_should_raise_for_unknown_task(
 
 
 async def test_get_task(
-    populate_task: List[Task], test_postgres_storage: PostgresStorage
+    populate_task: list[Task], test_postgres_storage: PostgresStorage
 ) -> None:
     # Given
     storage = test_postgres_storage
@@ -390,12 +391,12 @@ async def test_get_task_should_raise_for_unknown_task(
     ],
 )
 async def test_get_tasks(
-    populate_task: List[Task],
+    populate_task: list[Task],
     test_postgres_storage: PostgresStorage,
-    group: Optional[str],
-    task_name: Optional[str],
-    state: Optional[TaskState],
-    expected_tasks: List[Task],
+    group: str | None,
+    task_name: str | None,
+    state: TaskState | None,
+    expected_tasks: list[Task],
 ) -> None:
     # pylint: disable=unused-argument
     # Given
@@ -407,7 +408,7 @@ async def test_get_tasks(
 
 
 async def test_get_task_result(
-    populate_task: List[Task],
+    populate_task: list[Task],
     test_postgres_storage: PostgresStorage,
     test_postgres_conn: AsyncConnection,
 ) -> None:
@@ -445,7 +446,7 @@ async def test_get_task_result_should_raise_for_unknown_task(
 
 
 async def test_get_task_errors(
-    populate_task: List[Task],
+    populate_task: list[Task],
     test_postgres_storage: PostgresStorage,
     test_postgres_conn: AsyncConnection,
 ) -> None:
@@ -460,7 +461,7 @@ async def test_get_task_errors(
     message = "some message"
     cause = "some cause"
     item = StacktraceItem(name="SomeError", file="some details", lineno=666)
-    stacktrace = json.dumps([item.dict()])
+    stacktrace = json.dumps([item.model_dump()])
     async with conn.cursor() as cur:
         await cur.execute(
             """INSERT INTO errors
@@ -491,7 +492,7 @@ async def test_get_task_errors_should_raise_for_unknown_task(
 
 
 async def test_get_task_group(
-    populate_task: List[Task],
+    populate_task: list[Task],
     test_postgres_storage: PostgresStorage,
 ) -> None:
     # pylint: disable=unused-argument
@@ -510,10 +511,9 @@ async def test_task_manager_with_postgres_storage_from_config(reset_env):
     class _MySettings(SettingsWithTM, Generic[TM]):
         app_path: ClassVar[str] = "icij_worker.utils.tests.APP"
         some_other_app_setting: str
-
-        class Config:
-            env_prefix = "MY_APP_"
-            env_nested_delimiter = "__"
+        model_config = SettingsConfigDict(
+            env_prefix="MY_APP_", env_nested_delimiter="__"
+        )
 
     env_vars = {
         "MY_APP_SOME_OTHER_APP_SETTING": "ANOTHER_SETTING",
@@ -530,7 +530,8 @@ async def test_task_manager_with_postgres_storage_from_config(reset_env):
     task_manager = settings.to_task_manager()
     # Then
     assert isinstance(
-        task_manager._storage, PostgresStorage  # pylint: disable=protected-access
+        task_manager._storage,  # pylint: disable=protected-access
+        PostgresStorage,
     )
 
 

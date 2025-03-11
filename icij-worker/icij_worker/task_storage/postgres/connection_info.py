@@ -1,10 +1,12 @@
 from functools import cached_property
-from typing import Dict
+from pydantic import BaseModel
 
-from icij_common.pydantic_utils import ICIJModel
+from icij_common.pydantic_utils import icij_config
 
 
-class PostgresConnectionInfo(ICIJModel):
+class PostgresConnectionInfo(BaseModel):
+    model_config = icij_config()
+
     host: str = "127.0.0.1"
     password: str = "changeme"
     port: int = 5432
@@ -19,8 +21,8 @@ class PostgresConnectionInfo(ICIJModel):
         return url
 
     @cached_property
-    def kwargs(self) -> Dict:
-        kwargs = self.dict()
+    def kwargs(self) -> dict:
+        kwargs = self.model_dump()
         kwargs.pop("use_ssl")
         kwargs["connect_timeout"] = int(kwargs.pop("connect_timeout_s"))
         return kwargs

@@ -3,11 +3,12 @@ import logging
 from abc import ABC, abstractmethod
 from asyncio import Task as AsyncIOTask
 from functools import cached_property
-from typing import ClassVar, Dict, Optional, final
+from typing import ClassVar, final
 
 from pydantic import Field
 
 from icij_common.pydantic_utils import safe_copy
+from icij_common.registrable import RegistrableConfig, RegistrableFromConfig
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.app import AsyncAppConfig
 from icij_worker.exceptions import TaskAlreadyQueued, UnknownTask, UnregisteredTask
@@ -20,14 +21,12 @@ from icij_worker.objects import (
 )
 from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.task_storage import TaskStorage
-from icij_worker.utils import RegistrableConfig
-from icij_worker.utils.registrable import RegistrableFromConfig
 
 logger = logging.getLogger(__name__)
 
 
 class TaskManagerConfig(RegistrableConfig):
-    registry_key: ClassVar[str] = Field(const=True, default="backend")
+    registry_key: ClassVar[str] = Field(frozen=True, default="backend")
     backend: ClassVar[AsyncBackend]
 
     app_path: str
@@ -43,7 +42,7 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     def __init__(self, app: AsyncApp):
         self._app = app
         self._loop = asyncio.get_event_loop()
-        self._consume_loop: Optional[AsyncIOTask] = None
+        self._consume_loop: AsyncIOTask | None = None
 
     @final
     async def __aenter__(self):
@@ -179,4 +178,4 @@ class TaskManager(TaskStorage, RegistrableFromConfig, ABC):
     async def _requeue(self, task: Task): ...
 
     @abstractmethod
-    async def get_health(self) -> Dict[str, bool]: ...
+    async def get_health(self) -> dict[str, bool]: ...

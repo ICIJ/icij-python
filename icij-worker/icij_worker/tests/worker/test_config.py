@@ -1,6 +1,6 @@
 # pylint: disable=redefined-outer-name
 import os
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 import pytest
 from pydantic import Field
@@ -18,7 +18,7 @@ def env_log_level(reset_env, request):  # pylint: disable=unused-argument
 
 @WorkerConfig.register()
 class WorkerImplConfig(WorkerConfig):
-    type: ClassVar[str] = Field(const=True, default="worker_impl")
+    type: ClassVar[str] = Field(frozen=True, default="worker_impl")
 
 
 @pytest.fixture()
@@ -33,7 +33,7 @@ def mock_worker_in_env(tmp_path):  # pylint: disable=unused-argument
     indirect=["env_log_level"],
 )
 def test_config_from_env(
-    env_log_level: Optional[str],
+    env_log_level: str | None,
     expected_level: str,
     # pylint: disable=unused-argument
     mock_worker_in_env,

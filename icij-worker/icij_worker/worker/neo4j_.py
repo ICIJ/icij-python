@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import (
-    Callable,
-    ClassVar,
-    Optional,
-)
+from typing import Callable, ClassVar
 
 import neo4j
 from neo4j.exceptions import ConstraintError, ResultNotSingleError
@@ -40,16 +36,16 @@ from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 @WorkerConfig.register()
 class Neo4jWorkerConfig(WorkerConfig):
-    type: ClassVar[str] = Field(const=True, default=AsyncBackend.neo4j.value)
+    type: ClassVar[str] = Field(frozen=True, default=AsyncBackend.neo4j.value)
 
     cancelled_tasks_refresh_interval_s: float = 0.1
     poll_interval_s: float = 0.1
     neo4j_connection_timeout: float = 5.0
     neo4j_host: str = "127.0.0.1"
-    neo4j_password: Optional[str] = None
+    neo4j_password: str | None = None
     neo4j_port: int = 7687
     neo4j_uri_scheme: str = "bolt"
-    neo4j_user: Optional[str] = None
+    neo4j_user: str | None = None
 
     @property
     def neo4j_uri(self) -> str:
@@ -83,9 +79,9 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
     def __init__(
         self,
         app: AsyncApp,
-        worker_id: Optional[str] = None,
+        worker_id: str | None = None,
         *,
-        group: Optional[str],
+        group: str | None,
         driver: neo4j.AsyncDriver,
         poll_interval_s: float,
         **kwargs,
@@ -149,7 +145,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
 
 async def _consume_task_tx(
-    tx: neo4j.AsyncTransaction, *, worker_id: str, group: Optional[str]
+    tx: neo4j.AsyncTransaction, *, worker_id: str, group: str | None
 ) -> Optional[neo4j.Record]:
     where_ns = ""
     if group is not None:
@@ -177,7 +173,7 @@ RETURN task"""
 
 
 async def _consume_worker_events_tx(
-    tx: neo4j.AsyncTransaction, *, worker_id: str, group: Optional[str], **_
+    tx: neo4j.AsyncTransaction, *, worker_id: str, group: str | None, **_
 ) -> Optional[WorkerEvent]:
     await _create_worker_node_tx(tx, worker_id)
     shutdown_event = await _consume_shutdown_events_tx(tx, worker_id)
@@ -222,7 +218,7 @@ RETURN event
 
 
 async def _consume_cancelled_events_tx(
-    tx: neo4j.AsyncTransaction, group: Optional[str], **_
+    tx: neo4j.AsyncTransaction, group: str | None, **_
 ):
     where_group = ""
     if group is not None:

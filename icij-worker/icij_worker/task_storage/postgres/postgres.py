@@ -7,19 +7,7 @@ import time
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy
 from functools import cached_property
-from typing import (
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    ClassVar,
-    Dict,
-    List,
-    Optional,
-    Protocol,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import AsyncGenerator, Awaitable, Callable, ClassVar, Protocol
 
 import ujson
 from psycopg import AsyncClientCursor, AsyncConnection, AsyncCursor, sql
@@ -28,7 +16,6 @@ from psycopg.errors import DuplicateDatabase
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from icij_common.pydantic_utils import jsonable_encoder
 from icij_worker import RoutingStrategy, ResultEvent, Task, TaskState
 from icij_worker.constants import (
     POSTGRES_TASKS_GROUP,
@@ -71,7 +58,7 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
     migration_throttle_s: float = 0.1
 
     def to_storage(  # pylint: disable=arguments-differ
-        self, routing_strategy: Optional[RoutingStrategy]
+        self, routing_strategy: RoutingStrategy | None
     ) -> PostgresStorage:
         storage = PostgresStorage(
             connection_info=self.as_connection_info,
@@ -87,7 +74,7 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
     def as_connection_info(self) -> PostgresConnectionInfo:
         self_as_connection_info = {
             k: v
-            for k, v in self.dict().items()
+            for k, v in self.model_dump().items()
             if k in PostgresConnectionInfo.__fields__
         }
         return PostgresConnectionInfo(**self_as_connection_info)
@@ -98,8 +85,8 @@ class PoolManager(AbstractAsyncContextManager):
         self,
         pool_factory: ConnectionPoolFactory,
         *,
-        max_size: Optional[int],
-        min_size: Optional[int],
+        max_size: int | None,
+        min_size: int | None,
     ):
         # TODO: limit the number of total pools if needed
         if min_size is not None:
@@ -147,8 +134,8 @@ class PostgresStorage(TaskStorage):
         self._pool_manager = PoolManager(
             self._pool_factory, min_size=1, max_size=self._max_connections
         )
-        self._task_meta: Dict[str, Tuple[str, str]] = dict()
-        self._known_dbs: Set[str] = set()
+        self._task_meta: dict[str, tuple[str, str]] = dict()
+        self._known_dbs: set[str] = set()
         self._exit_stack = AsyncExitStack()
 
     async def __aenter__(self):
@@ -168,7 +155,7 @@ class PostgresStorage(TaskStorage):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def save_task_(self, task: Task, group: Optional[str]) -> bool:
+    async def save_task_(self, task: Task, group: str | None) -> bool:
         db_name = self._routing_strategy.postgres_db(group)
         if db_name not in self._known_dbs:
             await self._refresh_dbs()
@@ -188,7 +175,7 @@ class PostgresStorage(TaskStorage):
 
     async def save_result(self, result: ResultEvent):
         task_db = await self._get_task_db(result.task_id)
-        params = result.dict(
+        params = result.model_dump(
             include={TASK_RESULT_TASK_ID, TASK_RESULT_RESULT, TASK_RESULT_CREATED_AT},
             exclude={ResultEvent.registry_key.default},
         )
@@ -222,12 +209,12 @@ class PostgresStorage(TaskStorage):
 
     async def get_tasks(
         self,
-        group: Optional[str],
+        group: str | None,
         *,
-        task_name: Optional[str] = None,
-        state: Optional[Union[List[TaskState], TaskState]] = None,
+        task_name: str | None = None,
+        state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> List[Task]:
+    ) -> list[Task]:
         tasks_db = self._routing_strategy.postgres_db(group)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
@@ -240,7 +227,7 @@ class PostgresStorage(TaskStorage):
                 ]
         return tasks
 
-    async def get_task_errors(self, task_id: str) -> List[ErrorEvent]:
+    async def get_task_errors(self, task_id: str) -> list[ErrorEvent]:
         tasks_db = await self._get_task_db(task_id)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
@@ -258,7 +245,7 @@ class PostgresStorage(TaskStorage):
                 res = await cur.fetchone()
         return res
 
-    async def get_task_group(self, task_id: str) -> Optional[str]:
+    async def get_task_group(self, task_id: str) -> str | None:
         tasks_db = await self._get_task_db(task_id)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
@@ -340,7 +327,7 @@ class PostgresStorage(TaskStorage):
 
     @classmethod
     def _from_config(cls, config: PostgresStorageConfig, **extras) -> PostgresStorage:
-        as_dict = config.dict()
+        as_dict = config.model_dump()
         as_dict["registry_db_name"] = config.registry_db_name
         conn_info = {
             k: v for k, v in as_dict.items() if k in PostgresConnectionInfo.__fields__
@@ -358,10 +345,10 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
     return count > 0
 
 
-async def _insert_task(cur: AsyncClientCursor, task: Task, group: Optional[str]):
-    task_as_dict = task.dict(exclude={Task.registry_key.default})
+async def _insert_task(cur: AsyncClientCursor, task: Task, group: str | None):
+    task_as_dict = task.model_dump(exclude={Task.registry_key.default})
     task_as_dict[POSTGRES_TASKS_GROUP] = group
-    task_as_dict[TASK_ARGS] = ujson.dumps(jsonable_encoder(task.args))
+    task_as_dict[TASK_ARGS] = ujson.dumps(task.args)
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
     col_value_placeholders = sql.SQL(", ").join(
         sql.Placeholder(n) for n in task_as_dict
@@ -377,9 +364,9 @@ async def _insert_task(cur: AsyncClientCursor, task: Task, group: Optional[str])
 async def _get_tasks(
     cur: AsyncCursor,
     *,
-    group: Optional[str],
-    task_name: Optional[str],
-    state: Optional[Union[List[TaskState], TaskState]],
+    group: str | None,
+    task_name: str | None,
+    state: list[TaskState] | TaskState | None,
     chunk_size=10,
 ) -> AsyncGenerator[Task, None]:
     # pylint: disable=unused-argument
@@ -416,7 +403,7 @@ async def _get_tasks(
 
 
 async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
-    error_as_dict = error.dict(exclude_none=True)
+    error_as_dict = error.model_dump(exclude_none=True)
     error_as_dict.update(error_as_dict.pop("error"))
     error_as_dict.pop(TaskError.registry_key.default)
     error_as_dict["stacktrace"] = ujson.dumps(error_as_dict["stacktrace"])
@@ -433,7 +420,7 @@ async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
 
 
 async def _update_task(cur: AsyncCursor, task: Task):
-    task_update = TaskUpdate.from_task(task).dict(exclude_none=True)
+    task_update = TaskUpdate.from_task(task).model_dump(exclude_none=True)
     updates = sql.SQL(", ").join(
         sql.SQL("{} = {}").format(sql.Identifier(col), sql.Placeholder(col))
         for col in task_update
@@ -449,7 +436,7 @@ async def _update_task(cur: AsyncCursor, task: Task):
     await cur.execute(update_query, task_update)
 
 
-async def retrieve_dbs(conn: AsyncConnection) -> List[str]:
+async def retrieve_dbs(conn: AsyncConnection) -> list[str]:
     list_dbs = sql.SQL("SELECT db.{} AS db_name FROM {} AS db;").format(
         sql.Identifier(POSTGRES_TASK_DB_NAME), sql.Identifier(POSTGRES_TASK_DBS_TABLE)
     )
@@ -459,7 +446,7 @@ async def retrieve_dbs(conn: AsyncConnection) -> List[str]:
     return dbs
 
 
-async def _tasks_meta(conn: AsyncConnection) -> AsyncGenerator[Dict, None]:
+async def _tasks_meta(conn: AsyncConnection) -> AsyncGenerator[dict, None]:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(_TASK_META_QUERY)
         async for row in cur:

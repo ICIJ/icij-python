@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "icij-common"
-version = "0.5.6"
+version = "0.6.0"
 description = "Common utils for ICIJ libs"
 authors = [
     "Clément Doumouro <cdoumouro@icij.org>",
@@ -20,16 +20,17 @@ target-version = ["py39"]
 asyncio_mode = "auto"
 
 [tool.poetry.dependencies]
-python = "^3.9"
-pydantic = "^1.10" # Sadly needed for now because of Pyinstaller
+python = "^3.10"
+pydantic = "^2"
 
 # elasticsearch
 elasticsearch = { version = "^7.17.9", extras = ["async"], optional = true }
 tenacity = { version = "^9.0.0", optional = true }
 # fastapi
-fastapi = { version = ">=0.99,<0.111", optional = true }
+fastapi = { version = "^0.111", optional = true }
 # neo4j
 neo4j = { version = "^5.0.0", optional = true }
+pydantic-settings = "^2.8.1"
 
 [tool.poetry.extras]
 fastapi = ["fastapi"]

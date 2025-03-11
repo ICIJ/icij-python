@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 import pytest
 
@@ -415,7 +414,7 @@ def test_error_event_ser():
         created_at=_ERROR_OCCURRED_AT,
     )
     # When
-    ser = event.dict(exclude_unset=True, by_alias=True)
+    ser = event.model_dump(exclude_unset=True, by_alias=True)
     # Then
     expected = {
         "@type": "ErrorEvent",

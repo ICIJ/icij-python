@@ -4,7 +4,6 @@ import logging
 import signal
 from abc import ABC
 from asyncio import AbstractEventLoop
-from typing import Optional
 
 from icij_common.logging_utils import LogWithNameMixin
 
@@ -13,7 +12,7 @@ _HANDLE_SIGNALS = [signal.SIGTERM]
 
 # TODO: rename this file to signals
 class HandleSignalsMixin(LogWithNameMixin, ABC):
-    _work_forever_task: Optional[asyncio.Task]
+    _work_forever_task: asyncio.Task | None
     _shutdown_signal: bool = False
     _loop: AbstractEventLoop
     cancel_lock: asyncio.Lock

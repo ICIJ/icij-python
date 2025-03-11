@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator, List, Optional, Tuple
 
-from packaging.version import parse, Version
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 import neo4j
 
-from icij_common.neo4j.constants import (
+from packaging.version import Version, parse
+
+from pydantic import BaseModel
+
+from icij_common.neo4j_.constants import (
     DATABASE_NAME,
     DATABASE_NODE,
     DATABASE_REGISTRY_DB,
@@ -16,20 +19,22 @@ from icij_common.neo4j.constants import (
     MIGRATION_NODE,
     MIGRATION_VERSION,
 )
-from icij_common.pydantic_utils import ICIJModel
+from icij_common.pydantic_utils import icij_config
 
 logger = logging.getLogger(__name__)
 
 NEO4J_COMMUNITY_DB = "neo4j"
-_IS_ENTERPRISE: Optional[bool] = None
-_NEO4J_VERSION: Optional[Version] = None
-_SUPPORTS_PARALLEL: Optional[bool] = None
+_IS_ENTERPRISE: bool | None = None
+_NEO4J_VERSION: Version | None = None
+_SUPPORTS_PARALLEL: bool | None = None
 
 _COMPONENTS_QUERY = """CALL dbms.components() YIELD versions, edition
 RETURN versions, edition"""
 
 
-class Database(ICIJModel):
+class Database(BaseModel):
+    model_config = icij_config()
+
     name: str
 
     @classmethod
@@ -47,7 +52,7 @@ async def create_databases_registry_db(neo4j_driver: neo4j.AsyncDriver):
         logger.info("Using default db as registry DB !")
 
 
-async def databases_tx(tx: neo4j.AsyncTransaction) -> List[Database]:
+async def databases_tx(tx: neo4j.AsyncTransaction) -> list[Database]:
     query = f"MATCH (db:{DATABASE_NODE}) RETURN db"
     res = await tx.run(query)
     dbs = [Database.from_neo4j(p) async for p in res]
@@ -91,7 +96,7 @@ REQUIRE (m.{MIGRATION_VERSION}, m.{MIGRATION_DB}) IS UNIQUE
 
 async def create_database_tx(
     tx: neo4j.AsyncTransaction, name: str
-) -> Tuple[Database, bool]:
+) -> tuple[Database, bool]:
     if name == DATABASE_REGISTRY_DB:
         raise ValueError(
             f'Bad luck, name "{DATABASE_REGISTRY_DB}" is reserved for internal use.'

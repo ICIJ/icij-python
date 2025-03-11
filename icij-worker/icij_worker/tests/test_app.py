@@ -1,6 +1,4 @@
 # pylint: disable=redefined-outer-name
-from typing import List, Optional
-
 import pytest
 
 from icij_common.test_utils import fail_if_exception
@@ -11,7 +9,7 @@ from icij_worker.app import TaskGroup
 class DummyRouting(RoutingStrategy):
 
     def app_tasks_filter(
-        self, *, task_group: Optional[TaskGroup], app_group_name: str
+        self, *, task_group: TaskGroup | None, app_group_name: str
     ) -> bool:
         if task_group is None:
             return False
@@ -37,7 +35,7 @@ def grouped_app() -> AsyncApp:
     "group,expected_keys",
     [("", ["i_m_a", "i_m_b"]), ("a", ["i_m_a"]), ("b", ["i_m_b"])],
 )
-def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: List[str]):
+def test_filter_tasks(grouped_app: AsyncApp, group: str, expected_keys: list[str]):
     # Given
     app = grouped_app
     routing = DummyRouting()

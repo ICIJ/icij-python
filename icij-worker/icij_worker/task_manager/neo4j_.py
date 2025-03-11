@@ -1,13 +1,14 @@
 import json
 from datetime import datetime, timezone
-from typing import ClassVar, Optional, cast
+from typing import ClassVar, cast
 
 import neo4j
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ResultNotSingleError
 from pydantic import Field
 
-from icij_common.neo4j.migrate import retrieve_dbs
+from icij_common.neo4j_.migrate import retrieve_dbs
+from icij_common.registrable import FromConfig
 from icij_worker import AsyncApp, Task, TaskState
 from icij_worker.constants import (
     NEO4J_SHUTDOWN_EVENT_CREATED_AT,
@@ -36,13 +37,12 @@ from icij_worker.exceptions import (
 )
 from icij_worker.objects import AsyncBackend, ManagerEvent, Message
 from icij_worker.task_manager import TaskManager, TaskManagerConfig
-from icij_worker.utils import FromConfig
 from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 
 @TaskManagerConfig.register()
 class Neo4JTaskManagerConfig(TaskManagerConfig):
-    backend: ClassVar[AsyncBackend] = Field(const=True, default=AsyncBackend.neo4j)
+    backend: ClassVar[AsyncBackend] = Field(frozen=True, default=AsyncBackend.neo4j)
     event_refresh_interval_s: float = 0.1
     neo4j_host: str = "localhost"
     neo4j_port: int = 7687
@@ -109,7 +109,7 @@ class Neo4JTaskManager(TaskManager, Neo4jConsumerMixin):
             db_filter=None,
         )
         try:
-            event = Message.parse_obj(json.loads(event_as_json))
+            event = Message.model_validate(json.loads(event_as_json))
         except Exception as e:
             msg = f"invalid event {event_as_json}"
             raise MessageDeserializationError(msg) from e
@@ -179,7 +179,7 @@ async def _shutdown_workers_tx(tx: neo4j.AsyncTransaction):
     await tx.run(query, createdAt=datetime.now(timezone.utc))
 
 
-async def _consume_manager_events_tx(tx: neo4j.AsyncTransaction) -> Optional[str]:
+async def _consume_manager_events_tx(tx: neo4j.AsyncTransaction) -> str | None:
     get_event_query = f"""MATCH (event:{NEO4J_TASK_MANAGER_EVENT_NODE})
 RETURN event.{NEO4J_TASK_MANAGER_EVENT_EVENT} as eventAsJson
 ORDER BY event.{NEO4J_TASK_MANAGER_EVENT_NODE_CREATED_AT} ASC

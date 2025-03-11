@@ -2,7 +2,6 @@
 import functools
 import re
 from datetime import datetime
-from typing import List, Optional, Union
 
 import pytest
 import ujson
@@ -39,15 +38,15 @@ def task_1() -> Task:
 
 
 @pytest.fixture()
-def populate_tasks(fs_storage: TestableFSKeyValueStorage) -> List[Task]:
+def populate_tasks(fs_storage: TestableFSKeyValueStorage) -> list[Task]:
     db = _make_db(fs_storage.db_path, table_name="tasks")
     with db:
         t_0 = task_0()
-        t_0_as_dict = t_0.dict()
+        t_0_as_dict = t_0.model_dump()
         t_0_as_dict["group"] = "some-group"
         db[t_0.id] = t_0_as_dict
         t_1 = task_1()
-        db[t_1.id] = t_1.dict()
+        db[t_1.id] = t_1.model_dump()
         db.commit()
     return [t_0, t_1]
 
@@ -74,7 +73,7 @@ async def test_save_task(fs_storage: TestableFSKeyValueStorage, hello_world_task
     assert is_new
     assert db_task is not None
     db_task.pop("group", None)
-    db_task = Task.parse_obj(db_task)
+    db_task = Task.model_validate(db_task)
     assert db_task == task
 
 
@@ -126,7 +125,7 @@ async def test_save_result(fs_storage: TestableFSKeyValueStorage):
     with result_db:
         db_result = result_db.get(result.task_id)
     assert db_result is not None
-    db_result = ResultEvent.parse_obj(db_result)
+    db_result = ResultEvent.model_validate(db_result)
     assert db_result == result
 
 
@@ -150,7 +149,7 @@ async def test_save_error(fs_storage: TestableFSKeyValueStorage):
     with db:
         db_errors = db.get(error_event.task_id)
     assert db_errors is not None
-    db_errors = [ErrorEvent.parse_obj(err) for err in db_errors]
+    db_errors = [ErrorEvent.model_validate(err) for err in db_errors]
     assert db_errors == [error_event]
 
 
@@ -160,7 +159,7 @@ async def test_save_error(fs_storage: TestableFSKeyValueStorage):
 )
 async def test_get_task(
     fs_storage: TestableFSKeyValueStorage,
-    populate_tasks: List[Task],  # pylint: disable=unused-argument
+    populate_tasks: list[Task],  # pylint: disable=unused-argument
     task_id: str,
     expected_task: Task,
 ):
@@ -181,11 +180,11 @@ async def test_get_task(
 )
 async def test_get_tasks(
     fs_storage: TestableFSKeyValueStorage,
-    populate_tasks: List[Task],  # pylint: disable=unused-argument
-    group: Optional[str],
-    task_name: Optional[str],
-    state: Optional[Union[List[TaskState], TaskState]],
-    expected_tasks: List[Task],
+    populate_tasks: list[Task],  # pylint: disable=unused-argument
+    group: str | None,
+    task_name: str | None,
+    state: list[TaskState] | TaskState | None,
+    expected_tasks: list[Task],
 ):
     # Given
     storage = fs_storage
@@ -205,7 +204,7 @@ async def test_get_result(fs_storage: TestableFSKeyValueStorage):
         created_at=datetime.now(),
     )
     with db:
-        db["task-0"] = res.dict()
+        db["task-0"] = res.model_dump()
         db.commit()
     # When
     result = await storage.get_task_result(task_id="task-0")
@@ -230,7 +229,7 @@ async def test_get_error(fs_storage: TestableFSKeyValueStorage):
         created_at=datetime.now(),
     )
     with db:
-        db["task-0"] = [err.dict()]
+        db["task-0"] = [err.model_dump()]
         db.commit()
     # When
     db_errors = await store.get_task_errors(task_id="task-0")

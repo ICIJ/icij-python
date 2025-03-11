@@ -3,33 +3,35 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+
 from collections.abc import Coroutine
 from datetime import datetime
-from distutils.version import StrictVersion
 from enum import Enum, unique
 from inspect import signature
-from typing import Any, Callable, List, Optional, Sequence, Union
+from typing import Any, Callable, Sequence, Annotated
 
 import neo4j
-from neo4j.exceptions import ConstraintError
-from pydantic import Field
+from packaging.version import Version
 
-from icij_common.neo4j.constants import (
+from neo4j.exceptions import ConstraintError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+
+from icij_common.pydantic_utils import merge_configs, no_enum_config
+from icij_common.neo4j_.constants import (
     MIGRATION_COMPLETED,
+    MIGRATION_DB,
     MIGRATION_LABEL,
     MIGRATION_NODE,
-    MIGRATION_DB,
     MIGRATION_STARTED,
     MIGRATION_STATUS,
     MIGRATION_VERSION,
 )
-from icij_common.pydantic_utils import NoEnumModel
 from .db import (
     Database,
-    create_db,
     create_database_tx,
-    db_specific_session,
+    create_db,
     databases_tx,
+    db_specific_session,
     registry_db_session,
 )
 
@@ -37,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 TransactionFn = Callable[[neo4j.AsyncTransaction], Coroutine]
 ExplicitTransactionFn = Callable[[neo4j.Session], Coroutine]
-MigrationFn = Union[TransactionFn, ExplicitTransactionFn]
+MigrationFn = TransactionFn | ExplicitTransactionFn
 
 _MIGRATION_TIMEOUT_MSG = """Migration timeout expired !
 Please check that a migration is indeed in progress. If the application is in a \
@@ -54,21 +56,24 @@ class MigrationStatus(str, Enum):
     DONE = "DONE"
 
 
-class MigrationVersion(StrictVersion):
-    @classmethod
-    def __get_validators__(cls):
-        def validator(v: Any) -> MigrationVersion:
-            if isinstance(v, (str, MigrationVersion)):
-                return MigrationVersion(v)
-            raise ValueError(
-                f"Must be a {MigrationVersion.__name__} or a {str.__name__}, "
-                f"found {type(v)}"
-            )
-
-        yield validator
+def str_as_version(v: Any) -> MigrationVersion:
+    if isinstance(v, (str, MigrationVersion)):
+        return MigrationVersion(v)
+    raise ValueError(
+        f"Must be a {MigrationVersion.__name__} or a {str.__name__}, "
+        f"found {type(v)}"
+    )
 
 
-class _BaseMigration(NoEnumModel):
+MigrationVersion = Annotated[Version, BeforeValidator(str_as_version)]
+
+
+class _BaseMigration(BaseModel):
+    model_config = merge_configs(
+        ConfigDict(arbitrary_types_allowed=True, populate_by_name=True),
+        no_enum_config(),
+    )
+
     version: MigrationVersion
     label: str
     status: MigrationStatus = MigrationStatus.IN_PROGRESS
@@ -83,11 +88,11 @@ class Neo4jMigration(_BaseMigration):
     # (_Migration.version, _Migration.project)
     db: str = Field(alias="project")
     started: datetime
-    completed: Optional[datetime] = None
+    completed: datetime | None = None
     status: MigrationStatus = MigrationStatus.IN_PROGRESS
 
     @classmethod
-    def from_neo4j(cls, record: neo4j.Record, key="migration") -> Neo4jMigration:
+    def from_neo4j(cls, record: neo4j.Record, key="migration") -> Self:
         migration = dict(record.value(key))
         if "started" in migration:
             migration["started"] = migration["started"].to_native()
@@ -191,7 +196,7 @@ RETURN m as migration"""
     return migration
 
 
-async def db_migrations_tx(tx: neo4j.AsyncTransaction, db: str) -> List[Neo4jMigration]:
+async def db_migrations_tx(tx: neo4j.AsyncTransaction, db: str) -> list[Neo4jMigration]:
     query = f"""MATCH (m:{MIGRATION_NODE} {{ {MIGRATION_DB}: $db }})
 RETURN m as migration
 """
@@ -207,7 +212,7 @@ DETACH DELETE m"""
         await sess.run(query)
 
 
-async def retrieve_dbs(neo4j_driver: neo4j.AsyncDriver) -> List[Database]:
+async def retrieve_dbs(neo4j_driver: neo4j.AsyncDriver) -> list[Database]:
     async with registry_db_session(neo4j_driver) as sess:
         dbs = await sess.execute_read(databases_tx)
     return dbs

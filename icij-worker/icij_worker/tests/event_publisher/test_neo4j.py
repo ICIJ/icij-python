@@ -1,7 +1,6 @@
 # pylint: disable=redefined-outer-name
 import json
 from datetime import datetime
-from typing import List
 
 import neo4j
 import pytest
@@ -59,7 +58,7 @@ def publisher(neo4j_async_app_driver: neo4j.AsyncDriver) -> Neo4jEventPublisher:
     ],
 )
 async def test_worker_publish_event(
-    populate_tasks: List[Task], publisher: Neo4jEventPublisher, event: ManagerEvent
+    populate_tasks: list[Task], publisher: Neo4jEventPublisher, event: ManagerEvent
 ):
     # Given
     driver = publisher.driver
@@ -76,7 +75,7 @@ async def test_worker_publish_event(
     db_events, _, _ = await driver.execute_query(query)
     assert len(db_events) == 1
     json_event = db_events[0]["event"]["event"]
-    db_event = Message.parse_obj(json.loads(json_event))
+    db_event = Message.model_validate(json.loads(json_event))
     assert db_event == event
 
 

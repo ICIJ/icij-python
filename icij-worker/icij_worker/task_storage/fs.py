@@ -5,12 +5,12 @@ import logging
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, List, Optional, Type, Union
 
 import ujson
+from pydantic import BaseModel
 from sqlitedict import SqliteDict
 
-from icij_common.pydantic_utils import ICIJModel
+from icij_common.pydantic_utils import icij_config
 from icij_worker import Task, TaskState
 from icij_worker.exceptions import UnknownTask
 from icij_worker.task_storage import TaskStorageConfig
@@ -19,7 +19,9 @@ from icij_worker.task_storage.key_value import DBItem, KeyValueStorage
 logger = logging.getLogger(__name__)
 
 
-class FSKeyValueStorageConfig(ICIJModel, TaskStorageConfig):
+class FSKeyValueStorageConfig(BaseModel, TaskStorageConfig):
+    model_config = icij_config()
+
     db_path: Path
 
     def to_storage(self) -> FSKeyValueStorage:
@@ -83,18 +85,18 @@ class FSKeyValueStorage(KeyValueStorage):
         db[key] = values
         db.commit()
 
-    def _key(self, task_id: str, obj_cls: Type) -> str:
+    def _key(self, task_id: str, obj_cls: type) -> str:
         # Since each object type is saved in a different DB, we index by task ID
         return task_id
 
     async def get_tasks(
         self,
-        group: Optional[str],
+        group: str | None,
         *,
-        task_name: Optional[str] = None,
-        state: Optional[Union[List[TaskState], TaskState]] = None,
+        task_name: str | None = None,
+        state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> List[Task]:
+    ) -> list[Task]:
         states = set()
         if state is not None:
             if isinstance(state, TaskState):
@@ -110,10 +112,10 @@ class FSKeyValueStorage(KeyValueStorage):
         tasks = list(tasks)
         for t in tasks:
             t.pop("group", None)
-        task = [Task.parse_obj(t) for t in tasks]
+        task = [Task.model_validate(t) for t in tasks]
         return task
 
-    def _make_db(self, filename: str, *, name: str) -> SqliteDict:
+    def _make_db(self, filename: str, *, name: str) -> Sqlitedict:
         return SqliteDict(
             filename,
             tablename=name,
@@ -122,7 +124,7 @@ class FSKeyValueStorage(KeyValueStorage):
             journal_mode="DEFAULT",
         )
 
-    def _make_group_dbs(self) -> Dict[str, SqliteDict]:
+    def _make_group_dbs(self) -> dict[str, SqliteDict]:
         return {
             self._tasks_db_name: self._make_db(self._db_path, name=self._tasks_db_name),
             self._results_db_name: self._make_db(
@@ -137,7 +139,7 @@ class FSKeyValueStorage(KeyValueStorage):
         try:
             for db in self._dbs.values():
                 len(db)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("fs storage health failed: %s", e)
             return False
         return True
