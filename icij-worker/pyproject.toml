@@ -48,8 +48,9 @@ neo4j = { version = "^5.0.0", optional = true }
 psycopg = { extras = ["binary", "pool"], version = "^3.2.1", optional = true }
 
 [tool.poetry.extras]
-amqp = ["aio-pika", "aiohttp", "psycopg", "sqlitedict", "ujson"]
+amqp = ["aio-pika", "aiohttp", "sqlitedict", "ujson"]
 neo4j = ["neo4j"]
+postgres = ["psycopg"]
 
 [tool.poetry.group.fs.dependencies]
 sqlitedict = "^2.1.0"
