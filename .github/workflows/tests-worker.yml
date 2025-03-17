@@ -31,7 +31,7 @@ jobs:
           # TODO: use a version matrix here
           python-version: "3.10"
           cache: poetry
-      - run: cd icij-worker && poetry install -v --with dev --all-extras --sync
+      - run: cd icij-worker && poetry sync -v --with dev --all-extras
       - name: Run tests
         run: |
           cd icij-worker

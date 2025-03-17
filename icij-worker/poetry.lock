@@ -1446,10 +1446,11 @@ multidict = ">=4.0"
 propcache = ">=0.2.0"
 
 [extras]
-amqp = ["aio-pika", "aiohttp", "psycopg", "sqlitedict", "ujson"]
+amqp = ["aio-pika", "aiohttp", "sqlitedict", "ujson"]
 neo4j = ["neo4j"]
+postgres = ["psycopg"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "8b5a24fb9f3fa56770e9c957250d5b4539d9e59752ec5398fcb575e2054e4b4e"
+content-hash = "b5baa4b00448c72ce452d5f0b23c75afcad84a2789e4537416c5bc80dc3b6eb8"

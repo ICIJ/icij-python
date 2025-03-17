@@ -28,7 +28,7 @@ jobs:
           python-version: 3.9
           cache: poetry
       - name: Install Python project
-        run: cd icij-common && poetry install -v --with dev --all-extras --sync
+        run: cd icij-common && poetry sync -v --with dev --all-extras
       - name: Run tests
         run: |
           cd icij-common
