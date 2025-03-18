@@ -33,7 +33,7 @@ icij-worker = "icij_worker.__main__:cli_app"
 [tool.poetry.dependencies]
 python = "^3.10"
 icij_common = "^0.6.0"
-typer = { extras = ["all"], version = ">=0.12.5,<0.14" }
+typer = { version = ">=0.12.5,<0.14" }
 typing-extensions = "^4.12.2"
 
 # amqp
