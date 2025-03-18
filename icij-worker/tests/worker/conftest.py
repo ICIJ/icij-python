@@ -10,7 +10,7 @@ from icij_worker import AsyncApp, RoutingStrategy
 from icij_worker.utils.tests import MockWorker  # pylint: disable=unused-import
 
 
-def make_app(routing_strategy: Optional[RoutingStrategy] = None):
+def make_app(routing_strategy: RoutingStrategy | None = None):
     app = AsyncApp(name="test-app", dependencies=[], routing_strategy=routing_strategy)
 
     @app.task

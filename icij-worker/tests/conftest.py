@@ -18,7 +18,6 @@ import pytest
 from aio_pika.abc import AbstractRobustChannel
 from aiohttp import BasicAuth, ClientResponseError, ClientTimeout
 
-import icij_worker
 from icij_common.logging_utils import (
     DATE_FMT,
     STREAM_HANDLER_FMT,
@@ -37,6 +36,10 @@ from icij_common.neo4j_.test_utils import (  # pylint: disable=unused-import
 
 # noinspection PyUnresolvedReferences
 from icij_common.test_utils import reset_env  # pylint: disable=unused-import
+
+# noinspection PyUnresolvedReferences
+import icij_worker
+
 from icij_worker import AsyncApp, Neo4JTaskManager, Task
 from icij_worker.app import AsyncAppConfig
 from icij_worker.event_publisher.amqp import AMQPPublisher
@@ -69,6 +72,7 @@ from icij_worker.utils.tests import (  # pylint: disable=unused-import
     test_async_app,
     test_async_app_late,
 )
+
 
 RABBITMQ_MANAGEMENT_PORT = 15673
 RABBITMQ_TEST_PORT = 5673
@@ -423,7 +427,6 @@ def shutdown_nowait(executor: ThreadPoolExecutor):
 
 
 class TestableAMQPPublisher(AMQPPublisher):
-
     def __init__(
         self,
         logger: logging.Logger | None = None,

@@ -37,7 +37,10 @@ from icij_worker.objects import (
     TaskUpdate,
 )
 from icij_worker.routing_strategy import RoutingStrategy
-from icij_worker.tests.conftest import (
+from icij_worker.utils.amqp import AMQPManagementClient, AMQPMixin, RobustConnection
+from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
+from icij_worker.worker.worker import WE
+from ..conftest import (
     DEFAULT_VHOST,
     RABBITMQ_MANAGEMENT_PORT,
     RABBITMQ_TEST_HOST,
@@ -48,9 +51,6 @@ from icij_worker.tests.conftest import (
     get_queue,
     get_queue_size,
 )
-from icij_worker.utils.amqp import AMQPManagementClient, AMQPMixin, RobustConnection
-from icij_worker.worker.amqp import AMQPWorker, AMQPWorkerConfig
-from icij_worker.worker.worker import WE
 
 
 @WorkerConfig.register("test-amqp")
@@ -60,7 +60,6 @@ class TestableAMQPWorkerConfig(AMQPWorkerConfig):
 
 @Worker.register("test-amqp")
 class TestableAMQPWorker(AMQPWorker):
-
     def __init__(
         self,
         app: AsyncApp,
