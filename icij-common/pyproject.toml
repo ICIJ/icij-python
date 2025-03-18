@@ -12,6 +12,10 @@ dependencies = [
     "pydantic>=2.0"
 ]
 
+[project.urls]
+Repository = "https://github.com/ICIJ/icij-python"
+Issues = "https://github.com/ICIJ/icij-python/issues"
+
 [project.optional-dependencies]
 elasticsearch = [
     "elasticsearch[async]~=7.17.9",

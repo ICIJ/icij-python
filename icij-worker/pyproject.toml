@@ -14,6 +14,10 @@ dependencies = [
     "typing-extensions~=4.12.2",
 ]
 
+[project.urls]
+Repository = "https://github.com/ICIJ/icij-python"
+Issues = "https://github.com/ICIJ/icij-python/issues"
+
 [project.scripts]
 icij-worker = "icij_worker.__main__:cli_app"
 
