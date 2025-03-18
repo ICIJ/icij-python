@@ -4,7 +4,7 @@ import traceback
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.utils import is_body_allowed_for_status_code
-from pydantic.error_wrappers import display_errors
+from pydantic_core import ErrorDetails
 from starlette import status
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
@@ -20,6 +20,25 @@ def json_error(*, title, detail, **kwargs) -> dict:
     error = {"title": title, "detail": detail}
     error.update(kwargs)
     return error
+
+
+def display_errors(errors: list[ErrorDetails]) -> str:
+    return "\n".join(
+        f'{_display_error_loc(e)}\n  {e["msg"]} ({_display_error_type_and_ctx(e)})'
+        for e in errors
+    )
+
+
+def _display_error_loc(error: ErrorDetails) -> str:
+    return " -> ".join(str(e) for e in error["loc"])
+
+
+def _display_error_type_and_ctx(error: ErrorDetails) -> str:
+    t = "type=" + error["type"]
+    ctx = error.get("ctx")
+    if ctx:
+        return t + "".join(f"; {k}={v}" for k, v in ctx.items())
+    return t
 
 
 async def request_validation_error_handler(
