@@ -14,11 +14,8 @@ from icij_worker.exceptions import TaskAlreadyQueued, TaskQueueIsFull
 from icij_worker.objects import (
     ProgressEvent,
 )
-from icij_worker.tests.conftest import (
-    TestableAMQPTaskManager,
-    TestableFSKeyValueStorage,
-)
 from icij_worker.utils.amqp import AMQPManagementClient
+from ..conftest import TestableAMQPTaskManager, TestableFSKeyValueStorage
 
 
 async def test_task_manager_enqueue(

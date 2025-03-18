@@ -19,23 +19,24 @@ jobs:
           jupyter: true
           src: "icij-worker"
           version: "~= 24.2.0"
-      - name: Install poetry
-        run: pipx install poetry
       - name: Installing DBmate
         run: |
           curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.19.0/dbmate-linux-amd64
           chmod +x /usr/local/bin/dbmate
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.6.7"
+          python-version: "3.10"
+          enable-cache: true
       - name: Setup Python project
         uses: actions/setup-python@v5
         with:
-          # TODO: use a version matrix here
           python-version: "3.10"
-          cache: poetry
-      - run: cd icij-worker && poetry sync -v --with dev --all-extras
       - name: Run tests
         run: |
           cd icij-worker
-          poetry run python -m pytest -vvv --cache-clear --show-capture=all -r A .
+          uv run --dev --all-extras --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
     services:
       neo4j:
         image: neo4j:4.4.17

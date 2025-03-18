@@ -10,7 +10,7 @@ from sqlitedict import SqliteDict
 from icij_common.pydantic_utils import safe_copy
 from icij_worker import ResultEvent, Task, TaskError
 from icij_worker.objects import ErrorEvent, StacktraceItem, TaskResult, TaskState
-from icij_worker.tests.conftest import TestableFSKeyValueStorage
+from ..conftest import TestableFSKeyValueStorage
 
 
 @functools.lru_cache

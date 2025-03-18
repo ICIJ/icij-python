@@ -30,9 +30,10 @@ from icij_worker.objects import (
     ShutdownEvent,
     Task,
 )
-from icij_worker.tests.conftest import count_locks
-from icij_worker.tests.worker.conftest import make_app
 from icij_worker.utils import neo4j_
+
+from ..worker.conftest import make_app
+from ..conftest import count_locks
 
 
 @pytest.fixture(

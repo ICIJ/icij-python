@@ -8,8 +8,8 @@ from icij_worker import ManagerEvent, Task
 from icij_worker.event_publisher.amqp import AMQPPublisher
 from icij_worker.objects import ProgressEvent
 from icij_worker.routing_strategy import Exchange, Routing
-from icij_worker.tests.conftest import TestableAMQPPublisher
 from icij_worker.utils.amqp import RobustConnection
+from ..conftest import TestableAMQPPublisher
 
 _EVENT_ROUTING = Routing(
     exchange=Exchange(name="event-ex", type=ExchangeType.FANOUT),

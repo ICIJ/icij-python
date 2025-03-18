@@ -4,7 +4,6 @@ from copy import deepcopy
 from typing import Any, AsyncContextManager
 
 from aiohttp import BasicAuth, ClientResponse, ClientResponseError, ClientSession
-from aiohttp.client import _RequestOptions
 from aiohttp.typedefs import StrOrURL
 from typing_extensions import Unpack
 
@@ -52,7 +51,7 @@ class AiohttpClient(AsyncContextManager):
             yield res
 
     @asynccontextmanager
-    async def _delete(self, url: StrOrURL, **kwargs: Unpack[_RequestOptions]):
+    async def _delete(self, url: StrOrURL, **kwargs: Unpack["_RequestOptions"]):
         headers = deepcopy(self._headers)
         headers.update(kwargs.pop("headers", dict()))
         async with self._session.delete(url, headers=headers, **kwargs) as res:

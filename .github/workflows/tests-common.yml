@@ -19,20 +19,20 @@ jobs:
           jupyter: true
           src: "icij-common"
           version: "~= 24.2.0"
-      - name: Install poetry
-        run: pipx install poetry
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.6.7"
+          python-version: "3.10"
+          enable-cache: true
       - name: Setup Python project
         uses: actions/setup-python@v5
         with:
-          # TODO: use a version matrix here
-          python-version: 3.9
-          cache: poetry
-      - name: Install Python project
-        run: cd icij-common && poetry sync -v --with dev --all-extras
+          python-version: "3.10"
       - name: Run tests
         run: |
           cd icij-common
-          poetry run python -m pytest -vvv --cache-clear --show-capture=all -r A .
+          uv run --dev --all-extras --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
     services:
       neo4j:
         image: neo4j:4.4.17

@@ -1,48 +1,53 @@
-[tool.poetry]
+[project]
 name = "icij-common"
 version = "0.6.0"
 description = "Common utils for ICIJ libs"
 authors = [
-    "Clément Doumouro <cdoumouro@icij.org>",
-    "ICIJ <engineering@icij.org>",
+    { name = "Clément Doumouro", email = "cdoumouro@icij.org" },
+    { name = "ICIJ", email = "engineering@icij.org" },
 ]
 readme = "README.md"
-packages = [
-    { include = "icij_common" }
+requires-python = "~=3.10"
+dependencies = [
+    "pydantic>=2.0"
 ]
-exclude = ["icij_common/tests"]
 
-[tool.black]
-line-length = 88
-target-version = ["py39"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-
-[tool.poetry.dependencies]
-python = "^3.10"
-pydantic = "^2"
-
-# elasticsearch
-elasticsearch = { version = "^7.17.9", extras = ["async"], optional = true }
-tenacity = { version = "^9.0.0", optional = true }
-# fastapi
-fastapi = { version = "^0.111", optional = true }
-# neo4j
-neo4j = { version = "^5.0.0", optional = true }
-pydantic-settings = "^2.8.1"
+[project.optional-dependencies]
+elasticsearch = [
+    "elasticsearch[async]~=7.17.9",
+    "tenacity~=9.0"
+]
+fastapi = [
+    "fastapi~=0.111"
+]
+neo4j = [
+    "neo4j~=5.0",
+    "pydantic-settings~=2.8"
+]
 
 [tool.poetry.extras]
 fastapi = ["fastapi"]
 neo4j = ["neo4j"]
 elasticsearch = ["elasticsearch", "tenacity"]
 
-[tool.poetry.group.dev.dependencies]
-neo4j = "^5.0.0"
-pylint = "^3.1.0"
-pytest = "^7.2.1"
-pytest-asyncio = "^0.20.3"
+[dependency-groups]
+dev = [
+    "black~=24.4",
+    "pylint~=3.1",
+    "pytest~=8.2",
+    "pytest-asyncio~=0.21",
+]
+
+[tool.setuptools]
+packages = ["icij_common"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

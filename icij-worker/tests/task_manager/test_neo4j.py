@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 from neo4j.time import DateTime
 
+
 from icij_common.pydantic_utils import safe_copy
 from icij_common.test_utils import async_true_after
 from icij_worker import (
@@ -30,7 +31,8 @@ from icij_worker.objects import (
     StacktraceItem,
     TaskResult,
 )
-from icij_worker.tests.conftest import TestableNeo4JTaskManager
+
+from ..conftest import TestableNeo4JTaskManager
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -170,52 +172,52 @@ RETURN task, result"""
             },
             False,
         ),
-        # # Update with group
-        # (
-        #     "hello",
-        #     Task(
-        #         id="task-1",
-        #         name="grouped_hello_world",
-        #         args={"greeted": "1"},
-        #         state=TaskState.RUNNING,
-        #         progress=0.8,
-        #         created_at=_NOW,
-        #         retries_left=0,
-        #     ),
-        #     {
-        #         "id": "task-1",
-        #         "args": '{"greeted": "1"}',
-        #         "progress": 0.80,
-        #         "retriesLeft": 0,
-        #         "state": "RUNNING",
-        #         "name": "grouped_hello_world",
-        #         "group": "hello",
-        #         "createdAt": datetime.now(),
-        #     },
-        #     False,
-        # ),
-        # # Should not update non updatable fields
-        # (
-        #     None,
-        #     Task(
-        #         id="task-1",
-        #         name="updated_task",
-        #         args={"updated": "input"},
-        #         state=TaskState.RUNNING,
-        #         created_at=_NOW,
-        #         retries_left=1,
-        #     ),
-        #     {
-        #         "id": "task-1",
-        #         "args": '{"greeted": "1"}',
-        #         "progress": 0.66,
-        #         "retriesLeft": 1,
-        #         "state": "RUNNING",
-        #         "name": "hello_world",
-        #         "createdAt": datetime.now(),
-        #     },
-        #     False,
-        # ),
+        # Update with group
+        (
+            "hello",
+            Task(
+                id="task-1",
+                name="grouped_hello_world",
+                args={"greeted": "1"},
+                state=TaskState.RUNNING,
+                progress=0.8,
+                created_at=_NOW,
+                retries_left=0,
+            ),
+            {
+                "id": "task-1",
+                "args": '{"greeted": "1"}',
+                "progress": 0.80,
+                "retriesLeft": 0,
+                "state": "RUNNING",
+                "name": "grouped_hello_world",
+                "group": "hello",
+                "createdAt": datetime.now(),
+            },
+            False,
+        ),
+        # Should not update non updatable fields
+        (
+            None,
+            Task(
+                id="task-1",
+                name="updated_task",
+                args={"updated": "input"},
+                state=TaskState.RUNNING,
+                created_at=_NOW,
+                retries_left=1,
+            ),
+            {
+                "id": "task-1",
+                "args": '{"greeted": "1"}',
+                "progress": 0.66,
+                "retriesLeft": 1,
+                "state": "RUNNING",
+                "name": "hello_world",
+                "createdAt": datetime.now(),
+            },
+            False,
+        ),
     ],
     indirect=["populate_tasks"],
 )
