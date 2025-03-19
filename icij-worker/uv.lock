@@ -259,20 +259,20 @@ wheels = [
 
 [[package]]
 name = "icij-common"
-version = "0.6.0"
+version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
-    { name = "pydantic-settings" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/02/0e/1ae446db9a270d42b43fa9d7ccb57e3a4269a21b584a8cad99acf59fe0ee/icij_common-0.6.0.tar.gz", hash = "sha256:da105a3d59908c0d1af909bd5e3eafb237f3406e680781f5ef410e49e068ca7a", size = 14734 }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/d9/ac814d6a216ddb7daf322a2d3c91ec565126b3831f8c56f09865694da3d6/icij_common-0.6.1.tar.gz", hash = "sha256:5bb65830168fa140a5ba07cf4c22f46909fbaef22868867574ae172c08562408", size = 14637 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/e0/a7f662fa46fb2476dd5e65c73083b09841430500df1d1996eda6f8fcf90d/icij_common-0.6.0-py3-none-any.whl", hash = "sha256:9a38cdfee904c4454d310768eb96d005bf7ec11da20f55345443e7eb0207c4d9", size = 18781 },
+    { url = "https://files.pythonhosted.org/packages/77/51/2ef312f14a1aa9fe5a4706dc093741a590b1dbb21f61abcfaefcb12fa13e/icij_common-0.6.1-py3-none-any.whl", hash = "sha256:d8a50bfc772ac992e976956423a75b7f7b504bdcd0943678bda8e9cfe7d00bf0", size = 18935 },
 ]
 
 [package.optional-dependencies]
 neo4j = [
     { name = "neo4j" },
+    { name = "pydantic-settings" },
 ]
 
 [[package]]
@@ -299,6 +299,8 @@ neo4j = [
 ]
 postgres = [
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "sqlitedict" },
+    { name = "ujson" },
 ]
 
 [package.dev-dependencies]
@@ -318,9 +320,11 @@ requires-dist = [
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = "~=5.0" },
     { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'postgres'", specifier = "~=3.2" },
     { name = "sqlitedict", marker = "extra == 'fs'", specifier = "~=2.1" },
+    { name = "sqlitedict", marker = "extra == 'postgres'", specifier = "~=2.1" },
     { name = "typer", specifier = ">=0.12.5,<0.14" },
     { name = "typing-extensions", specifier = "~=4.12.2" },
     { name = "ujson", marker = "extra == 'fs'", specifier = "~=5.10" },
+    { name = "ujson", marker = "extra == 'postgres'", specifier = "~=5.10" },
 ]
 provides-extras = ["amqp", "fs", "neo4j", "postgres"]
 
