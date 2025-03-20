@@ -20,6 +20,7 @@ Issues = "https://github.com/ICIJ/icij-python/issues"
 
 [project.scripts]
 icij-worker = "icij_worker.__main__:cli_app"
+icij-http-server = "icij_worker.http_.run:main"
 
 [tool.hatch.build.targets.sdist]
 include = ["icij_worker"]
@@ -43,6 +44,12 @@ postgres = [
     "psycopg[binary,pool]~=3.2",
     "sqlitedict~=2.1",
     "ujson~=5.10",
+]
+http = [
+    "aiohttp~=3.9",
+    "alive-progress>=3.2.0",
+    "fastapi[standard]~=0.115",
+    "uvicorn>=0.34.0",
 ]
 
 [dependency-groups]

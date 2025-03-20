@@ -6,7 +6,18 @@ on:
       - icij-common-*
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GH release
+        run: gh release create "$tag" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+
   publish-icij-common:
+    needs: [create-release]
     runs-on: ubuntu-latest
     environment:
       name: pypi-icij-common

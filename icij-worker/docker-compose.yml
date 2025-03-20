@@ -1,0 +1,66 @@
+version: '3.7'
+
+x-tm-amqp-config-variables: &tm-amqp-config
+  TASK_MANAGER__RABBITMQ_HOST: rabbitmq
+
+x-postgres-storage-config: &tm-postgres-storage-config
+  TASK_MANAGER__BACKEND: amqp
+  # Change this to a FSKeyValueStorageConfig if you don't want to use postgres
+  TASK_MANAGER__STORAGE__HOST: postgres
+  TASK_MANAGER__STORAGE__PORT: 5432
+  TASK_MANAGER__STORAGE__PASSWORD: changeme
+
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.12.0-management
+    container_name: http-service-rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q status
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  postgres:
+    image: postgres
+    container_name: http-service-postgres
+    environment:
+      POSTGRES_PASSWORD: changeme
+    healthcheck:
+      test: pg_isready
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "5435:5432"
+
+  http-service:
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      target: http-service
+      args:
+        dbmate_arch: ${DBMATE_ARCH}
+    environment:
+      <<: [ *tm-amqp-config, *tm-postgres-storage-config ]
+      PORT: 8000
+      # Uncomment this and set it to your app path
+      #TASK_MANAGER__APP_PATH: path.to.app_module.app_variable
+
+    healthcheck:
+      test: curl -f http://localhost:8000/health
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "8000:8000"
