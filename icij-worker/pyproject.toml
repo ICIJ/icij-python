@@ -25,9 +25,6 @@ icij-http-server = "icij_worker.http_.run:main"
 [tool.hatch.build.targets.sdist]
 include = ["icij_worker"]
 
-[tool.setuptools.packages.find]
-where = ["icij_worker/task_storage/postgres/db/*.sql", "icij_worker/task_storage/postgres/db/migrations/*.sql"]
-
 [project.optional-dependencies]
 amqp = [
     "aio-pika~=9.4",
