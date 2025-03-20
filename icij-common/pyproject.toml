@@ -1,6 +1,6 @@
 [project]
 name = "icij-common"
-version = "0.6.2"
+version = "0.7.0"
 description = "Common utils for ICIJ libs"
 authors = [
     { name = "Clément Doumouro", email = "cdoumouro@icij.org" },
