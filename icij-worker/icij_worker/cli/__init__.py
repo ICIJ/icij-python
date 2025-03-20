@@ -6,10 +6,13 @@ import typer
 
 import icij_worker
 from icij_common.logging_utils import setup_loggers
+from icij_worker.cli.tasks import task_app
+from icij_worker.cli.utils import AsyncTyper
 from icij_worker.cli.workers import worker_app
 
-cli_app = typer.Typer(context_settings={"help_option_names": ["-h", "--help"]})
+cli_app = AsyncTyper(context_settings={"help_option_names": ["-h", "--help"]})
 cli_app.add_typer(worker_app)
+cli_app.add_typer(task_app)
 
 
 def version_callback(value: bool):
