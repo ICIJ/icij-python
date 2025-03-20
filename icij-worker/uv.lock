@@ -259,14 +259,10 @@ wheels = [
 
 [[package]]
 name = "icij-common"
-version = "0.6.1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.7.0"
+source = { editable = "../icij-common" }
 dependencies = [
     { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/d9/ac814d6a216ddb7daf322a2d3c91ec565126b3831f8c56f09865694da3d6/icij_common-0.6.1.tar.gz", hash = "sha256:5bb65830168fa140a5ba07cf4c22f46909fbaef22868867574ae172c08562408", size = 14637 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/51/2ef312f14a1aa9fe5a4706dc093741a590b1dbb21f61abcfaefcb12fa13e/icij_common-0.6.1-py3-none-any.whl", hash = "sha256:d8a50bfc772ac992e976956423a75b7f7b504bdcd0943678bda8e9cfe7d00bf0", size = 18935 },
 ]
 
 [package.optional-dependencies]
@@ -275,9 +271,28 @@ neo4j = [
     { name = "pydantic-settings" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "elasticsearch", extras = ["async"], marker = "extra == 'elasticsearch'", specifier = "~=7.17.9" },
+    { name = "fastapi", marker = "extra == 'fastapi'", specifier = "~=0.111" },
+    { name = "neo4j", marker = "extra == 'neo4j'", specifier = "~=5.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-settings", marker = "extra == 'neo4j'", specifier = "~=2.8" },
+    { name = "tenacity", marker = "extra == 'elasticsearch'", specifier = "~=9.0" },
+]
+provides-extras = ["elasticsearch", "fastapi", "neo4j"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = "~=24.4" },
+    { name = "pylint", specifier = "~=3.1" },
+    { name = "pytest", specifier = "~=8.2" },
+    { name = "pytest-asyncio", specifier = "~=0.21" },
+]
+
 [[package]]
 name = "icij-worker"
-version = "0.16.1"
+version = "0.17.0"
 source = { editable = "." }
 dependencies = [
     { name = "icij-common" },
@@ -316,7 +331,7 @@ dev = [
 requires-dist = [
     { name = "aio-pika", marker = "extra == 'amqp'", specifier = "~=9.4" },
     { name = "aiohttp", marker = "extra == 'amqp'", specifier = "~=3.9" },
-    { name = "icij-common", specifier = "~=0.6.0" },
+    { name = "icij-common", editable = "../icij-common" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = "~=5.0" },
     { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'postgres'", specifier = "~=3.2" },
     { name = "sqlitedict", marker = "extra == 'fs'", specifier = "~=2.1" },
@@ -330,7 +345,7 @@ provides-extras = ["amqp", "fs", "neo4j", "postgres"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "icij-common", extras = ["neo4j"] },
+    { name = "icij-common", extras = ["neo4j"], editable = "../icij-common" },
     { name = "neo4j", specifier = "~=5.0" },
     { name = "pika", specifier = "~=1.3" },
     { name = "pytest", specifier = "~=7.2" },
