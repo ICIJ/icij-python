@@ -78,7 +78,7 @@ jobs:
       - name: Build and push the service image
         uses: docker/build-push-action@v6
         with:
-          context: icij-worker
+          context: icij-worker/Dockerfile
           target: http-service
           platforms: linux/amd64,linux/arm64
           push: true
