@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, ClassVar
+from typing import Callable
 
 import neo4j
 from neo4j.exceptions import ConstraintError, ResultNotSingleError
@@ -36,7 +36,7 @@ from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 @WorkerConfig.register()
 class Neo4jWorkerConfig(WorkerConfig):
-    type: ClassVar[str] = Field(frozen=True, default=AsyncBackend.neo4j.value)
+    type: AsyncBackend = Field(frozen=True, default=AsyncBackend.neo4j)
 
     cancelled_tasks_refresh_interval_s: float = 0.1
     poll_interval_s: float = 0.1
@@ -75,7 +75,6 @@ def _no_filter(group: str) -> bool:
 
 @Worker.register(AsyncBackend.neo4j)
 class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
-
     def __init__(
         self,
         app: AsyncApp,

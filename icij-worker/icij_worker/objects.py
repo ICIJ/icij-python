@@ -15,7 +15,7 @@ from icij_common.pydantic_utils import (
     icij_config,
     lowercamel_case_config,
     merge_configs,
-    no_enum_config,
+    no_enum_values_config,
     safe_copy,
 )
 from icij_common.registrable import Registrable
@@ -138,7 +138,7 @@ Neo4jDatetime = Annotated[
 
 
 class Message(Registrable):
-    model_config = merge_configs(lowercamel_case_config(), no_enum_config())
+    model_config = merge_configs(lowercamel_case_config(), no_enum_values_config())
 
 
 class TaskMessage(Message):
@@ -323,7 +323,7 @@ class Task(Message):
 
 class StacktraceItem(BaseModel):
     model_config = merge_configs(
-        icij_config(), no_enum_config(), lowercamel_case_config()
+        icij_config(), no_enum_values_config(), lowercamel_case_config()
     )
 
     name: str
@@ -573,7 +573,7 @@ class ShutdownEvent(WorkerEvent):
 
 class TaskUpdate(BaseModel, FromTask):
     model_config = merge_configs(
-        icij_config(), lowercamel_case_config(), no_enum_config()
+        icij_config(), lowercamel_case_config(), no_enum_values_config()
     )
 
     state: TaskState | None = None

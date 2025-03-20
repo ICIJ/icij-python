@@ -181,7 +181,13 @@ class Worker(
     async def consume(self) -> Task:
         self._started_task_consumption_evt.set()
         task = await self._consume()
-        self.debug('Task(id="%s") locked', task.id)
+        msg = 'Task(id="%s") locked'
+        if task.max_retries is not None:
+            msg += (
+                f", tentative ({task.max_retries - task.retries_left}"
+                f"/{task.max_retries})"
+            )
+        self.info(msg, task.id)
         async with self._current_lock:
             self._current = task
         progress = 0.0

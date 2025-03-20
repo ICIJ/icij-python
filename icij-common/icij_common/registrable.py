@@ -8,9 +8,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from copy import deepcopy
 from typing import Any, Callable, ClassVar, DefaultDict, TypeVar, cast
 
 from pydantic import (
@@ -20,15 +20,17 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import (
     SerializationInfo,
     SerializerFunctionWrapHandler,
     ValidatorFunctionWrapHandler,
 )
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
 from icij_common.import_utils import VariableNotFound, import_variable
-from icij_common.pydantic_utils import ICIJSettings, icij_config
+from icij_common.pydantic_utils import icij_config, merge_configs
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +58,14 @@ class RegistrableMixin(ABC):
         ) -> type[RegistrableMixin]:
             registered_name = name
             if registered_name is None:
-                registered_key = subclass.registry_key.default
+                registered_key = subclass.model_fields.get(
+                    subclass.registry_key.default
+                )
                 if registered_key is None:
                     raise ValueError(
                         "no name provided and the class doesn't define a registry key"
                     )
-                registered_name = getattr(subclass, registered_key).default
+                registered_name = registered_key.default
 
             if registered_name in registry:
                 if exist_ok:
@@ -156,25 +160,34 @@ class RegistrableConfig(BaseModel, RegistrableMixin):
         cls, value: Any, handler: ValidatorFunctionWrapHandler
     ) -> RegistrableConfig:
         if isinstance(value, dict):
-            copied = deepcopy(value)
-            registry_key = copied.get(cls.registry_key.default)
-            if registry_key is None:
-                return handler(copied)
-            subcls = cls.resolve_class_name(registry_key)
-            return subcls.model_validate(copied)
+            if cls in cls._registry:
+                subcls = cls.resolve_class_name(value[cls.registry_key.default])
+                value = {
+                    k: v for k, v in value.items() if k != cls.registry_key.default
+                }
+                return subcls.model_validate(value)
+            if cls.registry_key.default in value:
+                value = {
+                    k: v for k, v in value.items() if k != cls.registry_key.default
+                }
+            return handler(value)
         return handler(value)
 
 
-class RegistrableSettings(RegistrableConfig, ICIJSettings):
+class RegistrableSettings(RegistrableConfig, BaseSettings):
+    model_config = merge_configs(
+        SettingsConfigDict(
+            env_prefix="", env_nested_delimiter="__", validate_default=True
+        )
+    )
+
     @classmethod
     def from_env(cls):
-        key = cls.registry_key.default
-        prefix = cls.model_config["env_prefix"]
-        if prefix is not None:
-            key = prefix + key
-        registry_key = find_in_env(key, cls.model_config["case_sensitive"])
-        subcls = cls.resolve_class_name(registry_key)
-        return subcls()
+        registry_key = cls.registry_key.default
+        env_key = f"{cls.model_config['env_prefix']}{registry_key}"
+        _, name = find_variable_loc_in_env(env_key, cls.model_config["case_sensitive"])
+        config_cls = cls.resolve_class_name(name)
+        return config_cls()
 
 
 class FromConfig(ABC):
@@ -186,7 +199,9 @@ class FromConfig(ABC):
 class RegistrableFromConfig(RegistrableMixin, FromConfig, ABC):
     @classmethod
     def from_config(cls, config: RegistrableConfig, **extras) -> Self:
-        name = getattr(config, config.registry_key.default).default
+        name = getattr(config, config.registry_key.default)
+        if isinstance(name, FieldInfo):
+            name = name.default
         subcls = cls.resolve_class_name(name)
         return subcls._from_config(config, **extras)  # pylint: disable=protected-access
 
@@ -255,10 +270,15 @@ class Registrable(BaseModel, RegistrableMixin, ABC):
         cls, value: Any, handler: ModelWrapValidatorHandler[Self]
     ) -> Registrable:
         if isinstance(value, dict):
-            copied = deepcopy(value)
-            registry_key = copied.pop(cls.registry_key.default, None)
-            if registry_key is None:
-                return handler(copied)
-            subcls = cls.resolve_class_name(registry_key)
-            return subcls.model_validate(copied)
+            if cls in cls._registry:
+                subcls = cls.resolve_class_name(value[cls.registry_key.default])
+                value = {
+                    k: v for k, v in value.items() if k != cls.registry_key.default
+                }
+                return subcls.model_validate(value)
+            if cls.registry_key.default in value:
+                value = {
+                    k: v for k, v in value.items() if k != cls.registry_key.default
+                }
+            return handler(value)
         return handler(value)

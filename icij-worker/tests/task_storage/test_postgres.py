@@ -4,31 +4,36 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import ClassVar, Generic
+from typing import Annotated, ClassVar, Union
 
 import pytest
-from icij_common.pydantic_utils import safe_copy
-from icij_common.test_utils import TEST_DB
 from psycopg import AsyncClientCursor, AsyncConnection, sql
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from pydantic import Discriminator, Field, Tag
 from pydantic_settings import SettingsConfigDict
 
+from icij_common.pydantic_utils import make_enum_discriminator, safe_copy
+from icij_common.registrable import RegistrableSettings
+from icij_common.test_utils import TEST_DB
 from icij_worker import (
+    AMQPTaskManagerConfig,
+    AsyncBackend,
+    Neo4JTaskManagerConfig,
     PostgresConnectionInfo,
     PostgresStorage,
     PostgresStorageConfig,
     ResultEvent,
     RoutingStrategy,
     Task,
+    TaskManager,
     TaskState,
     init_postgres_database,
 )
 from icij_worker.exceptions import UnknownTask
 from icij_worker.objects import ErrorEvent, StacktraceItem, TaskError, TaskResult
 from icij_worker.task_storage.postgres.postgres import create_databases_registry_db
-from icij_worker.utils.config import SettingsWithTM, TM
 
 _TEST_DB = "test-db"
 TEST_PG_HOST = "localhost"
@@ -508,12 +513,19 @@ async def test_get_task_group(
 async def test_task_manager_with_postgres_storage_from_config(reset_env):
     # pylint: disable=unused-argument
     # Given
-    class _MySettings(SettingsWithTM, Generic[TM]):
+    discriminator = Discriminator(make_enum_discriminator("backend", AsyncBackend))
+
+    class _MySettings(RegistrableSettings):
         app_path: ClassVar[str] = "icij_worker.utils.tests.APP"
         some_other_app_setting: str
         model_config = SettingsConfigDict(
             env_prefix="MY_APP_", env_nested_delimiter="__"
         )
+
+        task_manager: Union[
+            Annotated[AMQPTaskManagerConfig, Tag(AsyncBackend.amqp)],
+            Annotated[Neo4JTaskManagerConfig, Tag(AsyncBackend.neo4j)],
+        ] = Field(discriminator=discriminator)
 
     env_vars = {
         "MY_APP_SOME_OTHER_APP_SETTING": "ANOTHER_SETTING",
@@ -526,8 +538,8 @@ async def test_task_manager_with_postgres_storage_from_config(reset_env):
     os.environ.update(env_vars)
 
     # When
-    settings = _MySettings.from_env()
-    task_manager = settings.to_task_manager()
+    settings = _MySettings()
+    task_manager = TaskManager.from_config(settings.task_manager)
     # Then
     assert isinstance(
         task_manager._storage,  # pylint: disable=protected-access

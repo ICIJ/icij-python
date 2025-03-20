@@ -7,7 +7,7 @@ from typing import ClassVar, final
 
 from pydantic import Field
 
-from icij_common.pydantic_utils import safe_copy
+from icij_common.pydantic_utils import merge_configs, no_enum_values_config, safe_copy
 from icij_common.registrable import RegistrableConfig, RegistrableFromConfig
 from icij_worker import AsyncApp, ResultEvent, Task, TaskState
 from icij_worker.app import AsyncAppConfig
@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 class TaskManagerConfig(RegistrableConfig):
+    model_config = merge_configs(no_enum_values_config())
+
     registry_key: ClassVar[str] = Field(frozen=True, default="backend")
-    backend: ClassVar[AsyncBackend]
+    backend: AsyncBackend = Field(frozen=True)
 
     app_path: str
     app_config: AsyncAppConfig = Field(default_factory=AsyncAppConfig)

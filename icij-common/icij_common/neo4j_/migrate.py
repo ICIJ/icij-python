@@ -16,7 +16,7 @@ from packaging.version import Version
 from neo4j.exceptions import ConstraintError
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from icij_common.pydantic_utils import merge_configs, no_enum_config
+from icij_common.pydantic_utils import merge_configs, no_enum_values_config
 from icij_common.neo4j_.constants import (
     MIGRATION_COMPLETED,
     MIGRATION_DB,
@@ -71,7 +71,7 @@ MigrationVersion = Annotated[Version, BeforeValidator(str_as_version)]
 class _BaseMigration(BaseModel):
     model_config = merge_configs(
         ConfigDict(arbitrary_types_allowed=True, populate_by_name=True),
-        no_enum_config(),
+        no_enum_values_config(),
     )
 
     version: MigrationVersion

@@ -1,6 +1,5 @@
 # pylint: disable=redefined-outer-name
 import os
-from typing import ClassVar
 
 import pytest
 from pydantic import Field
@@ -18,11 +17,11 @@ def env_log_level(reset_env, request):  # pylint: disable=unused-argument
 
 @WorkerConfig.register()
 class WorkerImplConfig(WorkerConfig):
-    type: ClassVar[str] = Field(frozen=True, default="worker_impl")
+    type: str = Field(frozen=True, default="worker_impl")
 
 
 @pytest.fixture()
-def mock_worker_in_env(tmp_path):  # pylint: disable=unused-argument
+def mock_worker_in_env(tmp_path, reset_env):  # pylint: disable=unused-argument
     os.environ["ICIJ_WORKER_TYPE"] = "worker_impl"
     os.environ["ICIJ_WORKER_DB_PATH"] = str(tmp_path / "mock-db.json")
 

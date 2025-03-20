@@ -7,7 +7,7 @@ from icij_common.pydantic_utils import (
     icij_config,
     lowercamel_case_config,
     merge_configs,
-    no_enum_config,
+    no_enum_values_config,
 )
 from pydantic import BaseModel
 
@@ -16,7 +16,7 @@ try:
 
     class Exchange(BaseModel):
         model_config = merge_configs(
-            icij_config(), no_enum_config(), lowercamel_case_config()
+            icij_config(), no_enum_values_config(), lowercamel_case_config()
         )
 
         name: str

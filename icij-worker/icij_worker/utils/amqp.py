@@ -30,7 +30,7 @@ from aio_pika.exceptions import ChannelPreconditionFailed
 from aiohttp import BasicAuth
 from aiormq import Connection as AiormqConnection
 from aiormq.abc import ArgumentsType, ConfirmationFrameType, URLorStr
-from icij_common.pydantic_utils import icij_config, merge_configs, no_enum_config
+from icij_common.pydantic_utils import icij_config, merge_configs, no_enum_values_config
 from mdurl import URL
 from pamqp.commands import Basic
 from pamqp.common import FieldTable
@@ -82,7 +82,7 @@ class ApplyTo(str, Enum):
 
 
 class AMQPPolicy(BaseModel):
-    model_config = merge_configs(icij_config(), no_enum_config())
+    model_config = merge_configs(icij_config(), no_enum_values_config())
 
     name: str
     pattern: str

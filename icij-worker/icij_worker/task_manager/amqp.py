@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import ClassVar, TypeVar, cast
+from typing import TypeVar, cast
 
 from aio_pika import connect_robust
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
@@ -24,7 +24,7 @@ from icij_worker.objects import (
     TaskState,
 )
 from icij_worker.routing_strategy import Routing
-from icij_worker.task_manager import TaskManager, TaskManagerConfig
+from icij_worker.task_manager import TaskManager
 from icij_worker.task_storage import TaskStorage
 from icij_worker.task_storage.fs import FSKeyValueStorageConfig
 from icij_worker.task_storage.postgres import PostgresStorageConfig
@@ -44,7 +44,7 @@ S = TypeVar("S", bound=TaskStorage)
 
 @TaskManagerConfig.register()
 class AMQPTaskManagerConfig(TaskManagerConfig, AMQPConfigMixin):
-    backend: ClassVar[AsyncBackend] = Field(frozen=True, default=AsyncBackend.amqp)
+    backend: AsyncBackend = Field(frozen=True, default=AsyncBackend.amqp)
     storage: FSKeyValueStorageConfig | PostgresStorageConfig
 
 

@@ -353,7 +353,7 @@ if _has_pytest:
     class MockWorkerConfig(WorkerConfig):
         model_config = ignore_extra_config()
 
-        type: ClassVar[str] = Field(frozen=True, default=AsyncBackend.mock.value)
+        type: AsyncBackend = Field(frozen=True, default=AsyncBackend.mock)
 
         db_path: Path
         log_level: str = "DEBUG"

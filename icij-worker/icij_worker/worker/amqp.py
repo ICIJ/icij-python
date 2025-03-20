@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from functools import lru_cache
-from typing import ClassVar, cast
+from typing import cast
 
 from aio_pika import RobustQueue
 from aio_pika.abc import (
@@ -43,12 +43,11 @@ _PROJECT_PLACEHOLDER = "placeholder_project_amqp"
 
 @WorkerConfig.register()
 class AMQPWorkerConfig(WorkerConfig, AMQPConfigMixin):
-    type: ClassVar[str] = Field(frozen=True, default=AsyncBackend.amqp.value)
+    type: str = Field(frozen=True, default=AsyncBackend.amqp.value)
 
 
 @Worker.register(AsyncBackend.amqp)
 class AMQPWorker(Worker, AMQPMixin):
-
     def __init__(
         self,
         app: AsyncApp,

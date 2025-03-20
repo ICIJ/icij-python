@@ -68,7 +68,7 @@ class KeyValueStorage(TaskStorage, ABC):
             errors = await self._read_key(self._errors_db_name, key=key)
         except UnknownTask:
             return []
-        errors = [TaskError.model_validate(err) for err in errors]
+        errors = [ErrorEvent.model_validate(err) for err in errors]
         return errors
 
     async def get_task_result(self, task_id: str) -> ResultEvent:
