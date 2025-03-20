@@ -83,6 +83,8 @@ jobs:
           target: http-service
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=registry,ref=icij/task-service:buildcache
+          cache-to: type=registry,ref=icij/task-service:buildcache,mode=max
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
