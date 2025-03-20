@@ -1,6 +1,6 @@
 [project]
 name = "icij-worker"
-version = "0.17.4"
+version = "0.17.5"
 description = "Create asynchronous tasks from Python functions"
 authors = [
     { name = "Clément Doumouro", email = "cdoumouro@icij.org" },
