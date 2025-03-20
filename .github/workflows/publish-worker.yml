@@ -41,6 +41,7 @@ jobs:
     needs: [ create-release ]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Determine DBMate architecture
         id: arch
         run: |
@@ -78,7 +79,7 @@ jobs:
       - name: Build and push the service image
         uses: docker/build-push-action@v6
         with:
-          context: icij-worker/Dockerfile
+          context: icij-worker
           target: http-service
           platforms: linux/amd64,linux/arm64
           push: true
