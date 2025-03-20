@@ -24,7 +24,7 @@ from icij_worker.objects import (
     TaskState,
 )
 from icij_worker.routing_strategy import Routing
-from icij_worker.task_manager import TaskManager
+from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.task_storage import TaskStorage
 from icij_worker.task_storage.fs import FSKeyValueStorageConfig
 from icij_worker.task_storage.postgres import PostgresStorageConfig
@@ -63,7 +63,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         is_qpid: bool = False,
     ):
         super().__init__(app)
-        super(TaskManager, self).__init__(
+        super(TaskManager, self).__init__(  # pylint: disable=bad-super-call
             broker_url,
             connection_timeout_s=connection_timeout_s,
             reconnection_wait_s=reconnection_wait_s,
@@ -81,6 +81,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
 
     @classmethod
     def _from_config(cls, config: AMQPTaskManagerConfig, **extras) -> AMQPTaskManager:
+        # pylint: disable=unused-argument
         app = config.app
         storage = config.storage.to_storage(app.routing_strategy)
         management_client = config.to_management_client()
@@ -136,6 +137,7 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         state: list[TaskState] | TaskState | None = None,
         **kwargs,
     ) -> list[Task]:
+        # pylint: disable=unused-argument
         return await self._storage.get_tasks(group, task_name=task_name, state=state)
 
     async def save_task_(self, task: Task, group: str | None) -> bool:
