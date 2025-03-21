@@ -27,7 +27,6 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.6.7"
-          python-version: "3.10"
           enable-cache: true
       - name: Setup Python project
         uses: actions/setup-python@v5
@@ -38,7 +37,7 @@ jobs:
         run: |
           cd icij-worker
           uv sync --dev --all-extras --frozen
-          uv pip install ../icij-common tests/test-plugin
+          uv pip install -e ../icij-common tests/test-plugin
           uv run --no-sync --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
     services:
       neo4j:
