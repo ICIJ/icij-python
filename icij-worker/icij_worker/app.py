@@ -2,13 +2,14 @@ import functools
 import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from importlib.metadata import entry_points
 from inspect import iscoroutinefunction, signature
 from typing import Callable, final
 
 from pydantic import BaseModel, field_validator, ConfigDict
 from typing_extensions import Self
 
-from icij_common.import_utils import import_variable
+from icij_common.import_utils import VariableNotFound, import_variable
 from icij_common.pydantic_utils import ICIJSettings, icij_config
 from icij_worker.routing_strategy import RoutingStrategy
 from icij_worker.typing_ import Dependency
@@ -194,7 +195,21 @@ class AsyncApp:
 
     @classmethod
     def load(cls, app_path: str, config: AsyncAppConfig | None = None) -> Self:
-        app = deepcopy(import_variable(app_path))
+        try:
+            app = import_variable(app_path)
+        except VariableNotFound as e:
+            app_plugins = entry_points(group="icij_worker.APP_HOOK")
+            for entry_point in app_plugins:
+                if entry_point.name == app_path:
+                    app = entry_point.load()
+                    break
+            else:
+                msg = (
+                    f"invalid app path {app_path}, not found in available modules"
+                    f" nor in icij_worker plugins"
+                )
+                raise ValueError(msg) from e
+        app = deepcopy(app)
         if config is not None:
             app.with_config(config)
         return app

@@ -27,16 +27,18 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.6.7"
-          python-version: "3.10"
           enable-cache: true
       - name: Setup Python project
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
       - name: Run tests
+        # TODO: find a way to handle local dev for icij-common properly...
         run: |
           cd icij-worker
-          uv run --dev --all-extras --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
+          uv sync --dev --all-extras --frozen
+          uv pip install -e ../icij-common tests/test-plugin
+          uv run --no-sync --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
     services:
       neo4j:
         image: neo4j:4.4.17

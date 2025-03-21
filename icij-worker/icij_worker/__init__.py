@@ -43,3 +43,6 @@ except ImportError:
 
 from .backend import WorkerBackend
 from .event_publisher import EventPublisher
+
+# APP hook mean to be overridden with plugins
+APP_HOOK = AsyncApp(name="app_hook")
