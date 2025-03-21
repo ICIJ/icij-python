@@ -1,0 +1,14 @@
+[project]
+name = "test-plugin"
+version = "0.1.0"
+description = "Test plugin"
+authors = [
+    { name = "Clément Doumouro", email = "cdoumouro@icij.org" },
+    { name = "ICIJ", email = "engineering@icij.org" },
+]
+readme = "README.md"
+requires-python = "~=3.10"
+dependencies = []
+
+[project.entry-points."icij_worker.APP_HOOK"]
+plugged_app = "test_plugin:app"

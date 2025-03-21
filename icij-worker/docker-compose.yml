@@ -55,6 +55,7 @@ services:
       PORT: 8000
       # Uncomment this and set it to your app path
       #TASK_MANAGER__APP_PATH: path.to.app_module.app_variable
+      # Uncomment this and allow the service to reach the app code
 
     healthcheck:
       test: curl -f http://localhost:8000/health

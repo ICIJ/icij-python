@@ -31,6 +31,16 @@ def grouped_app() -> AsyncApp:
     return app
 
 
+def test_load_from_plugin():
+    # Given
+    # This is the name in the plugged app registry, see tests/test-plugin/pyproject.toml
+    path = "plugged_app"
+    # When
+    app = AsyncApp.load(path)
+    assert isinstance(app, AsyncApp)
+    assert app.name == "plugged"
+
+
 @pytest.mark.parametrize(
     "group,expected_keys",
     [("", ["i_m_a", "i_m_b"]), ("a", ["i_m_a"]), ("b", ["i_m_b"])],

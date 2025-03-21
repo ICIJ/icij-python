@@ -34,9 +34,12 @@ jobs:
         with:
           python-version: "3.10"
       - name: Run tests
+        # TODO: find a way to handle local dev for icij-common properly...
         run: |
           cd icij-worker
-          uv run --dev --all-extras --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
+          uv sync --dev --all-extras --frozen
+          uv pip install ../icij-common tests/test-plugin
+          uv run --no-sync --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
     services:
       neo4j:
         image: neo4j:4.4.17
