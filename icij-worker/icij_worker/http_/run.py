@@ -39,7 +39,11 @@ def _start_app(
     fast_api = create_service(config)
     log_level = logging.getLevelName(config.log_level)
     uvicorn.run(
-        fast_api, port=config.port, workers=config.n_workers, log_level=log_level
+        fast_api,
+        host=config.host,
+        port=config.port,
+        workers=config.n_workers,
+        log_level=log_level,
     )
 
 
