@@ -41,7 +41,7 @@ async def start(
         typer.Option("--group", "-g", help=_GROUP_HELP),
     ] = None,
     service_address: Annotated[
-        str, typer.Option("--ds-address", "-a", help=_SERVICE_URL_HELP)
+        str, typer.Option("--service-address", "-a", help=_SERVICE_URL_HELP)
     ] = DEFAULT_SERVICE_ADDRESS,
 ):
     match args:
@@ -67,7 +67,7 @@ async def start(
 async def watch(
     task_id: Annotated[str, typer.Argument(help=_TASK_ID_HELP)],
     service_address: Annotated[
-        str, typer.Option("--ds-address", "-a", help=_SERVICE_URL_HELP)
+        str, typer.Option("--service-address", "-a", help=_SERVICE_URL_HELP)
     ] = DEFAULT_SERVICE_ADDRESS,
     polling_interval_s: Annotated[
         float, typer.Option("--polling-interval-s", "-p", help=_POLLING_INTERVAL_S_HELP)
@@ -86,7 +86,7 @@ async def watch(
 async def result(
     task_id: Annotated[str, typer.Argument(help=_TASK_ID_HELP)],
     service_address: Annotated[
-        str, typer.Option("--ds-address", "-a", help=_SERVICE_URL_HELP)
+        str, typer.Option("--service-address", "-a", help=_SERVICE_URL_HELP)
     ] = DEFAULT_SERVICE_ADDRESS,
 ) -> Any:
     client = TaskClient(service_address)
