@@ -467,9 +467,10 @@ neo4j = [
 
 [[package]]
 name = "icij-worker"
-version = "0.17.18"
+version = "0.17.19"
 source = { editable = "." }
 dependencies = [
+    { name = "alive-progress" },
     { name = "icij-common" },
     { name = "typer" },
     { name = "typing-extensions" },
@@ -486,7 +487,6 @@ fs = [
 ]
 http = [
     { name = "aiohttp" },
-    { name = "alive-progress" },
     { name = "fastapi", extra = ["standard"] },
     { name = "uvicorn" },
 ]
@@ -513,7 +513,7 @@ requires-dist = [
     { name = "aio-pika", marker = "extra == 'amqp'", specifier = "~=9.4" },
     { name = "aiohttp", marker = "extra == 'amqp'", specifier = "~=3.9" },
     { name = "aiohttp", marker = "extra == 'http'", specifier = "~=3.9" },
-    { name = "alive-progress", marker = "extra == 'http'", specifier = ">=3.2.0" },
+    { name = "alive-progress", specifier = ">=3.2.0" },
     { name = "fastapi", extras = ["standard"], marker = "extra == 'http'", specifier = "~=0.115" },
     { name = "icij-common", specifier = "~=0.7.0" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = "~=5.0" },

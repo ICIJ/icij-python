@@ -1,6 +1,6 @@
 [project]
 name = "icij-worker"
-version = "0.17.18"
+version = "0.17.19"
 description = "Create asynchronous tasks from Python functions"
 authors = [
     { name = "Clément Doumouro", email = "cdoumouro@icij.org" },
@@ -9,6 +9,7 @@ authors = [
 readme = "README.md"
 requires-python = "~=3.10"
 dependencies = [
+    "alive-progress>=3.2.0",
     "icij-common~=0.7.0",
     "typer>=0.12.5,<0.14",
     "typing-extensions~=4.12.2",
@@ -44,7 +45,6 @@ postgres = [
 ]
 http = [
     "aiohttp~=3.9",
-    "alive-progress>=3.2.0",
     "fastapi[standard]~=0.115",
     "uvicorn>=0.34.0",
 ]
