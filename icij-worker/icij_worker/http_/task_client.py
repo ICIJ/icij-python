@@ -5,6 +5,7 @@ from aiohttp import BasicAuth
 
 from icij_worker import Task, TaskError, TaskState
 from icij_worker.exceptions import UnknownTask
+from icij_worker.http_.tasks import TaskCreationQuery, TaskSearch
 from icij_worker.utils.http import AiohttpClient
 
 
@@ -20,23 +21,13 @@ class TaskClient(AiohttpClient):
         self._api_prefix = api_prefix
 
     async def create_task(
-        self,
-        name: str,
-        args: dict[str, Any],
-        *,
-        id_: str | None = None,
-        group: str | None = None,
+        self, name: str, args: dict[str, Any], *, id_: str | None = None
     ) -> str:
         if id_ is None:
             id_ = _generate_task_id(name)
-        task = Task.create(task_id=id_, task_name=name, args=args)
-        task = task.model_dump(exclude_unset=True)
-        task.pop("created_at")
+        task = TaskCreationQuery(name=name, args=args)
+        task = task.model_dump()
         url = f"{self._api_prefix}/tasks/{id_}"
-        if group is not None:
-            if not isinstance(group, str):
-                raise TypeError(f"expected group to be a string found {group}")
-            url += f"?group={group}"
         async with self._put(url, json=task) as res:
             task_res = await res.json()
         return task_res["id"]
@@ -50,9 +41,12 @@ class TaskClient(AiohttpClient):
         task = Task.model_validate(task)
         return task
 
-    async def get_tasks(self) -> list[Task]:
+    async def get_tasks(
+        self, name: str | None = None, status: list[TaskState] | TaskState | None = None
+    ) -> list[Task]:
         url = f"{self._api_prefix}/tasks"
-        async with self._get(url) as res:
+        search = TaskSearch(name=name, status=status)
+        async with self._post(url, json=search) as res:
             tasks = await res.json()
         tasks = [Task.model_validate(task) for task in tasks]
         return tasks
@@ -66,7 +60,7 @@ class TaskClient(AiohttpClient):
             task_res = await res.json()
         return task_res
 
-    async def get_task_error(self, id_: str) -> list[TaskError]:
+    async def get_task_errors(self, id_: str) -> list[TaskError]:
         url = f"{self._api_prefix}/tasks/{id_}/errors"
         async with self._get(url) as res:
             errors = await res.json()

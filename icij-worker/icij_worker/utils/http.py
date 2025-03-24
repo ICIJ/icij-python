@@ -51,6 +51,14 @@ class AiohttpClient(AsyncContextManager):
             yield res
 
     @asynccontextmanager
+    async def _post(self, url: StrOrURL, *, json: Any = None, **kwargs: Any):
+        headers = deepcopy(self._headers)
+        headers.update(kwargs.pop("headers", dict()))
+        async with self._session.post(url, json=json, headers=headers, **kwargs) as res:
+            _raise_for_status(res)
+            yield res
+
+    @asynccontextmanager
     async def _delete(self, url: StrOrURL, **kwargs: Unpack["_RequestOptions"]):
         headers = deepcopy(self._headers)
         headers.update(kwargs.pop("headers", dict()))

@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_SERVICE_ADDRESS = "http://localhost:8000"
 
 _ARGS_HELP = "task argument as a JSON string or file path"
-_GROUP_HELP = "task group"
 _SERVICE_URL_HELP = "service URL address"
 _POLLING_INTERVAL_S_HELP = "task state polling interval in seconds"
 _NAME_HELP = "registered task name"
@@ -36,10 +35,6 @@ task_app = AsyncTyper(name="tasks")
 async def start(
     name: Annotated[str, typer.Argument(help=_NAME_HELP)],
     args: Annotated[TaskArgs, typer.Argument(help=_ARGS_HELP)] = None,
-    group: Annotated[
-        str | None,
-        typer.Option("--group", "-g", help=_GROUP_HELP),
-    ] = None,
     service_address: Annotated[
         str, typer.Option("--service-address", "-a", help=_SERVICE_URL_HELP)
     ] = DEFAULT_SERVICE_ADDRESS,
@@ -57,7 +52,7 @@ async def start(
             raise TypeError(f"Invalid args {args}")
     client = TaskClient(service_address)
     async with client:
-        task_id = await client.create_task(name, args, group=group)
+        task_id = await client.create_task(name, args)
     eprint(f"Task({task_id}) started !")
     eprint(f"Task({task_id}) 🛫")
     print(task_id)
@@ -115,11 +110,9 @@ async def _handle_ready(
 
 
 async def _handle_error(task, client: TaskClient):
-    error = await client.get_task_error(task.id)
-    eprint(
-        f"Task({task.id}) failed with the following"
-        f" error:\n\n{_format_error(error)}"
-    )
+    errors = await client.get_task_errors(task.id)
+    errors = "\n\n".join(_format_error(e) for e in errors)
+    eprint(f"Task({task.id}) failed with the following" f" error:\n\n{errors}")
     eprint(f"Task({task.id}) ❌")
     raise typer.Exit(code=1)
 
