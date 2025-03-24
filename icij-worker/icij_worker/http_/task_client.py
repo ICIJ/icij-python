@@ -29,8 +29,8 @@ class TaskClient(AiohttpClient):
         task = task.model_dump()
         url = f"{self._api_prefix}/tasks/{id_}"
         async with self._put(url, json=task) as res:
-            task_res = await res.json()
-        return task_res["id"]
+            task_id = await res.text()
+        return task_id
 
     async def get_task(self, id_: str) -> Task:
         url = f"{self._api_prefix}/tasks/{id_}"

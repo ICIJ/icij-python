@@ -41,7 +41,7 @@ def tasks_router(prefix: str = "/api") -> APIRouter:
                 task = await task_manager.get_task(task_id=task_id)
         except UnknownTask as e:
             raise HTTPException(status_code=404, detail=e.args[0]) from e
-        return Task(**task.dict())
+        return task
 
     @router.get("/tasks/{task_id}")
     async def _get_task(task_id: str) -> Task:
