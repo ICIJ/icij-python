@@ -1,34 +1,19 @@
 import logging
-from typing import Any
+from http.client import HTTPException
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter
 from starlette.responses import Response
 from starlette.status import HTTP_204_NO_CONTENT
 
 from icij_common.logging_utils import TRACE, log_elapsed_time_cm
-from icij_common.pydantic_utils import icij_config
 from icij_worker import Task
 from icij_worker.exceptions import UnknownTask
 from icij_worker.http_.constants import TASKS_TAG
 from icij_worker.http_.dependencies import lifespan_task_manager
-from icij_worker.objects import ErrorEvent, TaskState
+from icij_worker.http_.objects import TaskCreationQuery, TaskSearch
+from icij_worker.objects import ErrorEvent
 
 logger = logging.getLogger(__name__)
-
-
-class TaskSearch(BaseModel):
-    model_config = icij_config()
-
-    name: str | None = None
-    status: list[TaskState] | TaskState | None = None
-
-
-class TaskCreationQuery(BaseModel):
-    model_config = icij_config()
-
-    name: str
-    args: dict[str, Any]
 
 
 def tasks_router(prefix: str = "/api") -> APIRouter:

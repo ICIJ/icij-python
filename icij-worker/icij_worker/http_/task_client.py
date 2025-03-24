@@ -5,7 +5,7 @@ from aiohttp import BasicAuth
 
 from icij_worker import Task, TaskError, TaskState
 from icij_worker.exceptions import UnknownTask
-from icij_worker.http_.tasks import TaskCreationQuery, TaskSearch
+from icij_worker.http_.objects import TaskCreationQuery, TaskSearch
 from icij_worker.utils.http import AiohttpClient
 
 
