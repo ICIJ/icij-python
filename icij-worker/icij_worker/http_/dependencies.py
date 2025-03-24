@@ -15,7 +15,7 @@ _HTTP_SERVICE_CONFIG: HttpServiceConfig | None = None
 logger = logging.getLogger(__name__)
 
 
-async def get_http_service_config(config: HttpServiceConfig | None, **_) -> None:
+async def http_service_config_setup(config: HttpServiceConfig | None, **_) -> None:
     global _HTTP_SERVICE_CONFIG
     _HTTP_SERVICE_CONFIG = config
     logger.info(
@@ -54,7 +54,7 @@ def lifespan_task_manager() -> AMQPTaskManager:
 
 
 BASE_DEPENDENCIES = [
-    ("http service config", get_http_service_config, None),
+    ("http service config", http_service_config_setup, None),
     ("loggers", loggers_setup, None),
     ("task manager", task_manager_setup, task_manager_teardown),
 ]
