@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from starlette.responses import Response
 from starlette.status import HTTP_200_OK, HTTP_503_SERVICE_UNAVAILABLE
 
-from icij_worker.http_ import OTHER_TAG
+from icij_worker.http_.constants import OTHER_TAG
 from icij_worker.http_.dependencies import lifespan_task_manager
 
 

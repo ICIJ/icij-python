@@ -11,7 +11,7 @@ from icij_common.fastapi_utils import (
     internal_exception_handler,
     request_validation_error_handler,
 )
-from icij_worker.http_ import OTHER_TAG, TASKS_TAG
+from icij_worker.http_.constants import OTHER_TAG, TASKS_TAG
 from icij_worker.http_.config import HttpServiceConfig
 from icij_worker.http_.dependencies import BASE_DEPENDENCIES, run_http_service_deps
 from icij_worker.http_.main import main_router

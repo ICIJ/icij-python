@@ -10,7 +10,6 @@ from icij_common.logging_utils import TRACE, log_elapsed_time_cm
 from icij_common.pydantic_utils import icij_config
 from icij_worker import Task
 from icij_worker.exceptions import UnknownTask
-from icij_worker.http_ import TASKS_TAG
 from icij_worker.http_.dependencies import lifespan_task_manager
 from icij_worker.objects import ErrorEvent, TaskState
 
