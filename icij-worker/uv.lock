@@ -449,14 +449,14 @@ wheels = [
 
 [[package]]
 name = "icij-common"
-version = "0.7.0"
+version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/1d/fc5033a4c3025c1f16a59b1206ad8a220219cd969897799fd274565e490a/icij_common-0.7.0.tar.gz", hash = "sha256:bfe54fc8e5fca0fdf9682e82b4277a4c22f1a1d63855eba8f850fccb42ce57f5", size = 14903 }
+sdist = { url = "https://files.pythonhosted.org/packages/91/87/b43523f503193669c1903e1cd41db7e9fa11f065219d69f1fb97848b7307/icij_common-0.7.1.tar.gz", hash = "sha256:ccc9f16e817501500b379df032d1ef7d6d9983e0e49d67abd28b2082ef327a09", size = 15056 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/29/9b3dd139113d2d4eb5ed6e02ec73082f714bb857155fb51a907ead4c670d/icij_common-0.7.0-py3-none-any.whl", hash = "sha256:254df4d556ece186e1692bf21a477772c0b510dca79b2c3929d46f9f6e3721f7", size = 19250 },
+    { url = "https://files.pythonhosted.org/packages/1f/d0/81172705a13b78f6726f488bfac37a5039f5f54696bed49e2b924fe76e08/icij_common-0.7.1-py3-none-any.whl", hash = "sha256:bd689e5c99250667818a06ee9f064e49e6398a03703e124a6d66746509271d88", size = 19459 },
 ]
 
 [package.optional-dependencies]
@@ -467,7 +467,7 @@ neo4j = [
 
 [[package]]
 name = "icij-worker"
-version = "0.17.11"
+version = "0.17.12"
 source = { editable = "." }
 dependencies = [
     { name = "icij-common" },
