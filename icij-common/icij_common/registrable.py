@@ -21,11 +21,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic.fields import FieldInfo
-from pydantic_core.core_schema import (
-    SerializationInfo,
-    SerializerFunctionWrapHandler,
-    ValidatorFunctionWrapHandler,
-)
+from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
@@ -157,8 +153,8 @@ class RegistrableConfig(BaseModel, RegistrableMixin):
     @model_validator(mode="wrap")
     @classmethod
     def deserialize_with_registry_key(
-        cls, value: Any, handler: ValidatorFunctionWrapHandler
-    ) -> RegistrableConfig:
+        cls, value: Any, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
         if isinstance(value, dict):
             if cls in cls._registry:
                 subcls = cls.resolve_class_name(value[cls.registry_key.default])
@@ -254,7 +250,7 @@ class Registrable(BaseModel, RegistrableMixin, ABC):
     @model_serializer(mode="wrap")
     def serialize_with_registry_key(
         self, nxt: SerializerFunctionWrapHandler, info: SerializationInfo
-    ) -> RegistrableConfig:
+    ) -> dict[str, Any]:
         serialized = nxt(self)
         include_key = bool(info.include) and self.registry_key.default in info.include
         include_key = include_key or not (
@@ -268,7 +264,7 @@ class Registrable(BaseModel, RegistrableMixin, ABC):
     @classmethod
     def deserialize_with_registry_key(
         cls, value: Any, handler: ModelWrapValidatorHandler[Self]
-    ) -> Registrable:
+    ) -> Self:
         if isinstance(value, dict):
             if cls in cls._registry:
                 subcls = cls.resolve_class_name(value[cls.registry_key.default])
