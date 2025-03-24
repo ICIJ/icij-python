@@ -467,7 +467,7 @@ neo4j = [
 
 [[package]]
 name = "icij-worker"
-version = "0.17.8"
+version = "0.17.11"
 source = { editable = "." }
 dependencies = [
     { name = "icij-common" },
