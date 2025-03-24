@@ -449,14 +449,14 @@ wheels = [
 
 [[package]]
 name = "icij-common"
-version = "0.7.1"
+version = "0.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/87/b43523f503193669c1903e1cd41db7e9fa11f065219d69f1fb97848b7307/icij_common-0.7.1.tar.gz", hash = "sha256:ccc9f16e817501500b379df032d1ef7d6d9983e0e49d67abd28b2082ef327a09", size = 15056 }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/ef/41cf6c6c9082f14ed61060afd4a1bf171a22ff5f19d62a3fdd1646ec02fb/icij_common-0.7.2.tar.gz", hash = "sha256:d5bc158d2e49ccb12daca1f23ad50b45c86768015f51268189d6769a9f90df05", size = 15044 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/d0/81172705a13b78f6726f488bfac37a5039f5f54696bed49e2b924fe76e08/icij_common-0.7.1-py3-none-any.whl", hash = "sha256:bd689e5c99250667818a06ee9f064e49e6398a03703e124a6d66746509271d88", size = 19459 },
+    { url = "https://files.pythonhosted.org/packages/c8/2a/d4cfd0934fb230a19ffd93d01f0bca0d763e3991c11583051a07683b7f9d/icij_common-0.7.2-py3-none-any.whl", hash = "sha256:dc22d49929821365e0c4112a078a22810d1e6f8da2ebe04ceb34689d34738035", size = 19451 },
 ]
 
 [package.optional-dependencies]
@@ -467,7 +467,7 @@ neo4j = [
 
 [[package]]
 name = "icij-worker"
-version = "0.17.19"
+version = "0.17.20"
 source = { editable = "." }
 dependencies = [
     { name = "alive-progress" },
@@ -515,7 +515,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'http'", specifier = "~=3.9" },
     { name = "alive-progress", specifier = ">=3.2.0" },
     { name = "fastapi", extras = ["standard"], marker = "extra == 'http'", specifier = "~=0.115" },
-    { name = "icij-common", specifier = "~=0.7.0" },
+    { name = "icij-common", specifier = "~=0.7.2" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = "~=5.0" },
     { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'postgres'", specifier = "~=3.2" },
     { name = "sqlitedict", marker = "extra == 'fs'", specifier = "~=2.1" },
