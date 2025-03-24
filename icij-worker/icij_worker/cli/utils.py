@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sys
 from functools import partial, wraps
 from typing import Any, Callable
 
