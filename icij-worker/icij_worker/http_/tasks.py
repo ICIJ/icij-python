@@ -80,7 +80,6 @@ def tasks_router(prefix: str = "/api") -> APIRouter:
             errors = await task_manager.get_task_errors(task_id=task_id)
         except UnknownTask as e:
             raise HTTPException(status_code=404, detail=e.args[0]) from e
-        errors = [ErrorEvent(**evt.dict()) for evt in errors]
         return errors
 
     @router.post("/tasks", response_model=list[Task])
@@ -90,6 +89,6 @@ def tasks_router(prefix: str = "/api") -> APIRouter:
             tasks = await task_manager.get_tasks(
                 group=None, task_type=search.name, status=search.status
             )
-        return [Task(**t.dict()) for t in tasks]
+        return tasks
 
     return router

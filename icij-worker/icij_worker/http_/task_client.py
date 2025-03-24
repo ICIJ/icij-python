@@ -3,9 +3,10 @@ from typing import Any
 
 from aiohttp import BasicAuth
 
-from icij_worker import Task, TaskError, TaskState
+from icij_worker import Task, TaskState
 from icij_worker.exceptions import UnknownTask
 from icij_worker.http_.objects import TaskCreationQuery, TaskSearch
+from icij_worker.objects import ErrorEvent
 from icij_worker.utils.http import AiohttpClient
 
 
@@ -60,11 +61,11 @@ class TaskClient(AiohttpClient):
             task_res = await res.json()
         return task_res
 
-    async def get_task_errors(self, id_: str) -> list[TaskError]:
+    async def get_task_errors(self, id_: str) -> list[ErrorEvent]:
         url = f"{self._api_prefix}/tasks/{id_}/errors"
         async with self._get(url) as res:
             errors = await res.json()
-        return [TaskError.model_validate(e) for e in errors]
+        return [ErrorEvent.model_validate(e) for e in errors]
 
     async def delete(self, id_: str):
         url = f"{self._api_prefix}/tasks/{id_}"
