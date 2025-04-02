@@ -4,7 +4,7 @@ from functools import partial
 
 import pytest
 from aio_pika import Message, connect_robust
-from aio_pika.abc import AbstractRobustQueue
+from aio_pika.abc import AbstractRobustConnection, AbstractRobustQueue
 
 from icij_worker.task_storage.postgres.postgres import logger
 from icij_worker.utils.amqp import (
@@ -12,8 +12,9 @@ from icij_worker.utils.amqp import (
     AMQPMixin,
     AMQPPolicy,
     ApplyTo,
-    parse_consumer_timeout,
+    QpidRobustConnection,
     RobustConnection,
+    parse_consumer_timeout,
     worker_events_policy,
 )
 
@@ -104,3 +105,28 @@ async def test_worker_events_policy():
     assert policy == expected
     worker_queue_name = "WORKER_EVENT-some-service"
     assert re.match(policy.pattern, worker_queue_name)
+
+
+@pytest.mark.parametrize(
+    "is_qpid_,expected_type", [(True, QpidRobustConnection), (False, RobustConnection)]
+)
+async def test_should_handle_qpid_when_creating_connection(
+    is_qpid_, expected_type: type[AbstractRobustConnection], rabbit_mq: str
+):
+    # Given
+    class SomeClass(AMQPMixin):
+        def __init__(self, broker_url: str, *, is_qpid: bool):
+            super().__init__(broker_url=broker_url, is_qpid=is_qpid)
+
+        async def connect(self):
+            await self._connect()
+
+    # When
+    instance = SomeClass(rabbit_mq, is_qpid=is_qpid_)
+    await instance.connect()
+
+    # Then
+    assert (
+        type(instance.connection)  # pylint: disable=unidiomatic-typecheck
+        is expected_type
+    )

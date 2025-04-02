@@ -4,31 +4,27 @@ import logging
 from contextlib import AsyncExitStack
 from functools import cached_property
 
-from aio_pika import (
-    Exchange as AioPikaExchange,
-    RobustChannel,
-    connect_robust,
-)
+from aio_pika import Exchange as AioPikaExchange, RobustChannel
 from aio_pika.abc import AbstractRobustConnection
 
 from icij_common.logging_utils import LogWithNameMixin
 from icij_worker import ManagerEvent
 from . import EventPublisher
 from ..routing_strategy import Routing
-from ..utils.amqp import AMQPMixin, RobustConnection
+from ..utils.amqp import AMQPMixin
 
 
 class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
     def __init__(
         self,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         *,
         broker_url: str,
         connection_timeout_s: float = 1.0,
         reconnection_wait_s: float = 5.0,
         is_qpid: bool = False,
         app_id: str | None = None,
-        connection: Optional[AbstractRobustConnection] = None,
+        connection: AbstractRobustConnection | None = None,
     ):
         super().__init__(
             broker_url,
@@ -42,8 +38,8 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
         self._app_id = app_id
         self._broker_url = broker_url
         self._connection_ = connection
-        self._channel_: Optional[RobustChannel] = None
-        self._manager_evt_x: Optional[AioPikaExchange] = None
+        self._channel_: RobustChannel | None = None
+        self._manager_evt_x: AioPikaExchange | None = None
         self._connection_timeout_s = connection_timeout_s
         self._reconnection_wait_s = reconnection_wait_s
         self._exit_stack = AsyncExitStack()
@@ -73,14 +69,11 @@ class AMQPPublisher(AMQPMixin, EventPublisher, LogWithNameMixin):
 
     async def _connection_workflow(self):
         self.debug("creating connection...")
-        if self._connection_ is None:
-            self._connection_ = await connect_robust(
-                self._broker_url,
-                timeout=self._connection_timeout_s,
-                reconnect_interval=self._reconnection_wait_s,
-                connection_class=RobustConnection,
-            )
-            await self._exit_stack.enter_async_context(self._connection)
+        try:
+            _ = self.connection
+        except ValueError:
+            await self._connect()
+        await self._exit_stack.enter_async_context(self.connection)
         self.debug("creating channel...")
         self._channel_ = await self._connection.channel(
             publisher_confirms=self._publisher_confirms,
