@@ -14,8 +14,9 @@ import aiormq
 from aio_pika import (
     DeliveryMode,
     Message as AioPikaMessage,
-    RobustChannel as RobustChannel_,
-    RobustConnection as RobustConnection_,
+    RobustChannel,
+    RobustConnection,
+    connect_robust,
 )
 from aio_pika.abc import (
     AbstractExchange,
@@ -117,8 +118,7 @@ class AMQPConfigMixin(BaseModel):
         if amqp_userinfo:
             amqp_userinfo += "@"
         amqp_authority = (
-            f"{amqp_userinfo or ''}{self.rabbitmq_host}"
-            f"{f':{self.rabbitmq_port}' or ''}"
+            f"{amqp_userinfo or ''}{self.rabbitmq_host}{f':{self.rabbitmq_port}' or ''}"
         )
         amqp_uri = f"amqp://{amqp_authority}"
         if self.rabbitmq_vhost is not None:
@@ -216,7 +216,7 @@ class AMQPMixin:
         return self._channel
 
     @property
-    def connection(self) -> AbstractRobustChannel:
+    def connection(self) -> AbstractRobustConnection:
         return self._connection
 
     @classmethod
@@ -266,6 +266,15 @@ class AMQPMixin:
             exchange=Exchange(name=AMQP_HEALTH_X, type=ExchangeType.DIRECT),
             routing_key=AMQP_HEALTH_ROUTING_KEY,
             queue_name=AMQP_HEALTH_QUEUE,
+        )
+
+    async def _connect(self):
+        connection_class = QpidRobustConnection if self._is_qpid else RobustConnection
+        self._connection_ = await connect_robust(
+            self._broker_url,
+            timeout=self._connection_timeout_s,
+            reconnect_interval=self._reconnection_wait_s,
+            connection_class=connection_class,
         )
 
     async def _get_queue_iterator(
@@ -431,7 +440,7 @@ def health_policy(routing: Routing) -> AMQPPolicy:
     )
 
 
-class RobustChannel(RobustChannel_):
+class QpidRobustChannel(RobustChannel):
     async def __close_callback(self, _: Any, exc: BaseException) -> None:
         # pylint: disable=unused-private-member
         timeout_exc = parse_consumer_timeout(exc)
@@ -440,8 +449,8 @@ class RobustChannel(RobustChannel_):
             raise timeout_exc from exc
 
 
-class RobustConnection(RobustConnection_):
-    CHANNEL_CLASS: type[RobustChannel] = RobustChannel
+class QpidRobustConnection(RobustConnection):
+    CHANNEL_CLASS: type[RobustChannel] = QpidRobustChannel
 
     # Defined async context manager attributes to be able to enter and exit this
     # in ExitStack

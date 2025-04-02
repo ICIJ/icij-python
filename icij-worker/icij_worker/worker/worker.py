@@ -182,9 +182,9 @@ class Worker(
         self._started_task_consumption_evt.set()
         task = await self._consume()
         msg = 'Task(id="%s") locked'
-        if task.max_retries is not None:
+        if task.max_retries is not None and task.retries_left is not None:
             msg += (
-                f", tentative ({task.max_retries - task.retries_left}"
+                f", retry ({task.max_retries - task.retries_left}"
                 f"/{task.max_retries})"
             )
         self.info(msg, task.id)

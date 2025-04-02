@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from functools import cached_property
 from typing import TypeVar, cast
 
-from aio_pika import connect_robust
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
 from aiormq import DeliveryError
 from pydantic import Field
@@ -32,7 +31,6 @@ from icij_worker.utils.amqp import (
     AMQPConfigMixin,
     AMQPManagementClient,
     AMQPMixin,
-    RobustConnection,
     amqp_task_group_policy,
     health_policy,
 )
@@ -217,12 +215,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
     async def _connection_workflow(self):
         await self._exit_stack.enter_async_context(self._management_client)
         logger.debug("creating connection...")
-        self._connection_ = await connect_robust(
-            self._broker_url,
-            timeout=self._connection_timeout_s,
-            reconnect_interval=self._reconnection_wait_s,
-            connection_class=RobustConnection,
-        )
+        try:
+            _ = self.connection
+        except ValueError:
+            await self._connect()
         await self._exit_stack.enter_async_context(self._connection)
         logger.debug("creating channel...")
         self._channel_ = await self._connection.channel(
