@@ -11,7 +11,7 @@ import typer
 from icij_worker import TaskState
 from icij_worker.cli.utils import AsyncTyper, eprint
 from icij_worker.http_ import TaskClient
-from icij_worker.objects import READY_STATES, Task, TaskError
+from icij_worker.objects import ErrorEvent, READY_STATES, Task
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,8 @@ async def _handle_alive(
         await _handle_ready(task, client)
 
 
-def _format_error(error: TaskError) -> str:
+def _format_error(error: ErrorEvent) -> str:
+    error = error.error
     stack = StackSummary.from_list(
         [FrameSummary(f.name, f.lineno, f.name) for f in error.stacktrace]
     )
