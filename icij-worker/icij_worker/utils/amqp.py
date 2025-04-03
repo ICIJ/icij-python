@@ -35,7 +35,7 @@ from icij_common.pydantic_utils import icij_config, merge_configs, no_enum_value
 from mdurl import URL
 from pamqp.commands import Basic
 from pamqp.common import FieldTable
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from icij_worker import Message
 from icij_worker.app import TaskGroup
@@ -103,7 +103,7 @@ class AMQPConfigMixin(BaseModel):
     connection_timeout_s: float = 5.0
     reconnection_wait_s: float = 5.0
     rabbitmq_host: str = "127.0.0.1"
-    rabbitmq_password: str = "guest"
+    rabbitmq_password: SecretStr = "guest"
     rabbitmq_port: int | None = 5672
     rabbitmq_management_port: int | None = 15672
     rabbitmq_user: str | None = "guest"
@@ -113,8 +113,8 @@ class AMQPConfigMixin(BaseModel):
     @cached_property
     def broker_url(self) -> str:
         amqp_userinfo = self.rabbitmq_user
-        if self.rabbitmq_password:
-            amqp_userinfo += f":{self.rabbitmq_password}"
+        if self.rabbitmq_password.get_secret_value():
+            amqp_userinfo += f":{self.rabbitmq_password.get_secret_value()}"
         if amqp_userinfo:
             amqp_userinfo += "@"
         amqp_authority = (
@@ -132,7 +132,7 @@ class AMQPConfigMixin(BaseModel):
 
     @cached_property
     def basic_auth(self) -> BasicAuth:
-        return BasicAuth(self.rabbitmq_user, self.rabbitmq_password)
+        return BasicAuth(self.rabbitmq_user, self.rabbitmq_password.get_secret_value())
 
     def to_management_client(self) -> AMQPManagementClient:
         client = AMQPManagementClient(

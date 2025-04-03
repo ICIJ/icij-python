@@ -5,7 +5,7 @@ from typing import cast
 import neo4j
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from neo4j.exceptions import ResultNotSingleError
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from icij_common.neo4j_.migrate import retrieve_dbs
 from icij_common.registrable import FromConfig
@@ -47,12 +47,12 @@ class Neo4JTaskManagerConfig(TaskManagerConfig):
     neo4j_host: str = "localhost"
     neo4j_port: int = 7687
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "theneo4jpassword"
+    neo4j_password: SecretStr = "theneo4jpassword"
     neo4j_scheme: str = "neo4j"
 
     def to_driver(self) -> AsyncDriver:
         uri = f"{self.neo4j_scheme}://{self.neo4j_host}:{self.neo4j_port}"
-        auth = neo4j.basic_auth(self.neo4j_user, self.neo4j_password)
+        auth = neo4j.basic_auth(self.neo4j_user, self.neo4j_password.get_secret_value())
         driver = AsyncGraphDatabase.driver(uri, auth=auth)
         return driver
 

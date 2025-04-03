@@ -5,7 +5,7 @@ from typing import Callable
 
 import neo4j
 from neo4j.exceptions import ConstraintError, ResultNotSingleError
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from icij_worker import AsyncApp, AsyncBackend, Task, TaskState, Worker, WorkerConfig
 from icij_worker.constants import (
@@ -42,7 +42,7 @@ class Neo4jWorkerConfig(WorkerConfig):
     poll_interval_s: float = 0.1
     neo4j_connection_timeout: float = 5.0
     neo4j_host: str = "127.0.0.1"
-    neo4j_password: str | None = None
+    neo4j_password: SecretStr | None = None
     neo4j_port: int = 7687
     neo4j_uri_scheme: str = "bolt"
     neo4j_user: str | None = None
@@ -57,7 +57,9 @@ class Neo4jWorkerConfig(WorkerConfig):
             # TODO: add support for expiring and auto renew auth:
             #  https://neo4j.com/docs/api/python-driver/current/api.html
             #  #neo4j.auth_management.AuthManagers.expiration_based
-            auth = neo4j.basic_auth(self.neo4j_user, self.neo4j_password)
+            auth = neo4j.basic_auth(
+                self.neo4j_user, self.neo4j_password.get_secret_value()
+            )
         driver = neo4j.AsyncGraphDatabase.driver(
             self.neo4j_uri,
             connection_timeout=self.neo4j_connection_timeout,
@@ -145,7 +147,7 @@ class Neo4jWorker(Worker, Neo4jEventPublisher, Neo4jConsumerMixin):
 
 async def _consume_task_tx(
     tx: neo4j.AsyncTransaction, *, worker_id: str, group: str | None
-) -> Optional[neo4j.Record]:
+) -> neo4j.Record | None:
     where_ns = ""
     if group is not None:
         where_ns = f"WHERE t.{NEO4J_TASK_GROUP} = $group"
@@ -173,7 +175,7 @@ RETURN task"""
 
 async def _consume_worker_events_tx(
     tx: neo4j.AsyncTransaction, *, worker_id: str, group: str | None, **_
-) -> Optional[WorkerEvent]:
+) -> WorkerEvent | None:
     await _create_worker_node_tx(tx, worker_id)
     shutdown_event = await _consume_shutdown_events_tx(tx, worker_id)
     if shutdown_event is not None:
@@ -191,7 +193,7 @@ RETURN worker
 
 async def _consume_shutdown_events_tx(
     tx: neo4j.AsyncTransaction, worker_id: str, **_
-) -> Optional[ShutdownEvent]:
+) -> ShutdownEvent | None:
     shutdown_event_query = f"""MATCH (worker: {NEO4J_WORKER_NODE} {{
     {NEO4J_WORKER_ID}: $workerId }})
 WITH worker
