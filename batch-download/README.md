@@ -45,4 +45,24 @@ hmap-migrate redis://localhost:6379
 
 You can change the main scripting steps for your needs by using the provided utility functions (you can add some if you can't find your need). 
 
-It is not a full schema migration system with a list of migrations that could be rolled back, stacked (and so on) because the persistence of the tasks manager is going to be changed from Redis to PostgreSQL. Thus, the migrations will be made by datashare in java (with [liquibase](https://www.liquibase.com/)). 
+It is not a full schema migration system with a list of migrations that could be rolled back, stacked (and so on) because the persistence of the tasks manager is going to be changed from Redis to PostgreSQL. Thus, the migrations will be made by datashare in java (with [liquibase](https://www.liquibase.com/)).
+
+
+## Migrate batch search task result 
+
+To use the latest data model of JSON tasks (batch search results) : 
+
+```shell
+#for sqlite
+db-migrate-bs-result-task "jdbc:sqlite:file:/path/to/db/datashare.db"
+```
+
+```shell
+#for postgresql
+db-migrate-bs-result-task "jdbc:postgresql://postgres/datashare?user=admin&password=admin"
+```
+
+```shell
+#for mysql
+db-migrate-bs-result-task "jdbc:postgresql://database/datashare?user=admin&password=admin"
+```
