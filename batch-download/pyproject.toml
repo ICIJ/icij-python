@@ -16,10 +16,17 @@ exclude = ["batch_download_utils/tests"]
 [tool.poetry.scripts]
 hmap-cleaner = "batch_download_utils.hmap_cleaner:main_async"
 hmap-migrate = "batch_download_utils.migrate_tasks:main_async"
+db-migrate-bs-result-task = "batch_download_utils.migrate_batch_search_task_results:main_async"
 
 [tool.poetry.dependencies]
 python = "^3.9"
 redis = "^5.0.8"
+sqlalchemy = "^2.0.43"
+psycopg2-binary = "^2.9.10"
+aiosqlite = "^0.21.0"
+asyncpg = "^0.30.0"
+mysql = "^0.0.3"
+aiomysql = "^0.2.0"
 
 [tool.poetry.group.dev.dependencies]
 pylint = "^3.1.0"
