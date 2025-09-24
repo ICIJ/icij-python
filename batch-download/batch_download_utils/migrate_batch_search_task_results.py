@@ -34,6 +34,7 @@ async def main(args: dict) -> None:
 
             await conn.execute(text("UPDATE task SET result = :result WHERE id = :id"),
                                {"result": json.dumps(value_to_set, separators=(',',':')), "id": task_id})
+            print(f"Task id: {task_id} updated")
 
 def parse_args(argv) -> dict:
     if len(argv) != 2:
