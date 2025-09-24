@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "batch-download-utils"
-version = "0.1.0"
+version = "0.2.0"
 description = "Script utils for managing batch download redis persistence"
 authors = [
     "Maxime Vanza <mvanza@icij.org>",
