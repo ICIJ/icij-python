@@ -16,7 +16,7 @@ def db_handling(db_url):
     raise ValueError("unknown database url")
 
 async def main(args: dict) -> None:
-    engine = create_async_engine(args.get("db_url"))
+    engine = create_async_engine(db_handling(args.get("db_url")))
     async with engine.begin() as conn:
         res_tasks_ids = await conn.execute(text("SELECT id FROM task WHERE name LIKE '%BatchSearchRunner%'"))
         tasks_ids = res_tasks_ids.fetchall()
