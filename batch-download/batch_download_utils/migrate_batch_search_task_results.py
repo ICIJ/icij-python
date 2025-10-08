@@ -24,6 +24,8 @@ async def main(args: dict) -> None:
             task_id = id_rows[0]
             res = await conn.execute(text(f"SELECT batch_results,nb_queries_without_results FROM batch_search WHERE uuid = '{task_id}'"))
             (bs_res, nb_quer_without_res) = res.fetchone()
+            if nb_quer_without_res is None:
+                nb_quer_without_res = -1
             value_to_set = {
                 "value": {
                     "@type": "BatchSearchRunnerResult",
