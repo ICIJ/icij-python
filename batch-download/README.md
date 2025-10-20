@@ -50,24 +50,26 @@ It is not a full schema migration system with a list of migrations that could be
 
 ## Migrate batch search task result 
 
-To use the latest data model of JSON tasks (batch search results) : 
+If you are using a database as a Task Repository : 
 
 ```shell
 #for sqlite
-db-migrate-bs-result-task-db "jdbc:sqlite:file:/path/to/db/datashare.db"
+db-migrate-bs-result-task "jdbc:sqlite:file:/path/to/db/datashare.db"
 ```
 
 ```shell
 #for postgresql
-db-migrate-bs-result-task-db "jdbc:postgresql://postgres/datashare?user=admin&password=admin"
+db-migrate-bs-result-task "jdbc:postgresql://postgres/datashare?user=admin&password=admin"
 ```
 
 ```shell
 #for mysql
-db-migrate-bs-result-task-db "jdbc:postgresql://database/datashare?user=admin&password=admin"
+db-migrate-bs-result-task "jdbc:postgresql://database/datashare?user=admin&password=admin"
 ```
+
+If you are using redis as a Task Repository and bumped Datashare to 20.2.1 (and further)
 
 ```shell
 #for redis
-db-migrate-bs-result-task-redis "redis://localhost:6379"
+hmap-migrate_20_2_1 "redis://localhost:6379"
 ```

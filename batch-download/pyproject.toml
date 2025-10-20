@@ -16,8 +16,8 @@ exclude = ["batch_download_utils/tests"]
 [tool.poetry.scripts]
 hmap-cleaner = "batch_download_utils.hmap_cleaner:main_async"
 hmap-migrate = "batch_download_utils.migrate_tasks:main_async"
-db-migrate-bs-result-task-db = "batch_download_utils.migrate_batch_search_task_results_db:main_async"
-db-migrate-bs-result-task-redis = "batch_download_utils.migrate_batch_search_task_results_redis:main_async"
+hmap-migrate_20_2_1 = "batch_download_utils.migrate_tasks_20_2_1:main_async"
+db-migrate-bs-result-task = "batch_download_utils.migrate_batch_search_task_results_db:main_async"
 
 [tool.poetry.dependencies]
 python = "^3.9"
