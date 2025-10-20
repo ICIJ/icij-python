@@ -127,7 +127,7 @@ async def migrate_batch_search_projects(client):
     tasks = await client.hgetall(DS_TASK_MANAGER)
     for v in tasks.values():
         task = loads(v)
-        if "BatchSearch" in task.get("name"):
+        if "BatchSearch" in get_value_from_json_path(task,"task.name"):
             projects = get_value_from_json_path(task, "args.batchRecord.projects")
             if projects is not None and any(
                 not isinstance(item, str) for item in projects
