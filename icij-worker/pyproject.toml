@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = "~=3.10"
 dependencies = [
     "alive-progress>=3.2.0",
+    "caul==0.2.0",
     "icij-common~=0.7.2",
+    "temporalio>=1.21.1",
+    "torch>=2.10.0",
     "typer>=0.12.5,<0.14",
     "typing-extensions~=4.12.2",
 ]
@@ -72,6 +75,7 @@ markers = ["pull"]
 
 [tool.uv.sources]
 icij-common = { path = "../icij-common", editable = true }
+caul = { git = "ssh://git@github.com/ICIJ/caul.git" }
 
 [build-system]
 requires = ["hatchling"]

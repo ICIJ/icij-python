@@ -1,0 +1,5 @@
+DEFAULT_TARGET_HOST = "localhost:7233"
+
+RESPONSE_SUCCESS = "success"
+
+RESPONSE_ERROR = "error"
