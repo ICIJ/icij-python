@@ -33,7 +33,7 @@ class ASRPipelineConfig:
     def serialize(self):
         return {
             "preprocessing": asdict(self.preprocessing),
-            "inference": asdict(self.inference)
+            "inference": asdict(self.inference),
         }
 
 

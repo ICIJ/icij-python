@@ -49,12 +49,18 @@ class ASRWorkflow:
                 *[
                     workflow.execute_activity_method(
                         ASRActivities.preprocess,
-                        inputs.file_paths[offset: offset + inputs.pipeline.preprocessing.batch_size],
+                        inputs.file_paths[
+                            offset : offset + inputs.pipeline.preprocessing.batch_size
+                        ],
                         start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
-                        #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
+                        # heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
                         retry_policy=retry_policy,
                     )
-                    for offset in range(0, len(inputs.file_paths), inputs.pipeline.preprocessing.batch_size)
+                    for offset in range(
+                        0,
+                        len(inputs.file_paths),
+                        inputs.pipeline.preprocessing.batch_size,
+                    )
                 ]
             )
 
@@ -62,20 +68,20 @@ class ASRWorkflow:
 
             # Inference
             transcriptions = [
-                    await gather(
+                await gather(
                     *[
                         workflow.execute_activity_method(
                             ASRActivities.infer,
                             inner_batch,
                             start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
-                            #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
+                            # heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
                             retry_policy=retry_policy,
                         )
                         for inner_batch in outer_batch
                     ]
-                    )
-                    for outer_batch in preprocessed_batches
-                ]
+                )
+                for outer_batch in preprocessed_batches
+            ]
 
             LOGGER.info("Inference complete")
 
@@ -86,7 +92,7 @@ class ASRWorkflow:
                         ASRActivities.postprocess,
                         flatten(transcription_batch),
                         start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
-                        #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
+                        # heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
                         retry_policy=retry_policy,
                     )
                     for transcription_batch in transcriptions
@@ -99,7 +105,9 @@ class ASRWorkflow:
 
             # TODO: Output formatting; do we want to keep PreprocessedInput metadata and remap
             #  results to it?
-            return ASRResponse(status=RESPONSE_SUCCESS, transcriptions=[asdict(r) for r in results])
+            return ASRResponse(
+                status=RESPONSE_SUCCESS, transcriptions=[asdict(r) for r in results]
+            )
         except ValueError as e:
             LOGGER.error(e)
             return ASRResponse(status=RESPONSE_ERROR, error=str(e))

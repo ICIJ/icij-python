@@ -33,7 +33,9 @@ class ASRActivities:
         return self.asr_handler.preprocessor.process(inputs, return_tensors=False)
 
     @activity.defn
-    async def infer(self, inputs: list[PreprocessedInput]) -> list[ParakeetInferenceHandlerResult]:
+    async def infer(
+        self, inputs: list[PreprocessedInput]
+    ) -> list[ParakeetInferenceHandlerResult]:
         """Transcribe audio files.
 
         :param inputs: list of preprocessed inputs
@@ -50,7 +52,9 @@ class ASRActivities:
         return self.asr_handler.inference_handler.process(inputs)
 
     @activity.defn
-    async def postprocess(self, inputs: list[ParakeetInferenceHandlerResult]) -> list[ParakeetInferenceHandlerResult]:
+    async def postprocess(
+        self, inputs: list[ParakeetInferenceHandlerResult]
+    ) -> list[ParakeetInferenceHandlerResult]:
         """Postprocess and reorder transcriptions
 
         :param inputs: list of inference handler results
