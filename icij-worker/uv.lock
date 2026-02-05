@@ -388,7 +388,7 @@ wheels = [
 [[package]]
 name = "caul"
 version = "0.2.0"
-source = { git = "ssh://git@github.com/ICIJ/caul.git#d522f383d8a452e7a231ae32eb88f34b41a8967e" }
+source = { git = "ssh://git@github.com/ICIJ/caul.git#8f85940347c3b0c8a1d286edd626076ae88d7a7f" }
 dependencies = [
     { name = "nemo-toolkit", extra = ["asr"] },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },

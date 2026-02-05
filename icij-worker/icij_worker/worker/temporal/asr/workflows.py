@@ -44,48 +44,62 @@ class ASRWorkflow:
             #  a batch_size argument to limit the number of items in an
             #  individual batch
             # TODO: Replace naive batching with buffering
-            preprocessed_batches = await workflow.execute_activity_method(
-                ASRActivities.preprocess,
-                inputs.file_paths,
-                start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
-                #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
-                retry_policy=retry_policy,
+
+            preprocessed_batches = await gather(
+                *[
+                    workflow.execute_activity_method(
+                        ASRActivities.preprocess,
+                        inputs.file_paths[offset: offset + inputs.pipeline.preprocessing.batch_size],
+                        start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
+                        #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
+                        retry_policy=retry_policy,
+                    )
+                    for offset in range(0, len(inputs.file_paths), inputs.pipeline.preprocessing.batch_size)
+                ]
             )
 
             LOGGER.info("Preprocessing complete")
 
             # Inference
-            transcriptions = await gather(
-                *[
-                    workflow.execute_activity_method(
-                        ASRActivities.infer,
-                        batch,
-                        start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
-                        #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
-                        retry_policy=retry_policy,
+            transcriptions = [
+                    await gather(
+                    *[
+                        workflow.execute_activity_method(
+                            ASRActivities.infer,
+                            inner_batch,
+                            start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
+                            #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
+                            retry_policy=retry_policy,
+                        )
+                        for inner_batch in outer_batch
+                    ]
                     )
-                    for batch in preprocessed_batches
+                    for outer_batch in preprocessed_batches
                 ]
-            )
-
-            transcriptions = flatten(transcriptions)
 
             LOGGER.info("Inference complete")
 
             # Postprocessing
-            results = await workflow.execute_activity_method(
-                ASRActivities.postprocess,
-                transcriptions,
-                start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
-                #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
-                retry_policy=retry_policy,
+            results = await gather(
+                *[
+                    workflow.execute_activity_method(
+                        ASRActivities.postprocess,
+                        flatten(transcription_batch),
+                        start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
+                        #heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
+                        retry_policy=retry_policy,
+                    )
+                    for transcription_batch in transcriptions
+                ]
             )
+
+            results = flatten(results)
 
             LOGGER.info("Postprocessing complete")
 
             # TODO: Output formatting; do we want to keep PreprocessedInput metadata and remap
             #  results to it?
             return ASRResponse(status=RESPONSE_SUCCESS, transcriptions=[asdict(r) for r in results])
-        except Exception as e:
+        except ValueError as e:
             LOGGER.error(e)
             return ASRResponse(status=RESPONSE_ERROR, error=str(e))

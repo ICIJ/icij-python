@@ -15,8 +15,12 @@ async def main() -> None:
     client: Client = await Client.connect("localhost:7233")
 
     inputs: ASRInputs = ASRInputs(
-        file_paths=["tests/resources/asr_test.wav"],
-        pipeline=ASRPipelineConfig()
+        file_paths=["tests/resources/asr_test.wav"] * 5,
+        pipeline=ASRPipelineConfig(
+            preprocessing=PreprocessingConfig(
+                batch_size=4
+            )
+        )
     )
 
     try:

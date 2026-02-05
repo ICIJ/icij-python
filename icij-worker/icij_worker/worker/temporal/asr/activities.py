@@ -1,13 +1,16 @@
+import json
 import logging
 from dataclasses import asdict
 
 import torch
+import torchaudio
 from caul.model_handlers import ParakeetModelHandler
 from caul.tasks.inference.parakeet_inference import ParakeetInferenceHandlerResult
 from caul.tasks.preprocessing.helpers import PreprocessedInput
 from temporalio import activity
 
 LOGGER = logging.getLogger(__name__)
+
 
 class ASRActivities:
     """Contains activity definitions as well as reference to models"""
@@ -27,24 +30,22 @@ class ASRActivities:
         :param inputs: list of file paths
         :return: list of caul.tasks.preprocessing.helpers.PreprocessedInput
         """
-        batches = self.asr_handler.preprocessor.process(inputs)
-        # Serialize tensors because temporal can't
-        for batch in batches:
-            for item in batch:
-                item.tensor = item.tensor.tolist()
-
-        return batches
+        return self.asr_handler.preprocessor.process(inputs, return_tensors=False)
 
     @activity.defn
     async def infer(self, inputs: list[PreprocessedInput]) -> list[ParakeetInferenceHandlerResult]:
-        """Transcribe audio files
+        """Transcribe audio files.
 
         :param inputs: list of preprocessed inputs
         :return: list of inference handler results
         """
-        # Deserialize tensors
+        # Load tensors
         for item in inputs:
-            item.tensor = torch.tensor(item.tensor)
+            tensor, sample_rate = torchaudio.load(item.metadata.preprocessed_file_path)
+            # normalize
+            tensor = self.asr_handler.preprocessor.normalize(tensor, sample_rate)
+            # assign
+            item.tensor = tensor
 
         return self.asr_handler.inference_handler.process(inputs)
 
