@@ -67,7 +67,7 @@ class ASRWorkflow:
             LOGGER.info("Preprocessing complete")
 
             # Inference
-            transcriptions = [
+            inference_results = [
                 await gather(
                     *[
                         workflow.execute_activity_method(
@@ -86,27 +86,36 @@ class ASRWorkflow:
             LOGGER.info("Inference complete")
 
             # Postprocessing
-            results = await gather(
+            transcriptions = await gather(
                 *[
                     workflow.execute_activity_method(
                         ASRActivities.postprocess,
-                        flatten(transcription_batch),
+                        flatten(inference_result_batch),
                         start_to_close_timeout=timedelta(seconds=_TEN_MINUTES),
                         # heartbeat_timeout=timedelta(seconds=_ONE_MINUTE),
                         retry_policy=retry_policy,
                     )
-                    for transcription_batch in transcriptions
+                    for inference_result_batch in inference_results
                 ]
             )
 
-            results = flatten(results)
+            serialized_transcriptions = []
+
+            # drop unnecessary fields, serialize
+            for transcription in flatten(transcriptions):
+                transcription = asdict(transcription)
+
+                del transcription["input_ordering"]
+
+                serialized_transcriptions.append(transcription)
+                LOGGER.info(transcription)
 
             LOGGER.info("Postprocessing complete")
 
             # TODO: Output formatting; do we want to keep PreprocessedInput metadata and remap
             #  results to it?
             return ASRResponse(
-                status=RESPONSE_SUCCESS, transcriptions=[asdict(r) for r in results]
+                status=RESPONSE_SUCCESS, transcriptions=serialized_transcriptions
             )
         except ValueError as e:
             LOGGER.error(e)
