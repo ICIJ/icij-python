@@ -129,9 +129,8 @@ def make_enum_discriminator(key: str, enum_cls: type[E]) -> Callable[[Any], E]:
 
     return discriminator
 
-def tagged_union(
-    members: tuple[type, ...], tag_getter: Callable[[type], str]
-) -> Annotated[type, Tag] | ...:
+
+def tagged_union(members: tuple[type, ...], tag_getter: Callable[[type], str]) -> type:
     if not members:
         raise ValueError("empty members")
     first = members[0]
