@@ -5,7 +5,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Annotated, Any, Callable, Mapping, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import BaseModel, ConfigDict, PlainSerializer, Tag
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 
@@ -128,3 +128,14 @@ def make_enum_discriminator(key: str, enum_cls: type[E]) -> Callable[[Any], E]:
         return enum_cls(discriminator_key)
 
     return discriminator
+
+def tagged_union(
+    members: tuple[type, ...], tag_getter: Callable[[type], str]
+) -> Annotated[type, Tag] | ...:
+    if not members:
+        raise ValueError("empty members")
+    first = members[0]
+    tagged = Annotated[first, Tag(tag_getter(first))]
+    for m in members[1:]:
+        tagged |= Annotated[m, Tag(tag_getter(m))]
+    return tagged
