@@ -7,6 +7,7 @@ from typing import Annotated, Any, Callable, Mapping, TypeVar, cast, Collection,
 
 from pydantic import BaseModel, ConfigDict, PlainSerializer, Tag
 from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 from pydantic_settings import BaseSettings
 
 SetIntStr = set[int | str]
@@ -123,6 +124,15 @@ def make_enum_discriminator(key: str, enum_cls: type[E]) -> Callable[[Any], E]:
             discriminator_key = getattr(data, key)
         else:
             raise ValueError(f"could not find key '{enum_cls}' in {data}")
+        if isinstance(discriminator_key, FieldInfo):
+            if discriminator_key.default_factory:
+                discriminator_key = discriminator_key.default_factory()
+            elif discriminator_key.default != PydanticUndefined:
+                discriminator_key = discriminator_key.default
+            else:
+                raise ValueError(
+                    f"couldn't find any default value for field: {discriminator_key}"
+                )
         if isinstance(discriminator_key, enum_cls):
             return discriminator_key
         return enum_cls(discriminator_key)
