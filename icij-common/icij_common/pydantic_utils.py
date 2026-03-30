@@ -136,7 +136,7 @@ def tagged_union(members: Collection[type], tag_getter: Callable[[type], str]) -
     first = members[0]
     tagged = Annotated[first, Tag(tag_getter(first))]
     if len(members) == 1:
-        return Union[tuple(members)]
+        return Union[(tagged,)]
     for m in members[1:]:
         tagged |= Annotated[m, Tag(tag_getter(m))]
     return tagged
