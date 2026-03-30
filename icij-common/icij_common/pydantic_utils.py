@@ -3,7 +3,7 @@ from enum import Enum
 
 from datetime import datetime
 from functools import cached_property
-from typing import Annotated, Any, Callable, Mapping, TypeVar, cast
+from typing import Annotated, Any, Callable, Mapping, TypeVar, cast, Collection, Union
 
 from pydantic import BaseModel, ConfigDict, PlainSerializer, Tag
 from pydantic.fields import FieldInfo
@@ -130,11 +130,13 @@ def make_enum_discriminator(key: str, enum_cls: type[E]) -> Callable[[Any], E]:
     return discriminator
 
 
-def tagged_union(members: tuple[type, ...], tag_getter: Callable[[type], str]) -> type:
+def tagged_union(members: Collection[type], tag_getter: Callable[[type], str]) -> type:
     if not members:
         raise ValueError("empty members")
     first = members[0]
     tagged = Annotated[first, Tag(tag_getter(first))]
+    if len(members) == 1:
+        return Union[tuple(members)]
     for m in members[1:]:
         tagged |= Annotated[m, Tag(tag_getter(m))]
     return tagged
