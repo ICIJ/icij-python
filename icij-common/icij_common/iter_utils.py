@@ -44,7 +44,7 @@ def batches(
         yield batch
 
 
-async def maybe_await(maybe_awaitable: Awaitable[T] | T) -> T:
+async def _maybe_await(maybe_awaitable: Awaitable[T] | T) -> T:
     if inspect.isawaitable(maybe_awaitable):
         return await maybe_awaitable
     return maybe_awaitable
@@ -61,7 +61,7 @@ def before_and_after(
 
     async def true_iterator() -> AsyncIterator[T]:
         async for elem in iterable:
-            if await maybe_await(predicate(elem)):
+            if await _maybe_await(predicate(elem)):
                 yield elem
             else:
                 transition.set_result(elem)
