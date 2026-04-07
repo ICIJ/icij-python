@@ -171,17 +171,20 @@ class RegistrableConfig(BaseModel, RegistrableMixin):
 
     @model_serializer(mode="wrap")
     def serialize_with_registry_key(
-        self,
-        handler: SerializerFunctionWrapHandler,
-        info: SerializationInfo,  # pylint: disable=unused-argument
-    ) -> dict:
-        data = handler(self)
+        self, nxt: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> dict[str, Any]:
+        serialized = nxt(self)
         registry_key = self.__class__.registry_key.default
         registry_value = getattr(self, registry_key)
         if isinstance(registry_value, FieldInfo):
             registry_value = registry_value.default
-        data[registry_key] = registry_value
-        return data
+        include_key = bool(info.include) and self.registry_key.default in info.include
+        include_key = include_key or not (
+            bool(info.exclude) and self.registry_key.default in info.exclude
+        )
+        if include_key:
+            serialized[registry_key] = registry_value
+        return serialized
 
 
 class RegistrableSettings(RegistrableConfig, BaseSettings):
