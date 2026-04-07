@@ -169,6 +169,20 @@ class RegistrableConfig(BaseModel, RegistrableMixin):
             return handler(value)
         return handler(value)
 
+    @model_serializer(mode="wrap")
+    def serialize_with_registry_key(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,  # pylint: disable=unused-argument
+    ) -> dict:
+        data = handler(self)
+        registry_key = self.__class__.registry_key.default
+        registry_value = getattr(self, registry_key)
+        if isinstance(registry_value, FieldInfo):
+            registry_value = registry_value.default
+        data[registry_key] = registry_value
+        return data
+
 
 class RegistrableSettings(RegistrableConfig, BaseSettings):
     model_config = merge_configs(

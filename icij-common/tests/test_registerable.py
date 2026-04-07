@@ -134,3 +134,26 @@ def test_registrable_from_config(
     assert isinstance(instance, Registered)
 
     assert instance.some_attr == "some_value"
+
+
+def test_serialize_with_registry_key() -> None:
+    # Given
+
+    class _MockedBaseClassConfig(RegistrableConfig):
+        registry_key: ClassVar[str] = Field(frozen=True, default="some_key")
+
+    class _MockConfig(_MockedBaseClassConfig):
+        some_key: ClassVar[str] = Field(frozen=True, default="registered")
+        some_attr: str
+
+    instance_config = _MockConfig(some_attr="some_value")
+
+    # When
+    serialized = instance_config.model_dump_json(indent=2)
+
+    # Then
+    expected = """{
+  "some_attr": "some_value",
+  "some_key": "registered"
+}"""
+    assert serialized == expected
