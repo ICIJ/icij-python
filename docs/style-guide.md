@@ -1,7 +1,7 @@
-# ICIJ's style guide for Python applications
+# ICIJ's Style Guide for Python Applications
 
 This guide largely follows [Google's Python Style Guide](https://google.github.io/styleguide/pyguide.html) with certain adjustments
-forced by our ruff configuration.
+enforced by our ruff configuration.
 
 ---
 
@@ -9,14 +9,15 @@ forced by our ruff configuration.
 
 ### Ruff
 
-All formatting and linting is handled by [ruff](https://docs.astral.sh/ruff/). Configuration lives in `qa/ruff.toml` and is shared across all packages.
+Formatting and linting should be handled by [ruff](https://docs.astral.sh/ruff/) and configuration values should
+be kept in `qa/ruff.toml`.
 
 - **Target:** Python >=3.12
 - **Line length:** 88 characters (ruff default)
 - **Import sorting:** enforced via the `I` ruleset
 
-Ruff should be run on committing with `pre-commit`. Make sure to install it before
-making a commit (`pre-commit install`). If `pre-commit` isn't included in a project's
+Ruff should be run on commit with `pre-commit`. Make sure to install it before
+committing (`uv run pre-commit install`). If `pre-commit` isn't included in a project's
 dev dependencies, add it:
 
 ```console
@@ -56,21 +57,23 @@ uv run pre-commit install
 
 Follow [Google's naming rules](https://google.github.io/styleguide/pyguide.html#316-naming):
 
-| Kind | Style | Example |
-|---|---|---|
-| Packages / modules | `snake_case` | `task_client`, `objects_` |
-| Classes | `PascalCase` | `WorkerConfig`, `ASRActivities` |
-| Functions / methods | `snake_case` | `create_translation_batches` |
-| Variables | `snake_case` | `batch_size`, `run_id` |
-| Constants (module-level) | `UPPER_SNAKE_CASE` | `TRANSLATION_WORKFLOW_NAME` |
-| Private constants | `_UPPER_SNAKE_CASE` | `_ONE_MINUTE`, `_TEN_MINUTES` |
+| Kind | Style | Example                            |
+|---|---|------------------------------------|
+| Packages / modules | `snake_case` | `task_client`, `objects_`          |
+| Classes | `PascalCase` | `WorkerConfig`, `AppActivities`    |
+| Functions / methods | `snake_case` | `create_batches`                   |
+| Variables | `snake_case` | `batch_size`, `run_id`             |
+| Constants (module-level) | `UPPER_SNAKE_CASE` | `WORKFLOW_NAME`         |
+| Private constants | `_UPPER_SNAKE_CASE` | `_ONE_MINUTE`, `_TEN_MINUTES`      |
 | Private attributes / methods | leading `_` | `self._client`, `_raise_for_status` |
 
 **Conventions to follow:**
 
 - Use full words; avoid non-standard abbreviations (`translation_config`, not `tc`).
-- Single-letter names are acceptable only for type variables (`T`, `P`) and trivial loop indices.
-- Type aliases (and `TypeVar`) live at module level, conventionally near the top after imports.
+- Single-letter names are acceptable only for type variables (`T`, `P`) and trivial loop
+indices.
+- Type aliases (and `TypeVar`) live at module level, conventionally near the top after
+imports.
 
 ```python
 P = ParamSpec("P")
@@ -88,7 +91,8 @@ Import ordering (enforced by ruff `I`):
 2. Third-party packages
 3. Local / intra-package imports
 
-Each group is separated by a blank line. Within a group, imports are sorted lexicographically.
+Each group is separated by a blank line. Within a group, imports are sorted
+lexicographically.
 
 ```python
 # Standard library
@@ -110,14 +114,18 @@ from .objects import TranslationRequest, TranslationResponse
 
 **Rules:**
 
-- Relative imports are allowed within the same package, but **not above the parent level** (enforced by `ban-relative-imports = "parents"`).
-- Prefer `from collections.abc import Callable` over `from typing import Callable` (enforced by `UP`).
-- Group multiple names from the same module on one `from … import (…)` line. Use parentheses when the line would exceed 88 characters.
+- Relative imports are allowed within the same package, but **not above the parent
+level** (enforced by `ban-relative-imports = "parents"`).
+- Prefer `from collections.abc import Callable` over `from typing import Callable`
+(enforced by `UP`).
+- Group multiple names from the same module on one `from … import (…)` line.
+Use parentheses when the line would exceed 88 characters.
 - Never use wildcard imports (`from module import *`).
 
 ### Temporal workflow imports
 
-Modules that import non-deterministic or third-party code inside a workflow file must use the `workflow.unsafe.imports_passed_through()` guard:
+Modules that import non-deterministic or third-party code inside a workflow file must
+use the `workflow.unsafe.imports_passed_through()` guard:
 
 ```python
 from temporalio import workflow
@@ -132,7 +140,8 @@ with workflow.unsafe.imports_passed_through():
 
 ## Type Annotations
 
-Annotate all public functions and methods. Use PEP 604 union syntax (`X | Y`) instead of `Optional[X]` or `Union[X, Y]`.
+Annotate all public functions and methods. Use PEP 604 union syntax (`X | Y`) instead of
+`Optional[X]` or `Union[X, Y]`.
 
 ```python
 # Yes
@@ -140,6 +149,7 @@ def find_worker(worker_id: str | None = None) -> Worker | None: ...
 
 # No
 from typing import Optional, Union
+
 def find_worker(worker_id: Optional[str] = None) -> Optional[Worker]: ...
 ```
 
@@ -147,9 +157,12 @@ def find_worker(worker_id: Optional[str] = None) -> Optional[Worker]: ...
 
 - Do not annotate `self` or `cls`.
 - Do not annotate `__init__` return types (covered by `ANN204` ignore).
-- `*args` and `**kwargs` annotations are optional (covered by `ANN002`/`ANN003` ignores).
-- Use `Any` only when the type genuinely cannot be expressed; do not use it to suppress annotation errors.
-- Prefer abstract types from `collections.abc` over concrete ones: `Callable` not `function`, `Iterable` not `list` in signatures.
+- `*args` and `**kwargs` annotations are optional (covered by `ANN002`/`ANN003`
+ignores).
+- Use `Any` only when the type genuinely cannot be expressed. Do not use it to suppress
+annotation errors.
+- Prefer abstract types from `collections.abc` over concrete ones: `Callable` not
+`function`, `Iterable` not `list` in signatures.
 - Use `Self` (from `typing`) for class methods that return the instance.
 
 ```python
@@ -175,7 +188,8 @@ FactoryReturnType = AbstractContextManager | AbstractAsyncContextManager | None
 
 ## Docstrings
 
-Use **reStructuredText (reST) / Sphinx-style** docstrings. The summary line should fit on one line; use the extended body for additional detail when needed.
+Use **reStructuredText (reST) / Sphinx-style** docstrings. The summary line should fit
+on one line. Use the extended body for additional detail when needed.
 
 ```python
 def find_device(device_name: str = CPU) -> str:
@@ -188,15 +202,19 @@ def find_device(device_name: str = CPU) -> str:
 
 Fields to include when applicable:
 
-- **`:param name:`** — one entry per parameter (omit `self`/`cls`). Describe the parameter, not its type — the type is already in the annotation.
-- **`:return:`** — what the function returns; omit for `None`-returning functions.
-- **`:raises ExcType:`** — exceptions the caller should handle.
+- **`:param name:`** — One entry per parameter (except `self`/`cls`). Describe the
+parameter, not its type. The type is already in the annotation.
+- **`:return:`** — What the function returns; omit when returning `None`.
+- **`:raises ExcType:`** — Exceptions the caller should handle.
 
 **Rules:**
 
-- Short class docstrings can be a single line: `"""Contains activity definitions and model references"""`
-- A docstring is not required for every private helper, but any function with non-obvious behavior should have one.
-- Don't end single-line summary docstrings with a period (`"""Do this""""` not `"""This.""""`)
+- Short class docstrings can be a single line: `"""Contains activity definitions and
+model references"""`
+- A docstring is not required for every private helper, but any function with
+non-obvious behavior should have one.
+- Don't end single-line summary docstrings with a period (`"""Do this""""` not
+`"""This.""""`)
 - Do not repeat information already in type annotations.
 
 ---
@@ -207,15 +225,15 @@ Fields to include when applicable:
 
 Use Pydantic `BaseModel` (or project-specific subclasses) for data objects,
 configuration, and API payloads. Use the project base classes rather than inheriting
-from raw Pydantic where applicable:
+from raw Pydantic models where applicable:
 
 ```python
 from datashare_python.objects import BaseModel, BasePayload, DatashareModel
 
-class TranslationResponse(BasePayload):
+class WorkerResponse(BasePayload):
     status: str
     error: str | None = None
-    num_translations: int = 0
+    results: int = 0
 ```
 
 Use `Field()` when you need defaults, aliases, or frozen fields:
@@ -225,24 +243,6 @@ class Task(DatashareModel):
     type: str = Field(frozen=True, alias="@type", default="Task")
     state: TaskState = TaskState.CREATED
     created_at: datetime = Field(default_factory=_datetime_now)
-```
-
-### Frozen dataclasses
-
-Use `@dataclass(frozen=True)` for small, immutable value objects that don't need
-serialization:
-
-```python
-@dataclass(frozen=True)
-class Progress:
-    max_progress: float
-    current: float = 0.0
-
-    @property
-    def progress(self) -> float:
-        if self.max_progress == 0.0:
-            return 0.0
-        return self.current / self.max_progress
 ```
 
 ### Protocol classes
@@ -302,7 +302,7 @@ def activity_defn(name: str, no_thread_cancel_exception: bool = False) -> ...: .
 ```
 
 - Use `*` to separate positional from keyword-only arguments when a function has many
-- parameters:
+parameters:
 
 ```python
 async def progress_handler(
@@ -329,7 +329,7 @@ def with_retryables(retryables: set[type[Exception]] = set()) -> ...: ...
 
 ### Decorators
 
-Stack decorators from innermost to outermost. Use `@functools.wraps` when writing
+Stack decorators from inner- to outermost. Use `@functools.wraps` when writing
 wrapper functions to preserve the wrapped function's metadata:
 
 ```python
@@ -350,7 +350,8 @@ def with_retryables(...):
 
 ### Custom exceptions
 
-Inherit from a project base error class. Use multiple inheritance to also subclass a built-in exception type so callers can catch either:
+Inherit from a project base error class. Use multiple inheritance to subclass a
+built-in exception type so callers can catch either:
 
 ```python
 from abc import ABC
@@ -365,7 +366,8 @@ class UnknownTask(DatashareError, ValueError):
         super().__init__(msg)
 ```
 
-Build the message string separately and pass it to `super().__init__()` — this keeps `__init__` readable and avoids inline string construction inside `super()`.
+Build the message string separately and pass it to `super().__init__()`.
+This keeps `__init__` readable and avoids inline string construction inside `super()`.
 
 ### Catching exceptions
 
@@ -381,9 +383,11 @@ except Exception as e:
     raise fatal_error_from_exception(e) from e
 ```
 
-- Never use bare `except:` (catches `SystemExit`, `KeyboardInterrupt`, etc.).
-- Catching `Exception` broadly is only acceptable at an isolation boundary (e.g., a top-level activity wrapper that converts unknown exceptions to non-retryable Temporal errors). Mark such catch-alls with `# noqa: BLE001` and a comment explaining the intent.
-- Minimise the code inside `try` blocks to avoid masking unrelated errors.
+- Avoid using bare `except:` (catches `SystemExit`, `KeyboardInterrupt`, etc.).
+- Catching `Exception` broadly is only acceptable when at an isolation boundary (e.g., a
+top-level activity wrapper that converts unknown exceptions to non-retryable Temporal
+errors). Mark such catch-alls with `# noqa: BLE001` and a comment explaining the intent.
+- Minimize the code inside `try` blocks to avoid masking unrelated errors.
 
 ### Raising errors
 
@@ -408,7 +412,9 @@ import logging
 logger = logging.getLogger(__name__)
 ```
 
-**Always use `%`-style format strings** in log calls — never f-strings. This defers string interpolation until the log record is actually emitted, and is enforced by the `G` ruleset:
+**Use `%`-style format strings** in log calls, not f-strings. This defers string
+interpolation until the log record is actually emitted, and is enforced by the `G`
+ruleset:
 
 ```python
 # Yes
@@ -419,7 +425,7 @@ logger.warning("Retrying after error: %s", exc)
 logger.info(f"Processing {count} documents in project {project}")
 ```
 
-Inside Temporal workflows, use `workflow.logger` instead of a standard logger:
+Inside Temporal workflows, use `workflow.logger`:
 
 ```python
 workflow.logger.info("Preprocessing complete")
@@ -430,7 +436,7 @@ workflow.logger.debug("recording progress signal %s", signal)
 
 ## Async / Await
 
-This codebase is async-first. Follow these patterns:
+Datashare and adjacent applications are async-first. Follow these patterns:
 
 ### Async context managers
 
@@ -481,9 +487,9 @@ async def async_batches(
 
 ### Temporal activity executors
 
-Synchronous activities (run in a `ThreadPoolExecutor`) that need to call async code must
-use `asyncio.run_coroutine_threadsafe` with the worker's event loop — not
-`asyncio.run()`:
+Synchronous activities (run in a `ThreadPoolExecutor`) that need to call async code
+should use `asyncio.run_coroutine_threadsafe` with the worker's event loop, not
+`asyncio.run()`, to prevent double-loading context:
 
 ```python
 asyncio.run_coroutine_threadsafe(handler(0.0), self._event_loop).result()
@@ -525,14 +531,15 @@ _TEN_MINUTES = _ONE_MINUTE * 10
 - Use `# TODO:` for deferred work. Include a brief explanation of what needs doing:
 
 ```python
-# TODO: Eventually this may include whisper, which will
-#  then require passing language_map
+# TODO: Need to break this out into a separate module
 ```
 
-- Use `# noqa: RULE_CODE` to suppress a specific ruff rule locally. Always include a short comment explaining the suppression on the same line or just above it:
+- Use `# noqa: RULE_CODE` to suppress a specific ruff rule locally. Always include a
+short comment explaining the suppression on the same line or just above it:
 
 ```python
-except Exception as e:  # noqa: BLE001 — top-level boundary; converts to non-retryable error
+except Exception as e:  # noqa: BLE001 — top-level boundary; converts to
+# non-retryable error
 ```
 
 ---
@@ -546,8 +553,9 @@ except Exception as e:  # noqa: BLE001 — top-level boundary; converts to non-r
 msg = f'Unknown task "{task_id}" for {worker_id}'
 ```
 
-- **Never use f-strings in logging calls** (see [Logging](#logging)).
-- Build long strings by concatenating inside parentheses rather than with `\` continuation or `+` in a loop.
+- **Don't use f-strings in logging calls** (see [Logging](#logging)).
+- Build long strings by concatenating inside parentheses rather than with `\`
+continuation or `+` in a loop.
 
 ---
 
@@ -586,35 +594,3 @@ async def cpu_worker(
 All async tests run automatically under `asyncio_mode = "auto"` (configured in
 `pyproject.toml`). No explicit `@pytest.mark.asyncio` decorator is needed.
 
-### Mocking
-
-Prefer `monkeypatch.setattr` for patching. Mock only at the boundary of the system under
-test — don't mock internals:
-
-```python
-monkeypatch.setattr(AiohttpClient, "_put", _put_and_assert)
-```
-
----
-
-## Temporal worker project structure
-
-Each worker package in `datashare-python` adheres to the following structure:
-
-```
-my_worker/
-    __init__.py
-    activities.py     # Temporal activity definitions
-    core.py           # Methods not bound to specific activities
-    workflows.py      # Temporal workflow definitions
-    objects.py        # Pydantic models and dataclasses
-    constants.py      # String constants and queue names
-    config.py         # Pydantic Settings subclass
-tests/
-    conftest.py
-    test_*.py
-pyproject.toml
-```
-
-Keep `activities.py` and `workflows.py` as thin orchestration layers. Business logic
-belongs in dedicated modules that are easy to test without a running Temporal server.
