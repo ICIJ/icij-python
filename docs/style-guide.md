@@ -1,8 +1,7 @@
 # ICIJ's style guide for Python applications
 
-It is based on the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) with adjustments enforced by our ruff configuration.
-
-When in doubt, prefer clarity and consistency with the existing codebase over novelty.
+This guide largely follows [Google's Python Style Guide](https://google.github.io/styleguide/pyguide.html) with certain adjustments
+forced by our ruff configuration.
 
 ---
 
