@@ -39,6 +39,7 @@ def test_should_register_class(
         def _from_config(cls, config: RegistrableConfig, **extras) -> Registered: ...
 
     # Then
+    assert Registered.registered_name == "registered"
     assert base_class.by_name("registered") is Registered
     available = base_class.list_available()
     assert len(available) == 1

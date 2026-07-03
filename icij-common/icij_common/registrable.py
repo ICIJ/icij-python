@@ -25,6 +25,7 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
+from icij_common.common_utils import classproperty
 from icij_common.import_utils import VariableNotFound, import_variable
 from icij_common.pydantic_utils import icij_config, merge_configs
 
@@ -133,8 +134,7 @@ If your registered class comes from custom code, you'll need to import the\
         keys = list(RegistrableMixin._registry[cls].keys())
         return keys
 
-    @classmethod
-    @property
+    @classproperty
     def registered_name(cls) -> str:
         for (
             names
