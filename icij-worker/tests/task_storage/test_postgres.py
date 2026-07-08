@@ -11,7 +11,7 @@ from psycopg import AsyncClientCursor, AsyncConnection, sql
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
-from pydantic import Discriminator, Field, Tag
+from pydantic import Discriminator, Field, SecretStr, Tag
 from pydantic_settings import SettingsConfigDict
 
 from icij_common.pydantic_utils import make_enum_discriminator, safe_copy
@@ -48,7 +48,7 @@ async def test_postgres_config() -> PostgresStorageConfig:
         host=TEST_PG_HOST,
         port=TEST_PG_PORT,
         user=TEST_PG_USER,
-        password=TEST_PG_PASSWORD,
+        password=SecretStr(TEST_PG_PASSWORD),
         use_ssl=False,
         connect_timeout_s=2.0,
     )

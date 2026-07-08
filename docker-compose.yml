@@ -17,12 +17,13 @@ services:
       - "7688:7687"
 
   icij-python-test-postgres:
-    image: postgres
+    image: pgvector/pgvector:pg15
     container_name: icij-python-test-postgres
     environment:
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: changeme
     healthcheck:
-      test: pg_isready
+      test: pg_isready -U postgres
       interval: 2s
       timeout: 2s
       retries: 10

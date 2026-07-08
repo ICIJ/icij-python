@@ -28,4 +28,6 @@ class PostgresConnectionInfo(BaseModel):
         kwargs = self.model_dump()
         kwargs.pop("use_ssl")
         kwargs["connect_timeout"] = int(kwargs.pop("connect_timeout_s"))
+        if "password" in kwargs:
+            kwargs["password"] = kwargs["password"].get_secret_value()
         return kwargs

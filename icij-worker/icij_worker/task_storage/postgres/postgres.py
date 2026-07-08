@@ -75,7 +75,7 @@ class PostgresStorageConfig(PostgresConnectionInfo, TaskStorageConfig):
         self_as_connection_info = {
             k: v
             for k, v in self.model_dump().items()
-            if k in PostgresConnectionInfo.__fields__
+            if k in PostgresConnectionInfo.model_fields
         }
         return PostgresConnectionInfo(**self_as_connection_info)
 
@@ -112,7 +112,6 @@ class PoolManager(AbstractAsyncContextManager):
 
 
 class PostgresStorage(TaskStorage):
-
     def __init__(
         self,
         connection_info: PostgresConnectionInfo,
