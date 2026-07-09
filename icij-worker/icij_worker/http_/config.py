@@ -39,6 +39,10 @@ if len(TMConfig) > 1:
     tm_config_discriminator = Discriminator(
         make_enum_discriminator("backend", AsyncBackend)
     )
+elif len(TMConfig) == 1:
+    TMConfig = TMConfig[0]
+else:
+    raise RuntimeError("couldn't find any task manager config class")
 
 
 class HttpServiceConfig(BaseSettings, LogWithWorkerIDMixin):
