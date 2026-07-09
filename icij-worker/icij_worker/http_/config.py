@@ -35,7 +35,7 @@ def _get_available_tm_configs() -> tuple:
 TMConfig = _get_available_tm_configs()
 tm_config_discriminator = None
 if len(TMConfig) > 1:
-    TMConfig = tagged_union(TMConfig, lambda x: x.backend.default_value)
+    TMConfig = tagged_union(TMConfig, lambda x: x.backend.default)
     tm_config_discriminator = Discriminator(
         make_enum_discriminator("backend", AsyncBackend)
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import TypeVar, cast
+from typing import ClassVar, TypeVar, cast
 
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
 from aiormq import DeliveryError
@@ -40,9 +40,8 @@ logger = logging.getLogger(__name__)
 S = TypeVar("S", bound=TaskStorage)
 
 
-@TaskManagerConfig.register()
 class AMQPTaskManagerConfig(TaskManagerConfig, AMQPConfigMixin):
-    backend: AsyncBackend = Field(frozen=True, default=AsyncBackend.amqp)
+    backend: ClassVar[AsyncBackend] = Field(frozen=True, default=AsyncBackend.amqp)
     storage: FSKeyValueStorageConfig | PostgresStorageConfig
 
 

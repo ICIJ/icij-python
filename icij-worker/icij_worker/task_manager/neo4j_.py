@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import cast
+from typing import ClassVar, cast
 
 import neo4j
 from neo4j import AsyncDriver, AsyncGraphDatabase
@@ -40,9 +40,8 @@ from icij_worker.task_manager import TaskManager, TaskManagerConfig
 from icij_worker.utils.neo4j_ import Neo4jConsumerMixin
 
 
-@TaskManagerConfig.register()
 class Neo4JTaskManagerConfig(TaskManagerConfig):
-    backend: AsyncBackend = Field(frozen=True, default=AsyncBackend.neo4j)
+    backend: ClassVar[AsyncBackend] = Field(frozen=True, default=AsyncBackend.neo4j)
     event_refresh_interval_s: float = 0.1
     neo4j_host: str = "localhost"
     neo4j_port: int = 7687

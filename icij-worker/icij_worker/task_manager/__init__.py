@@ -29,7 +29,7 @@ class TaskManagerConfig(RegistrableConfig):
     model_config = merge_configs(no_enum_values_config())
 
     registry_key: ClassVar[str] = Field(frozen=True, default="backend")
-    backend: AsyncBackend = Field(frozen=True)
+    backend: ClassVar[AsyncBackend]
 
     app_path: str
     app_config: AsyncAppConfig = Field(default_factory=AsyncAppConfig)
