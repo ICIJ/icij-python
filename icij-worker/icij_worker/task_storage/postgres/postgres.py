@@ -177,6 +177,7 @@ class PostgresStorage(TaskStorage):
         params = result.model_dump(
             include={TASK_RESULT_TASK_ID, TASK_RESULT_RESULT, TASK_RESULT_CREATED_AT},
             exclude={ResultEvent.registry_key.default},
+            mode="json",
         )
         pool = await self._pool_manager.get_pool(task_db)
         async with pool.connection() as conn:
@@ -345,7 +346,7 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
 
 
 async def _insert_task(cur: AsyncClientCursor, task: Task, group: str | None):
-    task_as_dict = task.model_dump(exclude={Task.registry_key.default})
+    task_as_dict = task.model_dump(exclude={Task.registry_key.default}, mode="json")
     task_as_dict[POSTGRES_TASKS_GROUP] = group
     task_as_dict[TASK_ARGS] = ujson.dumps(task.args)
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
@@ -402,7 +403,7 @@ async def _get_tasks(
 
 
 async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
-    error_as_dict = error.model_dump(exclude_none=True)
+    error_as_dict = error.model_dump(exclude_none=True, mode="json")
     error_as_dict.update(error_as_dict.pop("error"))
     error_as_dict.pop(TaskError.registry_key.default)
     error_as_dict["stacktrace"] = ujson.dumps(error_as_dict["stacktrace"])
@@ -419,7 +420,7 @@ async def _insert_error(cur: AsyncClientCursor, error: ErrorEvent):
 
 
 async def _update_task(cur: AsyncCursor, task: Task):
-    task_update = TaskUpdate.from_task(task).model_dump(exclude_none=True)
+    task_update = TaskUpdate.from_task(task).model_dump(exclude_none=True, mode="json")
     updates = sql.SQL(", ").join(
         sql.SQL("{} = {}").format(sql.Identifier(col), sql.Placeholder(col))
         for col in task_update
