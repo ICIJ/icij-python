@@ -50,7 +50,6 @@ class HttpServiceConfig(BaseSettings, LogWithWorkerIDMixin):
     )
 
     app_title: str = "HTTP service"
-    app_path: ClassVar[str] = Field(default=_PLACEHOLDER, frozen=True)
     loggers: ClassVar[list[str]] = Field(
         _ALL_LOGGERS + ["uvicorn", "__main__"], frozen=True
     )
