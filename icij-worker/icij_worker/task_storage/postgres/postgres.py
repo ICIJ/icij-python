@@ -7,6 +7,7 @@ import time
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy
 from functools import cached_property
+from pydantic_core import to_jsonable_python
 from typing import AsyncGenerator, Awaitable, Callable, ClassVar, Protocol
 
 import ujson
@@ -348,7 +349,7 @@ async def _task_exists(cur: AsyncCursor, task_id: str) -> bool:
 async def _insert_task(cur: AsyncClientCursor, task: Task, group: str | None):
     task_as_dict = task.model_dump(exclude={Task.registry_key.default}, mode="json")
     task_as_dict[POSTGRES_TASKS_GROUP] = group
-    task_as_dict[TASK_ARGS] = ujson.dumps(task.args)
+    task_as_dict[TASK_ARGS] = ujson.dumps(to_jsonable_python(task.args))
     col_names = sql.SQL(", ").join(sql.Identifier(n) for n in task_as_dict)
     col_value_placeholders = sql.SQL(", ").join(
         sql.Placeholder(n) for n in task_as_dict
