@@ -136,7 +136,11 @@ If your registered class comes from custom code, you'll need to import the\
 
     @classproperty
     def registered_name(cls) -> str:  # pylint: disable=no-self-argument
-        for names in RegistrableMixin._registered_names.values():  # pylint: disable=protected-access
+        for (
+            names
+        ) in (
+            RegistrableMixin._registered_names.values()  # pylint: disable=protected-access
+        ):
             name = names.get(cls)
             if name is not None:
                 return name
