@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import ClassVar, TypeVar, cast
+from typing import AsyncIterable, ClassVar, TypeVar, cast
 
 from aio_pika.abc import AbstractExchange, AbstractQueueIterator
 from aiormq import DeliveryError
@@ -133,9 +133,10 @@ class AMQPTaskManager(TaskManager, AMQPMixin):
         task_name: str | None = None,
         state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> list[Task]:
+    ) -> AsyncIterable[Task]:
         # pylint: disable=unused-argument
-        return await self._storage.get_tasks(group, task_name=task_name, state=state)
+        async for t in self._storage.get_tasks(group, task_name=task_name, state=state):
+            yield t
 
     async def save_task_(self, task: Task, group: str | None) -> bool:
         return await self._storage.save_task_(task, group)

@@ -1,3 +1,5 @@
+from typing import AsyncIterable
+
 import logging
 from http.client import HTTPException
 
@@ -82,13 +84,13 @@ def tasks_router(prefix: str = "/api") -> APIRouter:
             raise HTTPException(status_code=404, detail=e.args[0]) from e
         return errors
 
-    @router.post("/tasks", response_model=list[Task])
-    async def _search_tasks(search: TaskSearch) -> list[Task]:
+    @router.post("/tasks")
+    async def _search_tasks(search: TaskSearch) -> AsyncIterable[Task]:
         task_manager = lifespan_task_manager()
         with log_elapsed_time_cm(logger, TRACE, "searched tasks in {elapsed_time} !"):
-            tasks = await task_manager.get_tasks(
+            async for t in task_manager.get_tasks(
                 group=None, task_type=search.name, status=search.status
-            )
-        return tasks
+            ):
+                yield t
 
     return router
