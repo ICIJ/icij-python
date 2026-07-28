@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import AsyncIterable
+
 from abc import ABC, abstractmethod
 
 from icij_worker import ResultEvent, Task, TaskState
@@ -36,7 +38,7 @@ class TaskStorage(ABC):
         task_name: str | None = None,
         state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> list[Task]: ...
+    ) -> AsyncIterable[Task]: ...
 
     async def _save_progress_event(self, event: ProgressEvent):
         # Might be better to be overridden to be performed in a transactional manner

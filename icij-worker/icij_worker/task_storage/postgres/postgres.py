@@ -8,7 +8,14 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from copy import copy
 from functools import cached_property
 from pydantic_core import to_jsonable_python
-from typing import AsyncGenerator, Awaitable, Callable, ClassVar, Protocol
+from typing import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    ClassVar,
+    Protocol,
+)
 
 import ujson
 from psycopg import AsyncClientCursor, AsyncConnection, AsyncCursor, sql
@@ -215,18 +222,15 @@ class PostgresStorage(TaskStorage):
         task_name: str | None = None,
         state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> list[Task]:
+    ) -> AsyncIterable[Task]:
         tasks_db = self._routing_strategy.postgres_db(group)
         pool = await self._pool_manager.get_pool(tasks_db)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=Task.postgres_row_factory) as cur:
-                tasks = [
-                    t
-                    async for t in _get_tasks(
-                        cur, group=group, task_name=task_name, state=state
-                    )
-                ]
-        return tasks
+                async for t in _get_tasks(
+                    cur, group=group, task_name=task_name, state=state
+                ):
+                    yield t
 
     async def get_task_errors(self, task_id: str) -> list[ErrorEvent]:
         tasks_db = await self._get_task_db(task_id)

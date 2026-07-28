@@ -371,7 +371,7 @@ async def test_migrate_task_inputs_to_arguments_v0_tx(
     for t in expected:
         t.pop("createdAt")
     expected = sorted(expected, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(group=None)
+    retrieved_tasks = [t async for t in task_manager.get_tasks(group=None)]
     retrieved_tasks = [
         t.model_dump(by_alias=True, exclude_unset=True) for t in retrieved_tasks
     ]
@@ -424,7 +424,7 @@ ON (task.{NEO4J_TASK_TYPE_DEPRECATED})"""
         for t in expected:
             t.pop("createdAt")
         expected = sorted(expected, key=lambda x: x["id"])
-        retrieved_tasks = await task_manager.get_tasks(group=None)
+        retrieved_tasks = [t async for t in task_manager.get_tasks(group=None)]
         retrieved_tasks = [
             t.model_dump(by_alias=True, exclude_unset=True) for t in retrieved_tasks
         ]
@@ -468,7 +468,7 @@ async def test_migrate_task_progress_v0_tx(
     for t in expected:
         t.pop("createdAt")
     expected = sorted(expected, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(group=None)
+    retrieved_tasks = [t async for t in task_manager.get_tasks(group=None)]
     retrieved_tasks = [
         t.model_dump(by_alias=True, exclude_unset=True) for t in retrieved_tasks
     ]
@@ -537,7 +537,7 @@ async def test_migrate_task_retries_and_error_v0_tx(
     for t in expected_tasks:
         t.pop("createdAt")
     expected_tasks = sorted(expected_tasks, key=lambda x: x["id"])
-    retrieved_tasks = await task_manager.get_tasks(group=None)
+    retrieved_tasks = [t async for t in task_manager.get_tasks(group=None)]
     retrieved_tasks = [t.model_dump(by_alias=True) for t in retrieved_tasks]
     for t in retrieved_tasks:
         t.pop("createdAt")
@@ -611,7 +611,7 @@ async def test_migrate_task_arguments_into_args_v0_tx(
         for t in expected:
             t.pop("createdAt")
         expected = sorted(expected, key=lambda x: x["id"])
-        retrieved_tasks = await task_manager.get_tasks(group=None)
+        retrieved_tasks = [t async for t in task_manager.get_tasks(group=None)]
         retrieved_tasks = [
             t.model_dump(by_alias=True, exclude_unset=True) for t in retrieved_tasks
         ]
@@ -664,7 +664,9 @@ ON (task.{NEO4J_TASK_TYPE_DEPRECATED})"""
         for t in expected:
             t.pop("createdAt")
         expected = sorted(expected, key=lambda x: x["id"])
-        retrieved_tasks = await task_manager.get_tasks(group="hello_world_namespace")
+        retrieved_tasks = [
+            t async for t in task_manager.get_tasks(group="hello_world_namespace")
+        ]
         retrieved_tasks = [
             t.model_dump(by_alias=True, exclude_unset=True) for t in retrieved_tasks
         ]
@@ -673,7 +675,7 @@ ON (task.{NEO4J_TASK_TYPE_DEPRECATED})"""
         retrieved_tasks = sorted(retrieved_tasks, key=lambda x: x["id"])
         assert retrieved_tasks == expected[:1]
 
-        retrieved_tasks = await task_manager.get_tasks(group=None)
+        retrieved_tasks = [t async for t in task_manager.get_tasks(group=None)]
         retrieved_tasks = [
             t.model_dump(by_alias=True, exclude_unset=True) for t in retrieved_tasks
         ]

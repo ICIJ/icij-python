@@ -407,7 +407,10 @@ async def test_get_tasks(
     # Given
     storage = test_postgres_storage
     # When
-    db_tasks = await storage.get_tasks(group=group, state=state, task_name=task_name)
+    db_tasks = [
+        t
+        async for t in storage.get_tasks(group=group, state=state, task_name=task_name)
+    ]
     # Then
     assert db_tasks == expected_tasks
 

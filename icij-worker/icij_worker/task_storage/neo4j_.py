@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime
-from typing import AsyncGenerator
+from typing import AsyncGenerator, AsyncIterable
 
 import neo4j
 from neo4j import AsyncTransaction
@@ -89,12 +89,13 @@ class Neo4jStorage(TaskStorage):
         task_name: str | None = None,
         state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> list[Task]:
+    ) -> AsyncIterable[Task]:
         db = self._routing_strategy.neo4j_db(group)
         async with self._db_session(db) as sess:
-            recs = await _get_tasks(sess, state=state, task_name=task_name, group=group)
-        tasks = [Task.from_neo4j(r) for r in recs]
-        return tasks
+            async for rec in _get_tasks(
+                sess, state=state, task_name=task_name, group=group
+            ):
+                yield Task.from_neo4j(rec)
 
     async def get_task_group(self, task_id: str) -> str | None:
         if task_id not in self._task_meta:
@@ -325,14 +326,13 @@ async def _get_tasks(
     state: list[TaskState] | TaskState | None,
     task_name: str | None,
     group: str | None,
-) -> list[neo4j.Record]:
+) -> AsyncIterable[neo4j.Record]:
     if isinstance(state, TaskState):
         state = [state]
     if state is not None:
         state = [s.value for s in state]
-    return await sess.execute_read(
-        _get_tasks_tx, state=state, task_name=task_name, group=group
-    )
+    async for r in _get_tasks_tx(sess, state=state, task_name=task_name, group=group):
+        yield r
 
 
 async def _get_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str) -> Task:
@@ -345,12 +345,12 @@ async def _get_task_tx(tx: neo4j.AsyncTransaction, *, task_id: str) -> Task:
 
 
 async def _get_tasks_tx(
-    tx: neo4j.AsyncTransaction,
-    state: list[str] | None,
+    sess: neo4j.AsyncSession,
+    state: list[str] | TaskState | None,
     *,
     task_name: str | None,
     group: str | None,
-) -> list[neo4j.Record]:
+) -> AsyncIterable[neo4j.Record]:
     where = ""
     if task_name:
         where = f"WHERE task.{NEO4J_TASK_NAME} = $type"
@@ -368,7 +368,7 @@ async def _get_tasks_tx(
     all_labels = list(itertools.product(*all_labels))
     if all_labels:
         query = "UNION\n".join(
-            f"""MATCH (task:{':'.join(labels)}) {where}
+            f"""MATCH (task:{":".join(labels)}) {where}
             RETURN task
             ORDER BY task.{NEO4J_TASK_CREATED_AT} DESC"""
             for labels in all_labels
@@ -377,9 +377,9 @@ async def _get_tasks_tx(
         query = f"""MATCH (task:{NEO4J_TASK_NODE})
 RETURN task
 ORDER BY task.{NEO4J_TASK_CREATED_AT} DESC"""
-    res = await tx.run(query, type=task_name, group=group)
-    recs = [rec async for rec in res]
-    return recs
+    results = await sess.run(query, type=task_name, group=group)
+    async for rec in results:
+        yield rec
 
 
 async def _get_task_errors_tx(

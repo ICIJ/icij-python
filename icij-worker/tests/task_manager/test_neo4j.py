@@ -330,9 +330,12 @@ async def test_task_manager_get_tasks(
     expected_ix: list[int],
 ):
     # When
-    tasks = await neo4j_task_manager.get_tasks(
-        state=states, task_name=task_name, group=group
-    )
+    tasks = [
+        t
+        async for t in neo4j_task_manager.get_tasks(
+            state=states, task_name=task_name, group=group
+        )
+    ]
     tasks = sorted(tasks, key=lambda t: t.id)
 
     # Then

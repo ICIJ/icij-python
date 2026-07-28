@@ -254,7 +254,9 @@ if _has_pytest:
             return self._app
 
         async def _ensure_queue_size(self):
-            tasks = await self.get_tasks(group=None, state=TaskState.QUEUED)
+            tasks = [
+                t async for t in self.get_tasks(group=None, state=TaskState.QUEUED)
+            ]
             n_queued = len(tasks)
             if (
                 self.max_task_queue_size is not None

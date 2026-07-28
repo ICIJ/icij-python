@@ -189,7 +189,10 @@ async def test_get_tasks(
     # Given
     storage = fs_storage
     # When
-    tasks = await storage.get_tasks(group=group, task_name=task_name, state=state)
+    tasks = [
+        t
+        async for t in storage.get_tasks(group=group, task_name=task_name, state=state)
+    ]
     # Then
     assert tasks == expected_tasks
 

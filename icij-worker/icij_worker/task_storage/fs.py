@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import AsyncIterable
+
 import functools
 import logging
 from contextlib import AsyncExitStack
@@ -96,7 +98,7 @@ class FSKeyValueStorage(KeyValueStorage):
         task_name: str | None = None,
         state: list[TaskState] | TaskState | None = None,
         **kwargs,
-    ) -> list[Task]:
+    ) -> AsyncIterable[Task]:
         states = set()
         if state is not None:
             if isinstance(state, TaskState):
@@ -112,8 +114,7 @@ class FSKeyValueStorage(KeyValueStorage):
         tasks = list(tasks)
         for t in tasks:
             t.pop("group", None)
-        task = [Task.model_validate(t) for t in tasks]
-        return task
+            yield Task.model_validate(t)
 
     def _make_db(self, filename: str, *, name: str) -> Sqlitedict:
         return SqliteDict(
