@@ -12,7 +12,7 @@ dependencies = [
     "alive-progress>=3.2.0",
     "icij-common~=0.8.3",
     "typer>=0.12.5,<0.14",
-    "typing-extensions~=4.12.2",
+    "typing-extensions~=4.12",
 ]
 
 [project.urls]
