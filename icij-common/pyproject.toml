@@ -1,6 +1,6 @@
 [project]
 name = "icij-common"
-version = "0.8.3"
+version = "0.8.4"
 description = "Common utils for ICIJ libs"
 authors = [
     { name = "Clément Doumouro", email = "cdoumouro@icij.org" },
@@ -20,7 +20,7 @@ Issues = "https://github.com/ICIJ/icij-python/issues"
 
 [project.optional-dependencies]
 elasticsearch = [
-    "elasticsearch[async]~=7.17.9",
+    "elasticsearch[async]>=7.17.9,<10",
     "tenacity~=9.0"
 ]
 fastapi = [
