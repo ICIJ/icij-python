@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import logging
-
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import neo4j
-
 from packaging.version import Version, parse
-
 from pydantic import BaseModel
 
 from icij_common.neo4j_.constants import (

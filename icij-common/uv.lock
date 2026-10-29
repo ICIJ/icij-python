@@ -2,10 +2,15 @@ version = 1
 revision = 3
 requires-python = ">=3.10, <4.0"
 resolution-markers = [
-    "python_full_version < '3.11'",
-    "python_full_version == '3.11.*'",
     "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
 ]
+conflicts = [[
+    { package = "icij-common", extra = "elasticsearch-7" },
+    { package = "icij-common", extra = "elasticsearch-8" },
+    { package = "icij-common", extra = "elasticsearch-9" },
+]]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -23,7 +28,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohappyeyeballs" },
     { name = "aiosignal" },
-    { name = "async-timeout", marker = "python_full_version < '3.11'" },
+    { name = "async-timeout", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
     { name = "attrs" },
     { name = "frozenlist" },
     { name = "multidict" },
@@ -136,10 +141,10 @@ name = "anyio"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
     { name = "idna" },
     { name = "sniffio" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/95/7d/4c1bd541d4dffa1b52bd83fb8527089e097a106fc90b467a7313b105f840/anyio-4.9.0.tar.gz", hash = "sha256:673c0c244e15788651a4ff38710fea9675823028a6f08a5eda409e0c9840a028", size = 190949, upload-time = "2025-03-17T00:02:54.77Z" }
 wheels = [
@@ -151,7 +156,7 @@ name = "astroid"
 version = "3.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/b9/f11533eed9b65606fb02f1b0994d8ed0903358bc55a6b9759e42f1134725/astroid-3.1.0.tar.gz", hash = "sha256:ac248253bfa4bd924a0de213707e7ebeeb3138abeb48d798784ead1e56d419d4", size = 396275, upload-time = "2024-02-23T16:28:12.889Z" }
 wheels = [
@@ -186,8 +191,8 @@ dependencies = [
     { name = "packaging" },
     { name = "pathspec" },
     { name = "platformdirs" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a2/47/c9997eb470a7f48f7aaddd3d9a828244a2e4199569e38128715c48059ac1/black-24.4.2.tar.gz", hash = "sha256:c872b53057f000085da66a19c55d68f6f8ddcac2642392ad3a355878406fbd4d", size = 642299, upload-time = "2024-04-26T00:32:15.305Z" }
 wheels = [
@@ -220,7 +225,7 @@ name = "click"
 version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
 wheels = [
@@ -246,12 +251,54 @@ wheels = [
 ]
 
 [[package]]
+name = "elastic-transport"
+version = "8.19.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "certifi", marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "urllib3", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/63/c61700c42f74d70a4ae11394c619cf91b837b500144166e828546f1fdd8d/elastic_transport-8.19.0.tar.gz", hash = "sha256:32afed2a70dad80511476c821b2cf823f35a82153289765f6b2e2eb8cb0de099", size = 76409, upload-time = "2026-07-06T16:57:01.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/46/a6091ee84351b61bfb55cf615e538c38c1be4cfceae12f952953eb8d446c/elastic_transport-8.19.0-py3-none-any.whl", hash = "sha256:97ab35de878c7f4c7ebf8840cbc8ff1ff01d9dbc0e977e52d82715b155678b4f", size = 65085, upload-time = "2026-07-06T16:57:00.233Z" },
+]
+
+[[package]]
+name = "elastic-transport"
+version = "9.4.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "certifi", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "sniffio", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "urllib3", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/be/a719a217ed7f179c9e41821dff9dfd28415b21bc94da9d35fff84f7951b2/elastic_transport-9.4.2.tar.gz", hash = "sha256:366f4614f4544c5fb5d780c82f57af8f30492b44a68ed20750390aa81e20c2ea", size = 79310, upload-time = "2026-06-16T15:27:17.182Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/e4/9b7ef7a8e0bb416e0fe1879c92295041cf81e5a47e3c3110744e89b6eb35/elastic_transport-9.4.2-py3-none-any.whl", hash = "sha256:33dc89bb1855faa8b98ae8b036405a39c562778dbcdbe4a00a2eaf753148556c", size = 66314, upload-time = "2026-06-16T15:27:15.875Z" },
+]
+
+[[package]]
 name = "elasticsearch"
 version = "7.17.12"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
 dependencies = [
-    { name = "certifi" },
-    { name = "urllib3" },
+    { name = "certifi", marker = "extra == 'extra-11-icij-common-elasticsearch-7' or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-icij-common-elasticsearch-7' or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/07/ee/68fdc04a4ef1a5026d6331196109714c8569ee70d072af8a479fa60f33c8/elasticsearch-7.17.12.tar.gz", hash = "sha256:a1f5733ae8cf1dbf0a78593389f2503c87dd97429976099832bf0626cdfaac8b", size = 248018, upload-time = "2024-09-19T07:30:22.503Z" }
 wheels = [
@@ -260,7 +307,57 @@ wheels = [
 
 [package.optional-dependencies]
 async = [
-    { name = "aiohttp" },
+    { name = "aiohttp", marker = "extra == 'extra-11-icij-common-elasticsearch-7' or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+]
+
+[[package]]
+name = "elasticsearch"
+version = "8.19.3"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "elastic-transport", version = "8.19.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "python-dateutil", marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "typing-extensions", marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6b/79/365e306017a9fcfbbefab1a3b588d2404bea8806b36766ff0f886509a20e/elasticsearch-8.19.3.tar.gz", hash = "sha256:e84dd618a220cac25b962790085045dd27ac72e01c0a5d81bd29a2d47a71f03f", size = 800298, upload-time = "2025-12-23T12:56:00.72Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/0f/ac126833c385b06166d41c486e4911f58ad7791fd1a53dd6e0b8d16ff214/elasticsearch-8.19.3-py3-none-any.whl", hash = "sha256:fe1db2555811192e8a1be78b01234d0a49d32b185ea7eeeb6f059331dee32838", size = 952820, upload-time = "2025-12-23T12:55:56.796Z" },
+]
+
+[package.optional-dependencies]
+async = [
+    { name = "aiohttp", marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+]
+
+[[package]]
+name = "elasticsearch"
+version = "9.5.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "anyio", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "elastic-transport", version = "9.4.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "python-dateutil", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "sniffio", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "typing-extensions", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/aa/b7/87bce7be89c822a63608e3c946a80d99fce1066ce9e9691bcb6b8ef57631/elasticsearch-9.5.1.tar.gz", hash = "sha256:98210cd96c256dd9936f58e1c762aba94da7db7d38d058bb0fbaf7e4b9567146", size = 930439, upload-time = "2026-09-09T20:17:03.842Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/6e/047d517a64249abd0a1b5b8c9f8244e3bf48c6916d5a68e9c76c52fc266d/elasticsearch-9.5.1-py3-none-any.whl", hash = "sha256:a980d8888ae70c03f0a1db6b2c5e3e39bf4e235abea737f522d2fd1d2d20bb99", size = 1018374, upload-time = "2026-09-09T20:17:00.18Z" },
+]
+
+[package.optional-dependencies]
+async = [
+    { name = "aiohttp", marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
 ]
 
 [[package]]
@@ -357,7 +454,7 @@ wheels = [
 
 [[package]]
 name = "icij-common"
-version = "0.8.3"
+version = "0.8.4"
 source = { editable = "." }
 dependencies = [
     { name = "aiostream" },
@@ -367,7 +464,21 @@ dependencies = [
 
 [package.optional-dependencies]
 elasticsearch = [
-    { name = "elasticsearch", extra = ["async"] },
+    { name = "elasticsearch", version = "7.17.12", source = { registry = "https://pypi.org/simple" }, extra = ["async"], marker = "extra == 'extra-11-icij-common-elasticsearch-7' or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "elasticsearch", version = "8.19.3", source = { registry = "https://pypi.org/simple" }, extra = ["async"], marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "elasticsearch", version = "9.5.1", source = { registry = "https://pypi.org/simple" }, extra = ["async"], marker = "extra == 'extra-11-icij-common-elasticsearch-9' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra != 'extra-11-icij-common-elasticsearch-8')" },
+    { name = "tenacity" },
+]
+elasticsearch-7 = [
+    { name = "elasticsearch", version = "7.17.12", source = { registry = "https://pypi.org/simple" }, extra = ["async"], marker = "extra == 'extra-11-icij-common-elasticsearch-7' or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "tenacity" },
+]
+elasticsearch-8 = [
+    { name = "elasticsearch", version = "8.19.3", source = { registry = "https://pypi.org/simple" }, extra = ["async"], marker = "extra == 'extra-11-icij-common-elasticsearch-8' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "tenacity" },
+]
+elasticsearch-9 = [
+    { name = "elasticsearch", version = "9.5.1", source = { registry = "https://pypi.org/simple" }, extra = ["async"], marker = "(extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra != 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra != 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9')" },
     { name = "tenacity" },
 ]
 fastapi = [
@@ -380,6 +491,7 @@ neo4j = [
 [package.dev-dependencies]
 dev = [
     { name = "black" },
+    { name = "icij-common", extra = ["neo4j"] },
     { name = "pylint" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -388,18 +500,25 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiostream", specifier = "~=0.7.1" },
-    { name = "elasticsearch", extras = ["async"], marker = "extra == 'elasticsearch'", specifier = "~=7.17.9" },
+    { name = "elasticsearch", extras = ["async"], marker = "extra == 'elasticsearch'", specifier = ">=7.17.9,<10" },
+    { name = "elasticsearch", extras = ["async"], marker = "extra == 'elasticsearch-7'", specifier = ">=7,<8" },
+    { name = "elasticsearch", extras = ["async"], marker = "extra == 'elasticsearch-8'", specifier = ">=8,<9" },
+    { name = "elasticsearch", extras = ["async"], marker = "extra == 'elasticsearch-9'", specifier = ">=9,<10" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = "~=0.111" },
+    { name = "icij-common", extras = ["elasticsearch"], marker = "extra == 'elasticsearch-7'" },
+    { name = "icij-common", extras = ["elasticsearch"], marker = "extra == 'elasticsearch-8'" },
+    { name = "icij-common", extras = ["elasticsearch"], marker = "extra == 'elasticsearch-9'" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = "~=5.0" },
     { name = "pydantic", specifier = "~=2.0" },
     { name = "pydantic-settings", specifier = "~=2.8" },
     { name = "tenacity", marker = "extra == 'elasticsearch'", specifier = "~=9.0" },
 ]
-provides-extras = ["elasticsearch", "fastapi", "neo4j"]
+provides-extras = ["elasticsearch", "elasticsearch-7", "elasticsearch-8", "elasticsearch-9", "fastapi", "neo4j"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = "~=24.4" },
+    { name = "icij-common", extras = ["neo4j"] },
     { name = "pylint", specifier = "~=3.1" },
     { name = "pytest", specifier = "~=8.2" },
     { name = "pytest-asyncio", specifier = "~=0.21" },
@@ -446,7 +565,7 @@ name = "multidict"
 version = "6.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/82/4a/7874ca44a1c9b23796c767dd94159f6c17e31c0e7d090552a1c623247d82/multidict-6.2.0.tar.gz", hash = "sha256:0085b0afb2446e57050140240a8595846ed64d1cbd26cef936bfab3192c673b8", size = 71066, upload-time = "2025-03-17T16:55:54.689Z" }
 wheels = [
@@ -824,12 +943,12 @@ version = "3.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astroid" },
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
     { name = "dill" },
     { name = "isort" },
     { name = "mccabe" },
     { name = "platformdirs" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
     { name = "tomlkit" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/23/ef/99c1531ad5454a560a9ff17789320e68d8d7aaceaa8222b293e3fa7488e8/pylint-3.1.1.tar.gz", hash = "sha256:c7c2652bf8099c7fb7a63bc6af5c5f8f7b9d7b392fa1d320cb020e222aff28c2", size = 1495262, upload-time = "2024-05-13T14:35:22.63Z" }
@@ -842,12 +961,12 @@ name = "pytest"
 version = "8.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-8') or (extra == 'extra-11-icij-common-elasticsearch-7' and extra == 'extra-11-icij-common-elasticsearch-9') or (extra == 'extra-11-icij-common-elasticsearch-8' and extra == 'extra-11-icij-common-elasticsearch-9')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a6/58/e993ca5357553c966b9e73cb3475d9c935fe9488746e13ebdf9b80fae508/pytest-8.2.2.tar.gz", hash = "sha256:de4bb8104e201939ccdc688b27a89a7be2079b22e2bd2b07f806b6ba71117977", size = 1427980, upload-time = "2024-06-04T13:38:09.274Z" }
 wheels = [
@@ -867,6 +986,19 @@ wheels = [
 ]
 
 [[package]]
+name = "python-dateutil"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six", marker = "extra == 'extra-11-icij-common-elasticsearch-8' or extra == 'extra-11-icij-common-elasticsearch-9' or extra != 'extra-11-icij-common-elasticsearch-7'" },
+    { name = "tzdata", marker = "extra == 'extra-11-icij-common-elasticsearch-8' or extra == 'extra-11-icij-common-elasticsearch-9' or extra != 'extra-11-icij-common-elasticsearch-7'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/df/f15f80383f152452d8985b36d95cb8751f901a3e0ff4cd27f7e118f168e2/python_dateutil-3.0.0.tar.gz", hash = "sha256:7ebcb3c29a92f3ceafe79a7a48a5c45677e9e004bbeec5742ac0bbb00560b7a2", size = 271066, upload-time = "2026-10-21T23:41:45.075Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/17/cebee01d1c0c1441174cf0456ddc91b280d79acb65340c05e41d77866ee8/python_dateutil-3.0.0-py2.py3-none-any.whl", hash = "sha256:3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd", size = 94659, upload-time = "2026-10-21T23:41:43.431Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -882,6 +1014,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5f/57/df1c9157c8d5a05117e455d66fd7cf6dbc46974f832b1058ed4856785d8a/pytz-2025.1.tar.gz", hash = "sha256:c2db42be2a2518b28e65f9207c4d05e6ff547d1efa4086469ef855e4ab70178e", size = 319617, upload-time = "2025-01-31T01:54:48.615Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/38/ac33370d784287baa1c3d538978b5e2ea064d4c1b93ffbd12826c190dd10/pytz-2025.1-py2.py3-none-any.whl", hash = "sha256:89dd22dca55b46eac6eda23b2d72721bf1bdfef212645d81513ef5d03038de57", size = 507930, upload-time = "2025-01-31T01:54:45.634Z" },
+]
+
+[[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
 
 [[package]]
@@ -984,12 +1125,40 @@ wheels = [
 ]
 
 [[package]]
+name = "tzdata"
+version = "2026.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/29/6a1391d31cd00ff9e927215a224a880e1e84e826b64ba80a499e51c074d8/tzdata-2026.6.tar.gz", hash = "sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d", size = 201017, upload-time = "2026-10-28T09:57:09.137Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/66/9a06c2227fedfd4919f0eaaa8b94377d9730882a7e4f95823c9a331ab5e1/tzdata-2026.6-py2.py3-none-any.whl", hash = "sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec", size = 348210, upload-time = "2026-10-28T09:57:07.276Z" },
+]
+
+[[package]]
 name = "urllib3"
 version = "1.26.20"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/e4/e8/6ff5e6bc22095cfc59b6ea711b687e2b7ed4bdb373f7eeec370a97d7392f/urllib3-1.26.20.tar.gz", hash = "sha256:40c2dc0c681e47eb8f90e7e27bf6ff7df2e677421fd46756da1161c39ca70d32", size = 307380, upload-time = "2024-08-29T15:43:11.37Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/cf/8435d5a7159e2a9c83a95896ed596f68cf798005fe107cc655b5c5c14704/urllib3-1.26.20-py2.py3-none-any.whl", hash = "sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e", size = 144225, upload-time = "2024-08-29T15:43:08.921Z" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
 ]
 
 [[package]]

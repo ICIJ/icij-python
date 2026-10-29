@@ -29,25 +29,54 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: 3.14
+      - name: Start test services
+        run: docker compose up -d icij-python-test-neo4j icij-python-test-es-7
       - name: Run tests
         run: |
           cd icij-common
-          uv run --dev --all-extras --frozen pytest -vvv --cache-clear --show-capture=all -r A tests
-    services:
-      neo4j:
-        image: neo4j:4.4.17
-        env:
-          NEO4J_AUTH: neo4j/theneo4jpassword
-          NEO4JLABS_PLUGINS: '["apoc"]'
-        options: >-
-          --health-cmd "cypher-shell -u neo4j -p theneo4jpassword -d neo4j 'CALL db.ping()'"
-          --health-interval 2s
-          --health-timeout 2s
-          --health-retries 10
-          --health-start-period 20s
-        ports:
-          - 7475:7474
-          - 7688:7687
+          uv run --dev --extra elasticsearch-7 --extra fastapi --extra neo4j --frozen pytest -vvv --cache-clear --show-capture=all -r A tests -m "not es8 and not es9"
+
+  test-icij-es-8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.11.24
+          python-version: 3.14
+          enable-cache: true
+      - name: Setup Python project
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.14
+      - name: Start test services
+        run: docker compose up -d icij-python-test-es-8
+      - name: Run ES8 tests
+        run: |
+          cd icij-common
+          uv run --dev --extra elasticsearch-8 --frozen pytest -vvv --cache-clear --show-capture=all -r A tests -m "es8"
+
+  test-icij-es-9:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.11.24
+          python-version: 3.14
+          enable-cache: true
+      - name: Setup Python project
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.14
+      - name: Start test services
+        run: docker compose up -d icij-python-test-es-9
+      - name: Run ES9 tests
+        run: |
+          cd icij-common
+          uv run --dev --extra elasticsearch-9 --frozen pytest -vvv --cache-clear --show-capture=all -r A tests -m "es9"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

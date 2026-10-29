@@ -1,5 +1,43 @@
-version: '3.7'
+x-shared:
+  es_env: &es_common
+    environment:
+      - cluster.name=datashare
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+      - discovery.type=single-node
+      - xpack.license.self_generated.type=basic
+      - xpack.security.enabled=false
+      - http.cors.enabled=true
+      - http.cors.allow-origin="*"
+      - http.cors.allow-methods=OPTIONS, HEAD, GET, POST, PUT, DELETE
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+    healthcheck:
+      test: [ "CMD-SHELL", "curl --silent --fail localhost:9200/_cluster/health || exit 1" ]
+      interval: 2s
+      timeout: 3s
+      start_period: 2s
+      retries: 10
+    ports:
+      - "9200:9200"
+
 services:
+  icij-python-test-es-7:
+    container_name: icij-python-test-es-7
+    image: elasticsearch:7.17.19
+    <<: *es_common
+
+  icij-python-test-es-8:
+    container_name: icij-python-test-es-8
+    image: elasticsearch:8.19.23
+    <<: *es_common
+
+  icij-python-test-es-9:
+    container_name: icij-python-test-es-9
+    image: elasticsearch:9.5.5
+    <<: *es_common
+
   icij-python-test-neo4j:
     container_name: icij-python-test-neo4j
     image: neo4j:4.4.31

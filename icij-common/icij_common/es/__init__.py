@@ -1,12 +1,16 @@
 import hashlib
 import json
 import logging
+from collections.abc import AsyncGenerator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from functools import cached_property
-from typing import Any, AsyncGenerator, Collection, Mapping, Sequence
+from functools import cache, cached_property
+from typing import Any
 
+from elastic_transport import AsyncTransport
 from elasticsearch import AsyncElasticsearch, TransportError
+from elasticsearch._async.client import BaseClient
+from packaging.version import Version
 from tenacity import (
     AsyncRetrying,
     RetryCallState,
@@ -94,6 +98,8 @@ DOC_SOURCES = [
     DOC_PATH,
 ]
 
+V8 = Version("8.0")
+
 
 class ESClient(AsyncElasticsearch):
     _recoverable_error_codes: set[int] = {429}
@@ -101,15 +107,17 @@ class ESClient(AsyncElasticsearch):
     def __init__(
         self,
         *,
-        pagination: int,
+        pagination: int = 100,
         keep_alive: str = "1m",
         max_concurrency: int = 5,
         max_retries: int = 0,
-        max_retry_wait_s: int | float = 60,
+        max_retry_wait_s: float = 60,
         api_key: str | None = None,
+        # Internal use only
+        _transport: AsyncTransport | None = None,
         **kwargs,
     ):
-        AsyncElasticsearch.__init__(self, **kwargs)
+        super().__init__(_transport=_transport, **kwargs)
         self._api_key = api_key
         if pagination > 10000:
             raise ValueError("Elasticsearch doesn't support pages of size > 10000")
@@ -118,6 +126,12 @@ class ESClient(AsyncElasticsearch):
         self._max_concurrency = max_concurrency
         self._max_retries = max_retries
         self._max_retry_wait_s = max_retry_wait_s
+
+    @property
+    @cache
+    async def version(self) -> Version:
+        info = await self.info()
+        return Version(info["version"]["number"])
 
     @cached_property
     def max_concurrency(self) -> int:
@@ -145,11 +159,13 @@ class ESClient(AsyncElasticsearch):
     ) -> AsyncGenerator[dict[str, Any], None]:
         retrying = self._async_retrying()
         if sort is None:
-            sort = self.default_sort(**kwargs)
+            sort = await self._default_sort(**kwargs)
+        limit = kwargs.get("size", None)
         res = await retrying(self.search, sort=sort, body=body, **kwargs)
-        kwargs = deepcopy(kwargs)
         yield res
         page_hits = res[HITS][HITS]
+        if limit is not None and len(page_hits) >= limit:
+            return
         while page_hits:
             search_after = page_hits[-1][SORT]
             body[SEARCH_AFTER] = search_after
@@ -180,26 +196,27 @@ class ESClient(AsyncElasticsearch):
         return headers
 
     async def count(self, body: dict | None = None, index: str | None = None, **kwargs):
+        kwargs = deepcopy(kwargs)
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
         return await super().count(body=body, index=index, headers=headers, **kwargs)
 
     async def search(self, body: dict | None, **kwargs):
         # pylint: disable=unexpected-keyword-arg
+        kwargs = deepcopy(kwargs)
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
-        size = kwargs.get("size", self.pagination_size)
-        return await super().search(
-            headers=headers,
-            body=body,
-            size=size,
-            **kwargs,
-        )
+        size = kwargs.pop("size", self.pagination_size)
+        return await super().search(headers=headers, body=deepcopy(body), size=size, **kwargs)
 
-    def default_sort(self, **kwargs) -> str:
+    async def _default_sort(self, **kwargs) -> ESSort:
         if PIT in kwargs:
             return f"{SHARD_DOC_}:{ASC}"
-        return f"{DOC_}:{ASC}"
+        v = await self.version
+        if v < V8:
+            return f"{DOC_}:{ASC}"
+        msg = f"no sort provided and not PIT, will sort on {ID_}, this might be costly"
+        raise ValueError(msg)
 
     async def _close_pit(self, pit_id: str):
         await self.close_point_in_time(body={ID: pit_id})

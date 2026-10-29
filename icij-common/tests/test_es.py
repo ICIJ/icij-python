@@ -1,15 +1,105 @@
 import abc
 import contextlib
 import sys
-from typing import Any, AsyncGenerator, Collection
+from collections.abc import AsyncGenerator, Collection
+from typing import Any
 from unittest.mock import patch
 
 import pytest
-from elasticsearch import AsyncElasticsearch, TransportError
-from tenacity import RetryCallState, Retrying
-
-from icij_common.es import ESClient, HITS, PointInTime, SORT, retry_if_error_code
+from aiohttp.web_exceptions import HTTPRequestTimeout
+from elasticsearch import AsyncElasticsearch, NotFoundError, TransportError
+from elasticsearch.helpers import async_streaming_bulk
+from icij_common.es import (
+    DOC_CONTENT,
+    DOC_ROOT_ID,
+    HITS,
+    ID,
+    ID_,
+    QUERY,
+    SORT,
+    ESClient,
+    PointInTime,
+    match_all,
+    retry_if_error_code,
+)
 from icij_common.test_utils import fail_if_exception
+from tenacity import RetryCallState, Retrying
+from typing_extensions import Generator
+
+_INDEX_BODY = {
+    "mappings": {
+        "properties": {
+            "id": {"type": "keyword"},
+            "type": {"type": "keyword"},
+            "language": {"type": "keyword"},
+            "documentId": {"type": "keyword"},
+            "rootDocument": {"type": "keyword"},
+            "join": {"type": "join", "relations": {"Document": "NamedEntity"}},
+            "contentType": {"type": "keyword"},
+            "content": {"type": "text"},
+        }
+    }
+}
+
+TEST_PROJECT = "test-project"
+
+
+@pytest.fixture(scope="session")
+async def test_es_client_session() -> ESClient:
+    es = ESClient(hosts=["http://localhost:9200"])
+    with contextlib.suppress(NotFoundError):
+        await es.indices.delete(index=TEST_PROJECT)
+    await es.indices.create(index=TEST_PROJECT, body=_INDEX_BODY)
+    return es
+
+
+@pytest.fixture
+async def test_es_client(test_es_client_session: ESClient) -> ESClient:
+    es = test_es_client_session
+    with contextlib.suppress(NotFoundError):
+        await es.indices.delete(index=TEST_PROJECT)
+    await es.indices.create(index=TEST_PROJECT, body=_INDEX_BODY)
+    return es
+
+
+def index_docs_ops(docs: list[dict], index_name: str) -> Generator[dict, None, None]:
+    for doc in docs:
+        op = {"_op_type": "index", "_index": index_name}
+        op.update(doc)
+        if "path" in op:
+            op["path"] = str(op["path"])
+        op["_id"] = doc[ID]
+        op["routing"] = doc[DOC_ROOT_ID]
+        op["type"] = "Document"
+        yield op
+
+
+async def index_docs(
+    client: ESClient, *, docs: list[dict], index_name: str = TEST_PROJECT
+) -> AsyncGenerator[dict, None]:
+    ops = index_docs_ops(docs, index_name)
+    # Let's wait to make this operation visible to the search
+    refresh = "wait_for"
+    async for res in async_streaming_bulk(client, actions=ops, refresh=refresh):
+        yield res
+
+
+@pytest.fixture(scope="session")
+async def indexed_docs(test_es_client_session: ESClient) -> list[dict]:
+    docs = [
+        {ID: f"doc-{i}", DOC_ROOT_ID: f"root-{i}", DOC_CONTENT: f"content-{i}"}
+        for i in range(4)
+    ]
+    return docs
+
+
+@pytest.fixture
+async def populate_es(test_es_client: ESClient, indexed_docs: list[dict]) -> list[dict]:
+    async for _ in index_docs(
+        test_es_client, docs=indexed_docs, index_name=TEST_PROJECT
+    ):
+        pass
+    return indexed_docs
 
 
 class MockedESClient(ESClient):
@@ -126,7 +216,10 @@ class _MockFailingClient(MockedESClient, metaclass=abc.ABCMeta):
 
 
 def _make_transport_error(error_code: int) -> TransportError:
-    return TransportError(error_code, "", "")
+    try:
+        return TransportError(error_code, "", "")
+    except TypeError:
+        return TransportError(error_code, (HTTPRequestTimeout(),))
 
 
 @pytest.mark.parametrize(
@@ -206,3 +299,79 @@ def test_retry_if_error_code(
 
     # Then
     assert should_retry == expected_should_retry
+
+
+async def _test_search(
+    client: ESClient, query: dict, expected_ids: set[str], **kwargs
+) -> None:
+    query = {QUERY: query}
+    retrieved = set()
+    async for page in client.poll_search_pages(query, index=TEST_PROJECT, **kwargs):
+        for doc in page[HITS][HITS]:
+            retrieved.add(doc[ID_])
+    assert retrieved == expected_ids
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_ids", "kwargs"),
+    [
+        # Match all
+        (match_all(), {"doc-0", "doc-1", "doc-2", "doc-3"}, dict()),
+        # Match all with sort and size
+        (match_all(), {"doc-0", "doc-1"}, {"sort": "_id", "size": 2}),
+        # By ROOT ID
+        ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, dict()),
+    ],
+)
+async def test_search_es7(
+    populate_es: list[dict[str, Any]],
+    test_es_client: ESClient,
+    query: dict,
+    expected_ids: set[str],
+    kwargs: dict,
+) -> None:
+    await _test_search(test_es_client, query, expected_ids, **kwargs)
+
+
+@pytest.mark.es8
+@pytest.mark.parametrize(
+    ("query", "expected_ids", "kwargs"),
+    [
+        # Match all
+        (match_all(), {"doc-0", "doc-1", "doc-2", "doc-3"}, {"sort": ID}),
+        # Match all with sort and size
+        (match_all(), {"doc-0", "doc-1"}, {"sort": ID, "size": 2}),
+        # By ROOT ID
+        ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, {"sort": ID}),
+    ],
+)
+async def test_search_es8(
+    populate_es: list[dict[str, Any]],
+    test_es_client: ESClient,
+    query: dict,
+    expected_ids: set[str],
+    kwargs: dict,
+) -> None:
+    await _test_search(test_es_client, query, expected_ids, **kwargs)
+
+
+@pytest.mark.es9
+@pytest.mark.parametrize(
+    ("query", "expected_ids", "kwargs"),
+    [
+        # Match all
+        (match_all(), {"doc-0", "doc-1", "doc-2", "doc-3"}, {"sort": ID}),
+        # Match all with sort and size
+        (match_all(), {"doc-0", "doc-1"}, {"sort": ID, "size": 2}),
+        # By ROOT ID
+        ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, {"sort": ID}),
+    ],
+)
+async def test_search_es9(
+    populate_es: list[dict[str, Any]],
+    test_es_client: ESClient,
+    query: dict,
+    expected_ids: set[str],
+    kwargs: dict,
+) -> None:
+    await _test_search(test_es_client, query, expected_ids, **kwargs)
