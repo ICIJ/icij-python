@@ -130,12 +130,14 @@ class ESClient(AsyncElasticsearch):
         self._max_concurrency = max_concurrency
         self._max_retries = max_retries
         self._max_retry_wait_s = max_retry_wait_s
+        self._version = None
 
     @property
-    @cache  # noqa: B019
     async def version(self) -> Version:
-        info = await self.info()
-        return Version(info["version"]["number"])
+        if self._version is None:
+            info = await self.info()
+            self._version = Version(info["version"]["number"])
+        return self._version
 
     @cached_property
     def max_concurrency(self) -> int:
