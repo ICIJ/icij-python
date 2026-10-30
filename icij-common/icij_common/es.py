@@ -170,6 +170,9 @@ class ESClient(AsyncElasticsearch):
         res = await retrying(self.search, sort=sort, body=body, **kwargs)
         yield res
         page_hits = res[HITS][HITS]
+        pit = page_hits.get(PIT)
+        if pit is not None:
+            kwargs[PIT] = pit
         if limit is not None and len(page_hits) >= limit:
             return
         while page_hits:
@@ -179,6 +182,9 @@ class ESClient(AsyncElasticsearch):
             page_hits = res[HITS][HITS]
             if page_hits:
                 yield res
+            pit = page_hits.get(PIT)
+            if pit is not None:
+                kwargs[PIT] = pit
 
     @asynccontextmanager
     async def pit(
