@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncGenerator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from functools import cache, cached_property
+from functools import cached_property
 from typing import Any
 
 from elasticsearch import AsyncElasticsearch, TransportError
