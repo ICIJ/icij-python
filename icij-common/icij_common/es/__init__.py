@@ -7,7 +7,6 @@ from copy import deepcopy
 from functools import cache, cached_property
 from typing import Any
 
-from elastic_transport import AsyncTransport
 from elasticsearch import AsyncElasticsearch, TransportError
 from packaging.version import Version
 from tenacity import (
@@ -18,6 +17,12 @@ from tenacity import (
     stop_after_attempt,
     wait_random_exponential,
 )
+
+try:
+    from elastic_transport import AsyncTransport
+except ModuleNotFoundError:
+    from elasticsearch._async.transport import AsyncTransport
+
 
 logger = logging.getLogger(__name__)
 _ES_CLIENTS: dict[str, AsyncElasticsearch] = dict()
