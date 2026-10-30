@@ -1,6 +1,12 @@
 import pytest
 from pytest_asyncio import is_async_test
 
+from icij_common.neo4j_.test_utils import (
+    mock_enterprise,  # noqa: F401
+    neo4j_test_driver,  # noqa: F401
+    neo4j_test_driver_session,  # noqa: F401
+)
+
 
 def pytest_collection_modifyitems(items: list) -> None:
     pytest_asyncio_tests = (item for item in items if is_async_test(item))
