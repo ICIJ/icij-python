@@ -23,7 +23,6 @@ try:
 except ModuleNotFoundError:
     from elasticsearch._async.transport import AsyncTransport
 
-
 logger = logging.getLogger(__name__)
 _ES_CLIENTS: dict[str, AsyncElasticsearch] = dict()
 ESSort = Sequence[str | Mapping[str, Any]] | str | Mapping[str, Any] | None
@@ -109,17 +108,17 @@ class ESClient(AsyncElasticsearch):
     _recoverable_error_codes: set[int] = {429}
 
     def __init__(
-        self,
-        *,
-        pagination: int = 100,
-        keep_alive: str = "1m",
-        max_concurrency: int = 5,
-        max_retries: int = 0,
-        max_retry_wait_s: float = 60,
-        api_key: str | None = None,
-        # Internal use only
-        _transport: AsyncTransport | None = None,
-        **kwargs,
+            self,
+            *,
+            pagination: int = 100,
+            keep_alive: str = "1m",
+            max_concurrency: int = 5,
+            max_retries: int = 0,
+            max_retry_wait_s: float = 60,
+            api_key: str | None = None,
+            # Internal use only
+            _transport: AsyncTransport | None = None,
+            **kwargs,
     ):
         super().__init__(_transport=_transport, **kwargs)
         self._api_key = api_key
@@ -161,7 +160,7 @@ class ESClient(AsyncElasticsearch):
         )
 
     async def poll_search_pages(
-        self, body: dict, sort: ESSort = None, **kwargs
+            self, body: dict, sort: ESSort = None, **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
         retrying = self._async_retrying()
         if sort is None:
@@ -188,7 +187,7 @@ class ESClient(AsyncElasticsearch):
 
     @asynccontextmanager
     async def pit(
-        self, *, index: str, keep_alive: str | None = None, **kwargs
+            self, *, index: str, keep_alive: str | None = None, **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
         if keep_alive is None:
             keep_alive = self._keep_alive
@@ -208,7 +207,7 @@ class ESClient(AsyncElasticsearch):
         return headers
 
     async def count(
-        self, body: dict | None = None, index: str | None = None, **kwargs
+            self, body: dict | None = None, index: str | None = None, **kwargs
     ) -> dict:
         kwargs = deepcopy(kwargs)
         headers = kwargs.pop("headers", dict())
@@ -251,10 +250,12 @@ class retry_if_error_code(retry_base):  # noqa: N801
         if retry_state.outcome.failed:
             exc = retry_state.outcome.exception()
             if isinstance(exc, TransportError):
-                status_code = getattr(exc, "status_code", None)
-                if status_code is not None and status_code in self._recoverable:  # ES7
+                sentinel = object()
+                status_code = getattr(exc, "status_code", sentinel)
+                if status_code in self._recoverable:  # ES7
                     return True
-                return any(e.status in self._recoverable for e in exc.errors)
+                status_codes = (getattr(e, "status", sentinel) for e in exc.errors)
+                return any(s in self._recoverable for s in status_codes)
         return False
 
 
@@ -340,9 +341,9 @@ def match_all_query() -> dict:
 
 
 def make_document_query(
-    es_query: dict | None,
-    sources: list[str] | None = None,
-    es_doc_type_field: str = "type",
+        es_query: dict | None,
+        sources: list[str] | None = None,
+        es_doc_type_field: str = "type",
 ) -> dict:
     document_type_query = has_type(
         type_field=es_doc_type_field, type_value=ES_DOCUMENT_TYPE
@@ -386,7 +387,7 @@ def add_url_to_document(doc: dict[str, Any], base_url: str) -> dict[str, Any]:
 
 
 def mget_doc_body(
-    index_and_ids: list[tuple[str, str]] = None,
+        index_and_ids: list[tuple[str, str]] = None,
 ) -> dict:
     body = {
         DOCS: [
