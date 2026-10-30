@@ -61,7 +61,7 @@ dev = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
-pattern-prefix = "icij-python-"
+pattern-prefix = "icij-common-"
 pattern = "default-unprefixed"
 
 [build-system]
