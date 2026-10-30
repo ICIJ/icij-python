@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: 3.14
       - name: Start test services
-        run: docker compose up -d icij-python-test-neo4j icij-python-test-es-7
+        run: docker compose up -d --wait-timeout 30 icij-python-test-neo4j icij-python-test-es-7
       - name: Run tests
         run: |
           cd icij-common
@@ -57,7 +57,7 @@ jobs:
         with:
           python-version: 3.14
       - name: Start test services
-        run: docker compose up -d icij-python-test-es-8
+        run: docker compose up -d --wait-timeout 30 icij-python-test-es-8
       - name: Run ES8 tests
         run: |
           cd icij-common
@@ -78,7 +78,7 @@ jobs:
         with:
           python-version: 3.14
       - name: Start test services
-        run: docker compose up -d icij-python-test-es-9
+        run: docker compose up -d --wait-timeout 30 icij-python-test-es-9
       - name: Run ES9 tests
         run: |
           cd icij-common
