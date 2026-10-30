@@ -6,7 +6,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from aiohttp.web_exceptions import HTTPRequestTimeout
+from aiohttp.web_exceptions import (
+    HTTPBadRequest,
+    HTTPRequestTimeout,
+    HTTPServiceUnavailable,
+    HTTPTooManyRequests,
+    HTTPUnauthorized,
+)
 from elasticsearch import AsyncElasticsearch, NotFoundError, TransportError
 from elasticsearch.helpers import async_streaming_bulk
 from tenacity import RetryCallState, Retrying
@@ -277,6 +283,43 @@ async def test_poll_search_pages_should_retry(
     ],
 )
 def test_retry_if_error_code(
+    error_codes: Collection[int],
+    raised: Exception | None,
+    *,
+    expected_should_retry: bool,
+) -> None:
+    # Given
+    retry = retry_if_error_code(error_codes)
+    retry_state = RetryCallState(Retrying(), None, None, None)
+    if raised:
+        try:
+            raise raised
+        except:  # noqa: E722
+            retry_state.set_exception(sys.exc_info())
+
+    # When
+    should_retry = retry(retry_state)
+
+    # Then
+    assert should_retry == expected_should_retry
+
+
+@pytest.mark.es8
+@pytest.mark.parametrize(
+    ("error_codes", "raised", "expected_should_retry"),
+    [
+        ([], TransportError("service unavailable", (HTTPServiceUnavailable(),)), False),
+        ([], ValueError(), False),
+        ([429], TransportError("too many request", (HTTPTooManyRequests(),)), True),
+        (
+            [400, 429],
+            TransportError("many errors", (HTTPBadRequest(), HTTPTooManyRequests())),
+            True,
+        ),
+        ([400, 429], TransportError("unauthorize", (HTTPUnauthorized(),)), False),
+    ],
+)
+def test_retry_if_error_code_es8(
     error_codes: Collection[int],
     raised: Exception | None,
     *,

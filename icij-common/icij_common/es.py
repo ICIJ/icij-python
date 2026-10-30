@@ -250,9 +250,11 @@ class retry_if_error_code(retry_base):  # noqa: N801
     def __call__(self, retry_state: RetryCallState) -> bool:
         if retry_state.outcome.failed:
             exc = retry_state.outcome.exception()
-            return (
-                isinstance(exc, TransportError) and exc.status_code in self._recoverable
-            )
+            if isinstance(exc, TransportError):
+                status_code = getattr(exc, "status_code", None)
+                if status_code is not None and status_code in self._recoverable:  # ES7
+                    return True
+                return any(e.status in self._recoverable for e in exc.errors)
         return False
 
 
