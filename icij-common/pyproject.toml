@@ -60,7 +60,7 @@ elasticsearch = ["elasticsearch", "tenacity"]
 dev = [
   "ruff~=0.16.1",
   "pytest~=8.2",
-  "pytest-asyncio~=0.21",
+  "pytest-asyncio~=0.24",
   "icij-common[neo4j]"
 ]
 
@@ -72,6 +72,7 @@ extend = "../qa/ruff.toml"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_debug = true
 asyncio_default_fixture_loop_scope = "session"
 log_cli = true
 log_cli_level = "INFO"
