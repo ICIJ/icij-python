@@ -53,7 +53,7 @@ TEST_PROJECT = "test-project"
 
 @pytest.fixture(scope="session")
 async def test_es_client_session() -> ESClient:
-    es = ESClient(hosts=["http://localhost:9200"])
+    es = ESClient(hosts=["http://localhost:9200"], pagination=2)
     with contextlib.suppress(NotFoundError):
         await es.indices.delete(index=TEST_PROJECT)
     await es.indices.create(index=TEST_PROJECT, body=_INDEX_BODY)
@@ -352,13 +352,42 @@ async def _test_search(
     assert retrieved == expected_ids
 
 
+async def _test_poll_with_pit(client: ESClient) -> None:
+    # Given
+    query = {QUERY: match_all()}
+    count = 0
+    # When
+    async with client.pit(index=TEST_PROJECT) as pit:
+        async for page in client.poll_search_pages(query, pit=pit):
+            count += len(page[HITS][HITS])
+    # Then
+    assert count == 4
+
+
+@pytest.mark.usefixtures("populate_es")
+async def test_poll_with_pit(test_es_client: ESClient) -> None:
+    await _test_poll_with_pit(test_es_client)
+
+
+@pytest.mark.es8
+@pytest.mark.usefixtures("populate_es")
+async def test_poll_with_pit_es8(test_es_client: ESClient) -> None:
+    await _test_poll_with_pit(test_es_client)
+
+
+@pytest.mark.es9
+@pytest.mark.usefixtures("populate_es")
+async def test_poll_with_pit_es9(test_es_client: ESClient) -> None:
+    await _test_poll_with_pit(test_es_client)
+
+
 @pytest.mark.parametrize(
     ("query", "expected_ids", "kwargs"),
     [
         # Match all
         (match_all(), {"doc-0", "doc-1", "doc-2", "doc-3"}, dict()),
         # Match all with sort and size
-        (match_all(), {"doc-0", "doc-1"}, {"sort": "_id", "size": 2}),
+        (match_all(), {"doc-0", "doc-1"}, {"sort": "_id", "limit": 2}),
         # By ROOT ID
         ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, dict()),
     ],
@@ -377,7 +406,7 @@ async def test_search_es7(
         # Match all
         (match_all(), {"doc-0", "doc-1", "doc-2", "doc-3"}, {"sort": ID}),
         # Match all with sort and size
-        (match_all(), {"doc-0", "doc-1"}, {"sort": ID, "size": 2}),
+        (match_all(), {"doc-0", "doc-1"}, {"sort": ID, "limit": 2}),
         # By ROOT ID
         ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, {"sort": ID}),
     ],
@@ -396,7 +425,7 @@ async def test_search_es8(
         # Match all
         (match_all(), {"doc-0", "doc-1", "doc-2", "doc-3"}, {"sort": ID}),
         # Match all with sort and size
-        (match_all(), {"doc-0", "doc-1"}, {"sort": ID, "size": 2}),
+        (match_all(), {"doc-0", "doc-1"}, {"sort": ID, "limit": 2}),
         # By ROOT ID
         ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, {"sort": ID}),
     ],

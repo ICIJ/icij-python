@@ -4,8 +4,9 @@ import logging
 from collections.abc import AsyncGenerator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import Any, Self
 
 from elasticsearch import AsyncElasticsearch, TransportError
 from packaging.version import Version
@@ -50,6 +51,7 @@ MUST = "must"
 MUST_NOT = "must_not"
 OP_TYPE_ = "_op_type"
 PIT = "pit"
+PIT_ID = "pit_id"
 QUERY = "query"
 RANGE = "range"
 ROUTING_ = "_routing"
@@ -104,21 +106,41 @@ DOC_SOURCES = [
 V8 = Version("8.0")
 
 
+@dataclass
+class _PollState:
+    total: int
+    pit: str | Sequence[str] | dict | None
+    size: int
+    search_after: dict | None = None
+
+    def updated(self, res: dict, limit: int | None) -> Self:
+        pit = res.get(PIT_ID)
+        if pit is not None:
+            pit = _normalize_pit(pit)
+        page_hits = res[HITS][HITS]
+        total = self.total + len(page_hits)
+        search_after = page_hits[-1][SORT]
+        size = self.size
+        if limit is not None:
+            size = min(self.size, limit - total)
+        return _PollState(total=total, pit=pit, size=size, search_after=search_after)
+
+
 class ESClient(AsyncElasticsearch):
     _recoverable_error_codes: set[int] = {429}
 
     def __init__(
-            self,
-            *,
-            pagination: int = 100,
-            keep_alive: str = "1m",
-            max_concurrency: int = 5,
-            max_retries: int = 0,
-            max_retry_wait_s: float = 60,
-            api_key: str | None = None,
-            # Internal use only
-            _transport: AsyncTransport | None = None,
-            **kwargs,
+        self,
+        *,
+        pagination: int = 100,
+        keep_alive: str = "1m",
+        max_concurrency: int = 5,
+        max_retries: int = 0,
+        max_retry_wait_s: float = 60,
+        api_key: str | None = None,
+        # Internal use only
+        _transport: AsyncTransport | None = None,
+        **kwargs,
     ):
         super().__init__(_transport=_transport, **kwargs)
         self._api_key = api_key
@@ -150,6 +172,7 @@ class ESClient(AsyncElasticsearch):
     def keep_alive(self) -> str:
         return self._keep_alive
 
+    @cached_property
     def _async_retrying(self) -> AsyncRetrying:
         return AsyncRetrying(
             wait=wait_random_exponential(max=self._max_retry_wait_s),
@@ -160,34 +183,61 @@ class ESClient(AsyncElasticsearch):
         )
 
     async def poll_search_pages(
-            self, body: dict, sort: ESSort = None, **kwargs
+        self,
+        body: dict,
+        sort: ESSort = None,
+        limit: int | None = None,
+        *,
+        pit: str | Sequence[str] | dict | None = None,
+        **kwargs,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        retrying = self._async_retrying()
+        if SIZE in kwargs:
+            msg = (
+                "polling uses pagination size, use limit to limit the total number"
+                " of result"
+            )
+            raise ValueError(msg)
         if sort is None:
-            sort = await self._default_sort(**kwargs)
-        limit = kwargs.get("size")
-        res = await retrying(self.search, sort=sort, body=body, **kwargs)
-        yield res
-        page_hits = res[HITS][HITS]
-        pit = res.get(PIT)
+            sort = await self._default_poll_sort(pit)
+        size = self._pagination_size
+        if limit is not None and limit < self._pagination_size:
+            size = limit
         if pit is not None:
-            kwargs[PIT] = pit
-        if limit is not None and len(page_hits) >= limit:
-            return
-        while page_hits:
-            search_after = page_hits[-1][SORT]
-            body[SEARCH_AFTER] = search_after
-            res = await retrying(self.search, sort=sort, body=body, **kwargs)
-            page_hits = res[HITS][HITS]
-            if page_hits:
-                yield res
-            pit = res.get(PIT)
-            if pit is not None:
-                kwargs[PIT] = pit
+            pit = _normalize_pit(pit)
+        poll_state = _PollState(size=size, pit=pit, total=0)
+        while (
+            poll := await self._poll_step(body, poll_state, limit, sort=sort, **kwargs)
+        ) is not None:
+            poll_state, res = poll
+            yield res
+
+    async def _poll_step(
+        self,
+        body: dict,
+        state: _PollState,
+        limit: int | None,
+        sort: ESSort = None,
+        **kwargs,
+    ) -> tuple[_PollState, dict] | None:
+        if limit is not None and state.total >= limit:
+            return None
+        body = deepcopy(body)
+        if state.search_after is not None:
+            body[SEARCH_AFTER] = state.search_after
+        if state.pit is not None:
+            body[PIT] = state.pit
+        res = await self._async_retrying(
+            self.search, sort=sort, body=body, size=state.size, **kwargs
+        )
+        page_hits = res[HITS][HITS]
+        if not page_hits:
+            return None
+        state = state.updated(res, limit)
+        return state, res
 
     @asynccontextmanager
     async def pit(
-            self, *, index: str, keep_alive: str | None = None, **kwargs
+        self, *, index: str | Sequence[str], keep_alive: str | None = None, **kwargs
     ) -> AsyncGenerator[dict[str, Any], None]:
         if keep_alive is None:
             keep_alive = self._keep_alive
@@ -207,7 +257,7 @@ class ESClient(AsyncElasticsearch):
         return headers
 
     async def count(
-            self, body: dict | None = None, index: str | None = None, **kwargs
+        self, body: dict | None = None, index: str | None = None, **kwargs
     ) -> dict:
         kwargs = deepcopy(kwargs)
         headers = kwargs.pop("headers", dict())
@@ -223,17 +273,25 @@ class ESClient(AsyncElasticsearch):
             headers=headers, body=deepcopy(body), size=size, **kwargs
         )
 
-    async def _default_sort(self, **kwargs) -> ESSort:
-        if PIT in kwargs:
-            return f"{SHARD_DOC_}:{ASC}"
+    async def _default_poll_sort(self, pit: str | Sequence[str] | None) -> ESSort:
         v = await self.version
+        if pit is not None:
+            return [{SHARD_DOC_: ASC}] if v >= V8 else f"{SHARD_DOC_}:{ASC}"
         if v < V8:
-            return f"{DOC_}:{ASC}"
+            return [{DOC_: ASC}] if v >= V8 else f"{DOC_}:{ASC}"
         msg = f"no sort provided and not PIT, will sort on {ID_}, this might be costly"
         raise ValueError(msg)
 
     async def _close_pit(self, pit_id: str) -> None:
         await self.close_point_in_time(body={ID: pit_id})
+
+
+def _normalize_pit(pit: Any) -> dict[str, Any]:
+    if isinstance(pit, str):
+        return {ID: pit}
+    if hasattr(pit, "body"):
+        return {ID: pit.body[ID]}
+    return pit
 
 
 def _hash_params(params: dict) -> str:
@@ -252,8 +310,8 @@ class retry_if_error_code(retry_base):  # noqa: N801
             if isinstance(exc, TransportError):
                 sentinel = object()
                 status_code = getattr(exc, "status_code", sentinel)
-                if status_code in self._recoverable:  # ES7
-                    return True
+                if not hasattr(exc, "errors"):  # ES7
+                    return status_code in self._recoverable
                 status_codes = (getattr(e, "status", sentinel) for e in exc.errors)
                 return any(s in self._recoverable for s in status_codes)
         return False
@@ -341,9 +399,9 @@ def match_all_query() -> dict:
 
 
 def make_document_query(
-        es_query: dict | None,
-        sources: list[str] | None = None,
-        es_doc_type_field: str = "type",
+    es_query: dict | None,
+    sources: list[str] | None = None,
+    es_doc_type_field: str = "type",
 ) -> dict:
     document_type_query = has_type(
         type_field=es_doc_type_field, type_value=ES_DOCUMENT_TYPE
@@ -387,7 +445,7 @@ def add_url_to_document(doc: dict[str, Any], base_url: str) -> dict[str, Any]:
 
 
 def mget_doc_body(
-        index_and_ids: list[tuple[str, str]] = None,
+    index_and_ids: list[tuple[str, str]] = None,
 ) -> dict:
     body = {
         DOCS: [
