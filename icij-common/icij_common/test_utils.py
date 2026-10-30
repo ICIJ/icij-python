@@ -2,9 +2,10 @@ import asyncio
 import contextlib
 import os
 import traceback
+from asyncio import AbstractEventLoop
+from collections.abc import Awaitable, Callable, Generator
 from copy import copy
 from time import monotonic, sleep
-from typing import Awaitable, Callable
 
 import pytest
 
@@ -18,12 +19,13 @@ def true_after(
     while "waiting for the statement to be True":
         try:
             assert state_statement()
-            return True
+            break
         except AssertionError:
             if monotonic() - start < after_s:
                 sleep(sleep_s)
                 continue
             return False
+    return True
 
 
 async def async_true_after(
@@ -36,27 +38,27 @@ async def async_true_after(
     while "waiting for the statement to be True":
         try:
             assert await state_statement()
-            return True
+            break
         except AssertionError:
             if monotonic() - start < after_s:
                 await asyncio.sleep(sleep_s)
                 continue
-            return False
+    return False
 
 
 @contextlib.contextmanager
-def fail_if_exception(msg: str | None = None):
+def fail_if_exception(msg: str | None = None) -> Generator[None]:
     try:
         yield
-    except Exception as e:  # pylint: disable=W0703
+    except Exception as e:  # noqa: BLE001
         trace = "".join(traceback.format_exception(None, e, e.__traceback__))
         if msg is None:
             msg = "Test failed due to the following error"
         pytest.fail(f"{msg}\n{trace}")
 
 
-@pytest.fixture()
-def reset_env():
+@pytest.fixture
+def reset_env() -> Generator[None]:
     old_env = copy(dict(os.environ))
     try:
         yield
@@ -68,7 +70,7 @@ def reset_env():
 # Define a session level even_loop fixture to overcome limitation explained here:
 # https://github.com/tortoise/tortoise-orm/issues/638#issuecomment-830124562
 @pytest.fixture(scope="session")
-def event_loop():
+def event_loop() -> Generator[AbstractEventLoop]:
     policy = asyncio.get_event_loop_policy()
     loop = policy.new_event_loop()
     yield loop

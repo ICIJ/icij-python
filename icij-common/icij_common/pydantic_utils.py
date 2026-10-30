@@ -1,9 +1,9 @@
 from collections import defaultdict
-from enum import Enum
-
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
+from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Callable, Mapping, TypeVar, cast, Collection, Union
+from typing import Annotated, Any, TypeVar, Union, cast
 
 from pydantic import BaseModel, ConfigDict, PlainSerializer, Tag
 from pydantic.fields import FieldInfo
@@ -20,26 +20,25 @@ def to_lower_camel(field: str) -> str:
     )
 
 
-def to_lower_snake_case(s: str):
+def to_lower_snake_case(s: str) -> str:
     snake = "".join("_" + c.lower() if c.isupper() else c for c in s)
-    if snake.startswith("_"):
-        snake = snake[1:]
+    snake = snake.removeprefix("_")
     return snake
 
 
 _SCHEMAS = dict()
 
 
-def safe_copy(
-    obj: BaseModel, update: Mapping[str, Any] | None = None, deep: bool = False
-):
+def safe_copy[T: BaseModel](
+    obj: T, update: Mapping[str, Any] | None = None, *, deep: bool = False
+) -> T:
     if obj.__class__ not in _SCHEMAS:
         _SCHEMAS[obj.__class__] = dict()
         # Model.copy is always without alias
         _SCHEMAS[obj.__class__] = obj.model_json_schema(by_alias=False)
     schema = _SCHEMAS[obj.__class__]
     if update:
-        for field in update.keys():
+        for field in update:
             props = schema.get("properties")
             if props is None:
                 prop_key = schema["$ref"].replace("#/$defs/", "")
@@ -62,10 +61,10 @@ def icij_config() -> ConfigDict:
     )
 
 
-class ICIJSettings(BaseSettings): ...  # pylint: disable=multiple-statements
+class ICIJSettings(BaseSettings): ...
 
 
-def get_field_default_value(attr: FieldInfo):
+def get_field_default_value(attr: FieldInfo) -> FieldInfo:
     # Ugly work around pydantic v1 limitations on Field and default values
     if isinstance(attr, FieldInfo):
         if attr.default_factory is not None:
@@ -74,15 +73,15 @@ def get_field_default_value(attr: FieldInfo):
     return attr
 
 
-def lowercamel_case_config() -> dict:
+def lowercamel_case_config() -> ConfigDict:
     return ConfigDict(alias_generator=to_lower_camel)
 
 
-def ignore_extra_config() -> dict:
+def ignore_extra_config() -> ConfigDict:
     return ConfigDict(extra="ignore")
 
 
-def no_enum_values_config() -> dict:
+def no_enum_values_config() -> ConfigDict:
     return ConfigDict(use_enum_values=False)
 
 
@@ -115,7 +114,7 @@ def generate_encoders_by_class_tuples(
 E = TypeVar("E", bound=Enum)
 
 
-def make_enum_discriminator(key: str, enum_cls: type[E]) -> Callable[[Any], E]:
+def make_enum_discriminator[E: Enum](key: str, enum_cls: type[E]) -> Callable[[Any], E]:
     def discriminator(data: Any) -> E:
         nonlocal key, enum_cls
         if isinstance(data, dict):
@@ -146,7 +145,7 @@ def tagged_union(members: Collection[type], tag_getter: Callable[[type], str]) -
     first = members[0]
     tagged = Annotated[first, Tag(tag_getter(first))]
     if len(members) == 1:
-        return Union[(tagged,)]
+        return Union[(tagged,)]  # noqa: UP007
     for m in members[1:]:
         tagged |= Annotated[m, Tag(tag_getter(m))]
     return tagged

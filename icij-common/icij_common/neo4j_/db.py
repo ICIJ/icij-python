@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Self
 
 import neo4j
 from packaging.version import Version, parse
@@ -35,12 +34,12 @@ class Database(BaseModel):
     name: str
 
     @classmethod
-    def from_neo4j(cls, record: neo4j.Record, key="db") -> Database:
+    def from_neo4j(cls, record: neo4j.Record, key: str = "db") -> Self:
         db = dict(record.value(key))
         return Database(**db)
 
 
-async def create_databases_registry_db(neo4j_driver: neo4j.AsyncDriver):
+async def create_databases_registry_db(neo4j_driver: neo4j.AsyncDriver) -> None:
     if await is_enterprise(neo4j_driver):
         logger.info("Creating databases registry DB...")
         query = "CREATE DATABASE $registry_db IF NOT EXISTS"
@@ -56,19 +55,19 @@ async def databases_tx(tx: neo4j.AsyncTransaction) -> list[Database]:
     return dbs
 
 
-async def create_db(neo4j_driver: neo4j.AsyncDriver, db: str):
+async def create_db(neo4j_driver: neo4j.AsyncDriver, db: str) -> None:
     if await is_enterprise(neo4j_driver):
         db = await db_name(neo4j_driver, db=db)
         query = "CREATE DATABASE $db_name IF NOT EXISTS"
         await neo4j_driver.execute_query(query, db_name=db)
 
 
-async def add_multidatabase_support_migration_tx(tx: neo4j.AsyncTransaction):
+async def add_multidatabase_support_migration_tx(tx: neo4j.AsyncTransaction) -> None:
     await create_database_unique_name_constraint_tx(tx)
     await create_migration_unique_database_and_version_constraint_tx(tx)
 
 
-async def create_database_unique_name_constraint_tx(tx: neo4j.AsyncTransaction):
+async def create_database_unique_name_constraint_tx(tx: neo4j.AsyncTransaction) -> None:
     # TODO: rename that into constraint_database_unique_name
     constraint_query = f"""CREATE CONSTRAINT constraint_project_unique_name
 IF NOT EXISTS
@@ -80,11 +79,11 @@ REQUIRE (p.{DATABASE_NAME}) IS UNIQUE
 
 async def create_migration_unique_database_and_version_constraint_tx(
     tx: neo4j.AsyncTransaction,
-):
+) -> None:
     # TODO: rename that into constraint_migration_unique_database_and_version
     constraint_query = f"""CREATE CONSTRAINT
      constraint_migration_unique_project_and_version
-IF NOT EXISTS 
+IF NOT EXISTS
 FOR (m:{MIGRATION_NODE})
 REQUIRE (m.{MIGRATION_VERSION}, m.{MIGRATION_DB}) IS UNIQUE
 """
@@ -135,13 +134,15 @@ async def db_specific_session(
 
 
 @asynccontextmanager
-async def registry_db_session(neo4j_driver: neo4j.AsyncDriver) -> neo4j.AsyncSession:
+async def registry_db_session(
+    neo4j_driver: neo4j.AsyncDriver,
+) -> AsyncGenerator[neo4j.AsyncSession]:
     session = neo4j_driver.session(database=await database_registry_db(neo4j_driver))
     async with session as sess:
         yield sess
 
 
-async def _get_components(neo4j_driver: neo4j.AsyncDriver):
+async def _get_components(neo4j_driver: neo4j.AsyncDriver) -> None:
     async with neo4j_driver.session(database=neo4j.SYSTEM_DATABASE) as sess:
         res = await sess.run(_COMPONENTS_QUERY)
         res = await res.single()

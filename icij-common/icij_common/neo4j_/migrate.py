@@ -1,22 +1,17 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
-
-from collections.abc import Coroutine
-from datetime import datetime
-from enum import Enum, unique
+from collections.abc import Callable, Coroutine, Sequence
+from datetime import UTC, datetime
+from enum import StrEnum, unique
 from inspect import signature
-from typing import Any, Callable, Sequence, Annotated
+from typing import Annotated, Any, Self
 
 import neo4j
-from packaging.version import Version
-
 from neo4j.exceptions import ConstraintError
+from packaging.version import Version
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from icij_common.pydantic_utils import merge_configs, no_enum_values_config
 from icij_common.neo4j_.constants import (
     MIGRATION_COMPLETED,
     MIGRATION_DB,
@@ -26,6 +21,8 @@ from icij_common.neo4j_.constants import (
     MIGRATION_STATUS,
     MIGRATION_VERSION,
 )
+from icij_common.pydantic_utils import merge_configs, no_enum_values_config
+
 from .db import (
     Database,
     create_database_tx,
@@ -41,6 +38,7 @@ TransactionFn = Callable[[neo4j.AsyncTransaction], Coroutine]
 ExplicitTransactionFn = Callable[[neo4j.Session], Coroutine]
 MigrationFn = TransactionFn | ExplicitTransactionFn
 
+
 _MIGRATION_TIMEOUT_MSG = """Migration timeout expired !
 Please check that a migration is indeed in progress. If the application is in a \
 deadlock restart it forcing the migration index cleanup."""
@@ -51,17 +49,16 @@ class MigrationError(RuntimeError):
 
 
 @unique
-class MigrationStatus(str, Enum):
+class MigrationStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     DONE = "DONE"
 
 
-def str_as_version(v: Any) -> MigrationVersion:
+def str_as_version(v: Any) -> "MigrationVersion":
     if isinstance(v, (str, MigrationVersion)):
         return MigrationVersion(v)
     raise ValueError(
-        f"Must be a {MigrationVersion.__name__} or a {str.__name__}, "
-        f"found {type(v)}"
+        f"Must be a {MigrationVersion.__name__} or a {str.__name__}, found {type(v)}"
     )
 
 
@@ -79,6 +76,13 @@ class _BaseMigration(BaseModel):
     status: MigrationStatus = MigrationStatus.IN_PROGRESS
 
 
+class Migration(_BaseMigration):
+    migration_fn: MigrationFn
+
+
+MigrationRegistry = Sequence[Migration]
+
+
 class Neo4jMigration(_BaseMigration):
     # It would have been cleaner to create
     # (p:_Project)-[:_RUNS { id: p.name + m.version }]->(m:_Migration)
@@ -92,7 +96,7 @@ class Neo4jMigration(_BaseMigration):
     status: MigrationStatus = MigrationStatus.IN_PROGRESS
 
     @classmethod
-    def from_neo4j(cls, record: neo4j.Record, key="migration") -> Self:
+    def from_neo4j(cls, record: neo4j.Record, key: str = "migration") -> Self:
         migration = dict(record.value(key))
         if "started" in migration:
             migration["started"] = migration["started"].to_native()
@@ -101,20 +105,13 @@ class Neo4jMigration(_BaseMigration):
         return Neo4jMigration(**migration)
 
 
-class Migration(_BaseMigration):
-    migration_fn: MigrationFn
-
-
-MigrationRegistry: Sequence[Migration]
-
-
 async def _migrate_with_lock(
     *,
     db_session: neo4j.AsyncSession,
     registry_session: neo4j.AsyncSession,
     db: str,
     migration: Migration,
-):
+) -> None:
     # Note: all migrations.py should be carefully tested otherwise they will lock
     # the DB...
 
@@ -166,7 +163,7 @@ RETURN m as migration"""
         version=migration_version,
         db=db,
         status=MigrationStatus.IN_PROGRESS.value,
-        started=datetime.now(),
+        started=datetime.now(UTC),
     )
     migration = await res.single()
     if migration is None:
@@ -182,14 +179,14 @@ async def complete_migration_tx(
         {MIGRATION_VERSION}: $version,
         {MIGRATION_DB}: $db
      }})
-SET m += {{ {MIGRATION_STATUS}: $status, {MIGRATION_COMPLETED}: $completed }} 
+SET m += {{ {MIGRATION_STATUS}: $status, {MIGRATION_COMPLETED}: $completed }}
 RETURN m as migration"""
     res = await tx.run(
         query,
         version=migration_version,
         db=db,
         status=MigrationStatus.DONE.value,
-        completed=datetime.now(),
+        completed=datetime.now(UTC),
     )
     migration = await res.single()
     migration = Neo4jMigration.from_neo4j(migration)
@@ -205,7 +202,7 @@ RETURN m as migration
     return migrations
 
 
-async def delete_all_migrations(driver: neo4j.AsyncDriver):
+async def delete_all_migrations(driver: neo4j.AsyncDriver) -> None:
     query = f"""MATCH (m:{MIGRATION_NODE})
 DETACH DELETE m"""
     async with registry_db_session(driver) as sess:
@@ -224,7 +221,7 @@ async def migrate_db_schemas(
     *,
     timeout_s: float,
     throttle_s: float,
-):
+) -> None:
     dbs = await retrieve_dbs(neo4j_driver)
     tasks = [
         migrate_db_schema(
@@ -246,59 +243,61 @@ async def migrate_db_schema(
     *,
     timeout_s: float,
     throttle_s: float,
-):
+) -> None:
     logger.info("Migrating DB %s", db)
     start = time.monotonic()
     if not registry:
         return
     todo = sorted(registry, key=lambda m: m.version)
-    async with registry_db_session(neo4j_driver) as registry_sess:
-        async with db_specific_session(neo4j_driver, db=db) as db_session:
-            while "Waiting for DB to be migrated or for a timeout":
-                migrations = await registry_sess.execute_read(db_migrations_tx, db=db)
-                in_progress = [
-                    m for m in migrations if m.status is MigrationStatus.IN_PROGRESS
-                ]
-                if len(in_progress) > 1:
-                    raise MigrationError(
-                        f"Found several migration in progress: {in_progress}"
+    async with (
+        registry_db_session(neo4j_driver) as registry_sess,
+        db_specific_session(neo4j_driver, db=db) as db_session,
+    ):
+        while "Waiting for DB to be migrated or for a timeout":
+            migrations = await registry_sess.execute_read(db_migrations_tx, db=db)
+            in_progress = [
+                m for m in migrations if m.status is MigrationStatus.IN_PROGRESS
+            ]
+            if len(in_progress) > 1:
+                raise MigrationError(
+                    f"Found several migration in progress: {in_progress}"
+                )
+            if in_progress:
+                logger.info(
+                    "Found that %s is in progress, waiting for %s seconds...",
+                    in_progress[0].label,
+                    throttle_s,
+                )
+                await asyncio.sleep(throttle_s)
+            else:
+                done = [m for m in migrations if m.status is MigrationStatus.DONE]
+                if done:
+                    current_version = max(m.version for m in done)
+                    todo = [m for m in todo if m.version > current_version]
+                if not todo:
+                    break
+                try:
+                    await _migrate_with_lock(
+                        db_session=db_session,
+                        registry_session=registry_sess,
+                        db=db,
+                        migration=todo[0],
                     )
-                if in_progress:
+                    todo = todo[1:]
+                    continue
+                except ConstraintError:
                     logger.info(
-                        "Found that %s is in progress, waiting for %s seconds...",
-                        in_progress[0].label,
+                        "Migration %s has just started somewhere else, "
+                        " waiting for %s seconds...",
+                        todo[0].label,
                         throttle_s,
                     )
                     await asyncio.sleep(throttle_s)
-                else:
-                    done = [m for m in migrations if m.status is MigrationStatus.DONE]
-                    if done:
-                        current_version = max((m.version for m in done))
-                        todo = [m for m in todo if m.version > current_version]
-                    if not todo:
-                        break
-                    try:
-                        await _migrate_with_lock(
-                            db_session=db_session,
-                            registry_session=registry_sess,
-                            db=db,
-                            migration=todo[0],
-                        )
-                        todo = todo[1:]
-                        continue
-                    except ConstraintError:
-                        logger.info(
-                            "Migration %s has just started somewhere else, "
-                            " waiting for %s seconds...",
-                            todo[0].label,
-                            throttle_s,
-                        )
-                        await asyncio.sleep(throttle_s)
-                elapsed = time.monotonic() - start
-                if elapsed > timeout_s:
-                    logger.error(_MIGRATION_TIMEOUT_MSG)
-                    raise MigrationError(_MIGRATION_TIMEOUT_MSG)
-                continue
+            elapsed = time.monotonic() - start
+            if elapsed > timeout_s:
+                logger.error(_MIGRATION_TIMEOUT_MSG)
+                raise MigrationError(_MIGRATION_TIMEOUT_MSG)
+            continue
 
 
 async def init_database(

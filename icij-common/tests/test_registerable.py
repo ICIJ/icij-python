@@ -1,8 +1,7 @@
-# pylint: disable=redefined-outer-name
-from __future__ import annotations
-
 from abc import ABC
-from typing import ClassVar
+from collections.abc import Generator
+from typing import Any, ClassVar, Self
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import Field
@@ -15,9 +14,8 @@ class _MockedBaseClass(RegistrableFromConfig, ABC):
     pass
 
 
-@pytest.fixture()
-def clear_mocked_registry():
-    # pylint: disable=protected-access
+@pytest.fixture
+def clear_mocked_registry() -> Generator[None]:
     try:
         yield
     finally:
@@ -25,9 +23,8 @@ def clear_mocked_registry():
             del RegistrableFromConfig._registry[_MockedBaseClass]
 
 
-def test_should_register_class(
-    clear_mocked_registry,  # pylint: disable=unused-argument
-):
+@pytest.mark.usefixtures("clear_mocked_registry")
+def test_should_register_class() -> None:
     # Given
     base_class = _MockedBaseClass
     assert not base_class.list_available()
@@ -36,7 +33,7 @@ def test_should_register_class(
     @base_class.register("registered")
     class Registered(base_class):
         @classmethod
-        def _from_config(cls, config: RegistrableConfig, **extras) -> Registered: ...
+        def _from_config(cls, config: RegistrableConfig, **extras) -> Self: ...
 
     # Then
     assert Registered.registered_name == "registered"
@@ -46,16 +43,15 @@ def test_should_register_class(
     assert available[0] == "registered"
 
 
-def test_register_should_raise_for_already_registered(
-    clear_mocked_registry,  # pylint: disable=unused-argument
-):
+@pytest.mark.usefixtures("clear_mocked_registry")
+def test_register_should_raise_for_already_registered() -> None:
     # Given
     base_class = _MockedBaseClass
 
     @base_class.register("registered")
-    class Registered(base_class):  # pylint: disable=unused-variable
+    class Registered(base_class):
         @classmethod
-        def _from_config(cls, config: RegistrableConfig, **extras) -> Registered: ...
+        def _from_config(cls, config: RegistrableConfig, **extras) -> Self: ...
 
     # When
     expected = (
@@ -65,35 +61,33 @@ def test_register_should_raise_for_already_registered(
     with pytest.raises(ValueError, match=expected):
 
         @base_class.register("registered")
-        class Other(base_class):  # pylint: disable=unused-variable
+        class Other(base_class):
             @classmethod
-            def _from_config(cls, config: RegistrableConfig, **extras) -> Other: ...
+            def _from_config(cls, config: RegistrableConfig, **extras) -> Self: ...
 
 
-def test_should_register_already_registered_with_exist_ok(
-    clear_mocked_registry,  # pylint: disable=unused-argument
-):
+@pytest.mark.usefixtures("clear_mocked_registry")
+def test_should_register_already_registered_with_exist_ok() -> None:
     # Given
     base_class = _MockedBaseClass
 
     @base_class.register("registered")
-    class Registered(base_class):  # pylint: disable=unused-variable
+    class Registered(base_class):
         @classmethod
-        def _from_config(cls, config: RegistrableConfig, **extras) -> Registered: ...
+        def _from_config(cls, config: RegistrableConfig, **extras) -> Self: ...
 
     # When
     msg = "Failed to register already registered class with exist_ok"
     with fail_if_exception(msg):
 
         @base_class.register("registered", exist_ok=True)
-        class Other(base_class):  # pylint: disable=unused-variable
+        class Other(base_class):
             @classmethod
-            def _from_config(cls, config: RegistrableConfig, **extras) -> Other: ...
+            def _from_config(cls, config: RegistrableConfig, **extras) -> Self: ...
 
 
-def test_resolve_class_name_for_fully_qualified_class(
-    clear_mocked_registry,  # pylint: disable=unused-argument
-):
+@pytest.mark.usefixtures("clear_mocked_registry")
+def test_resolve_class_name_for_fully_qualified_class() -> None:
     # Given
     fully_qualified = "unittest.mock.MagicMock"
 
@@ -101,29 +95,26 @@ def test_resolve_class_name_for_fully_qualified_class(
     registered_cls = _MockedBaseClass.resolve_class_name(fully_qualified)
 
     # Then
-    from unittest.mock import MagicMock
-
     assert registered_cls is MagicMock
 
 
-def test_registrable_from_config(
-    clear_mocked_registry,  # pylint: disable=unused-argument
-):
+@pytest.mark.usefixtures("clear_mocked_registry")
+def test_registrable_from_config() -> None:
     # Given
     base_class = _MockedBaseClass
 
     class _MockedBaseClassConfig(RegistrableConfig):
         registry_key: ClassVar[str] = Field(frozen=True, default="some_key")
-        some_attr: str
+        some_attr: str  # noqa: F821
         some_key: ClassVar[str] = Field(frozen=True, default="registered")
 
     @base_class.register("registered")
     class Registered(base_class):
-        def __init__(self, some_attr):
+        def __init__(self, some_attr: Any) -> None:
             self.some_attr = some_attr
 
         @classmethod
-        def _from_config(cls, config: RegistrableConfig, **extras) -> Registered:
+        def _from_config(cls, config: RegistrableConfig, **extras) -> Self:  # noqa: ARG003
             return cls(some_attr=config.some_attr)
 
     instance_config = _MockedBaseClassConfig(some_attr="some_value")

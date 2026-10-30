@@ -9,6 +9,9 @@ import pytest
 from aiohttp.web_exceptions import HTTPRequestTimeout
 from elasticsearch import AsyncElasticsearch, NotFoundError, TransportError
 from elasticsearch.helpers import async_streaming_bulk
+from tenacity import RetryCallState, Retrying
+from typing_extensions import Generator
+
 from icij_common.es import (
     DOC_CONTENT,
     DOC_ROOT_ID,
@@ -23,8 +26,6 @@ from icij_common.es import (
     retry_if_error_code,
 )
 from icij_common.test_utils import fail_if_exception
-from tenacity import RetryCallState, Retrying
-from typing_extensions import Generator
 
 _INDEX_BODY = {
     "mappings": {
@@ -85,7 +86,7 @@ async def index_docs(
 
 
 @pytest.fixture(scope="session")
-async def indexed_docs(test_es_client_session: ESClient) -> list[dict]:
+async def indexed_docs() -> list[dict]:
     docs = [
         {ID: f"doc-{i}", DOC_ROOT_ID: f"root-{i}", DOC_CONTENT: f"content-{i}"}
         for i in range(4)
@@ -107,7 +108,7 @@ class MockedESClient(ESClient):
         self,
         n_hits: int,
         failure: Exception | None,
-        fail_at: list[int] = None,
+        fail_at: list[int] | None = None,
         **kwargs,
     ):
         super().__init__(pagination=1, **kwargs)
@@ -120,34 +121,27 @@ class MockedESClient(ESClient):
         self._n_hits = n_hits
 
     async def search(self, **kwargs) -> dict[str, Any]:
-        # pylint: disable=arguments-differ
         return await self._mocked_search(**kwargs)
 
     async def scroll(self, **kwargs) -> Any:
-        # pylint: disable=arguments-differ
         return await self._mocked_search(**kwargs)
 
-    async def clear_scroll(self, **kwargs) -> Any:
-        # pylint: disable=arguments-differ
-        pass
+    async def clear_scroll(self, **kwargs) -> Any: ...
 
     @contextlib.asynccontextmanager
     async def try_open_pit(
         self,
         *,
-        index: str,
-        keep_alive: str,
-        **kwargs,
+        index: str,  # noqa: ARG002
+        keep_alive: str,  # noqa: ARG002
+        **kwargs,  # noqa: ARG002
     ) -> AsyncGenerator[PointInTime | None, None]:
-        # pylint: disable=unused-argument
         yield dict()
 
     @abc.abstractmethod
-    async def _mocked_search(self, **kwargs):
-        pass
+    async def _mocked_search(self, **kwargs) -> dict[str, Any]: ...
 
     def _make_hits(self) -> list[dict[str, Any]]:
-        # pylint: disable=unused-argument
         if isinstance(self._failure, Exception) and self._n_calls in self._fail_at:
             self._n_calls += 1
             raise self._failure
@@ -157,12 +151,16 @@ class MockedESClient(ESClient):
         return hits
 
 
-async def _mocked_search(*, body: dict | None, index: str | None, size: int, **kwargs):
-    # pylint: disable=unused-argument
+async def _mocked_search(
+    body: dict | None,  # noqa: ARG001
+    index: str | None,  # noqa: ARG001
+    size: int,  # noqa: ARG001
+    **kwargs,  # noqa: ARG001
+) -> dict[str, Any]:
     return {}
 
 
-async def test_es_client_should_search_with_pagination_size():
+async def test_es_client_should_search_with_pagination_size() -> None:
     # Given
     pagination = 666
     es_client = ESClient(pagination=pagination)
@@ -183,7 +181,7 @@ class _MockFailingClient(MockedESClient, metaclass=abc.ABCMeta):
         self,
         n_hits: int,
         failure: Exception | None,
-        fail_at: list[int] = None,
+        fail_at: list[int] | None = None,
         **kwargs,
     ):
         super().__init__(n_hits=n_hits, failure=failure, **kwargs)
@@ -199,13 +197,11 @@ class _MockFailingClient(MockedESClient, metaclass=abc.ABCMeta):
     async def supports_pit(self) -> bool:
         return True
 
-    async def _mocked_search(self, **kwargs) -> dict[str, Any]:
-        # pylint: disable=unused-argument
+    async def _mocked_search(self, **kwargs) -> dict[str, Any]:  # noqa: ARG002
         hits = self._make_hits()
         return {HITS: {HITS: hits}}
 
     def _make_hits(self) -> list[dict[str, Any]]:
-        # pylint: disable=unused-argument
         if isinstance(self._failure, Exception) and self._n_calls in self._fail_at:
             self._n_calls += 1
             raise self._failure
@@ -223,7 +219,7 @@ def _make_transport_error(error_code: int) -> TransportError:
 
 
 @pytest.mark.parametrize(
-    "fail_at,max_retries,failure,raised",
+    ("fail_at", "max_retries", "failure", "raised"),
     [
         # No failure
         (None, 10, None, None),
@@ -247,7 +243,7 @@ async def test_poll_search_pages_should_retry(
     max_retries: int,
     failure: Exception | None,
     raised: type[Exception] | None,
-):
+) -> None:
     # Given
     n_hits = 3
     client = _MockFailingClient(
@@ -271,7 +267,7 @@ async def test_poll_search_pages_should_retry(
 
 
 @pytest.mark.parametrize(
-    "error_codes,raised,expected_should_retry",
+    ("error_codes", "raised", "expected_should_retry"),
     [
         ([], TransportError(429), False),
         ([], ValueError(), False),
@@ -283,15 +279,16 @@ async def test_poll_search_pages_should_retry(
 def test_retry_if_error_code(
     error_codes: Collection[int],
     raised: Exception | None,
+    *,
     expected_should_retry: bool,
-):
+) -> None:
     # Given
     retry = retry_if_error_code(error_codes)
     retry_state = RetryCallState(Retrying(), None, None, None)
     if raised:
         try:
             raise raised
-        except:  # pylint: disable=bare-except
+        except:  # noqa: E722
             retry_state.set_exception(sys.exc_info())
 
     # When
@@ -323,12 +320,9 @@ async def _test_search(
         ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, dict()),
     ],
 )
+@pytest.mark.usefixtures("populate_es")
 async def test_search_es7(
-    populate_es: list[dict[str, Any]],
-    test_es_client: ESClient,
-    query: dict,
-    expected_ids: set[str],
-    kwargs: dict,
+    test_es_client: ESClient, query: dict, expected_ids: set[str], kwargs: dict
 ) -> None:
     await _test_search(test_es_client, query, expected_ids, **kwargs)
 
@@ -345,12 +339,9 @@ async def test_search_es7(
         ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, {"sort": ID}),
     ],
 )
+@pytest.mark.usefixtures("populate_es")
 async def test_search_es8(
-    populate_es: list[dict[str, Any]],
-    test_es_client: ESClient,
-    query: dict,
-    expected_ids: set[str],
-    kwargs: dict,
+    test_es_client: ESClient, query: dict, expected_ids: set[str], kwargs: dict
 ) -> None:
     await _test_search(test_es_client, query, expected_ids, **kwargs)
 
@@ -367,11 +358,8 @@ async def test_search_es8(
         ({"term": {DOC_ROOT_ID: "root-3"}}, {"doc-3"}, {"sort": ID}),
     ],
 )
+@pytest.mark.usefixtures("populate_es")
 async def test_search_es9(
-    populate_es: list[dict[str, Any]],
-    test_es_client: ESClient,
-    query: dict,
-    expected_ids: set[str],
-    kwargs: dict,
+    test_es_client: ESClient, query: dict, expected_ids: set[str], kwargs: dict
 ) -> None:
     await _test_search(test_es_client, query, expected_ids, **kwargs)

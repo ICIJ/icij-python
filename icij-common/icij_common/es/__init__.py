@@ -9,7 +9,6 @@ from typing import Any
 
 from elastic_transport import AsyncTransport
 from elasticsearch import AsyncElasticsearch, TransportError
-from elasticsearch._async.client import BaseClient
 from packaging.version import Version
 from tenacity import (
     AsyncRetrying,
@@ -128,7 +127,7 @@ class ESClient(AsyncElasticsearch):
         self._max_retry_wait_s = max_retry_wait_s
 
     @property
-    @cache
+    @cache  # noqa: B019
     async def version(self) -> Version:
         info = await self.info()
         return Version(info["version"]["number"])
@@ -160,7 +159,7 @@ class ESClient(AsyncElasticsearch):
         retrying = self._async_retrying()
         if sort is None:
             sort = await self._default_sort(**kwargs)
-        limit = kwargs.get("size", None)
+        limit = kwargs.get("size")
         res = await retrying(self.search, sort=sort, body=body, **kwargs)
         yield res
         page_hits = res[HITS][HITS]
@@ -190,24 +189,27 @@ class ESClient(AsyncElasticsearch):
             if pit_id is not None:
                 await self._close_pit(pit_id)
 
-    def _with_headers(self, headers: dict) -> dict:
+    def _with_headers(self, headers: dict) -> dict[str, Any]:
         if self._api_key is not None:
             headers["Authorization"] = f"bearer {self._api_key}"
         return headers
 
-    async def count(self, body: dict | None = None, index: str | None = None, **kwargs):
+    async def count(
+        self, body: dict | None = None, index: str | None = None, **kwargs
+    ) -> dict:
         kwargs = deepcopy(kwargs)
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
         return await super().count(body=body, index=index, headers=headers, **kwargs)
 
-    async def search(self, body: dict | None, **kwargs):
-        # pylint: disable=unexpected-keyword-arg
+    async def search(self, body: dict | None, **kwargs) -> dict[str, Any]:
         kwargs = deepcopy(kwargs)
         headers = kwargs.pop("headers", dict())
         headers = self._with_headers(headers)
         size = kwargs.pop("size", self.pagination_size)
-        return await super().search(headers=headers, body=deepcopy(body), size=size, **kwargs)
+        return await super().search(
+            headers=headers, body=deepcopy(body), size=size, **kwargs
+        )
 
     async def _default_sort(self, **kwargs) -> ESSort:
         if PIT in kwargs:
@@ -218,7 +220,7 @@ class ESClient(AsyncElasticsearch):
         msg = f"no sort provided and not PIT, will sort on {ID_}, this might be costly"
         raise ValueError(msg)
 
-    async def _close_pit(self, pit_id: str):
+    async def _close_pit(self, pit_id: str) -> None:
         await self.close_point_in_time(body={ID: pit_id})
 
 
@@ -228,7 +230,7 @@ def _hash_params(params: dict) -> str:
     return hashlib.md5(hashed).hexdigest()
 
 
-class retry_if_error_code(retry_base):  # pylint: disable=invalid-name
+class retry_if_error_code(retry_base):  # noqa: N801
     def __init__(self, codes: Collection[int]):
         self._recoverable = set(codes)
 

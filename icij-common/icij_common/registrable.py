@@ -1,17 +1,14 @@
-"""
-Simplified implementation of AllenNLP Registrable:
+"""Simplified implementation of AllenNLP Registrable:
 https://github.com/allenai/allennlp
 """
-
-from __future__ import annotations
 
 import json
 import logging
 import os
-
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Callable, ClassVar, DefaultDict, TypeVar, cast
+from collections.abc import Callable
+from typing import Any, ClassVar, Self, TypeVar, cast
 
 from pydantic import (
     BaseModel,
@@ -20,10 +17,10 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.config import ExtraValues
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 from icij_common.common_utils import classproperty
 from icij_common.import_utils import VariableNotFound, import_variable
@@ -38,15 +35,14 @@ _SubclssNames = dict[_SubclassRegistry, str]
 T = TypeVar("T", bound="FromConfig")
 
 
-class RegistrableMixin(ABC):
-    _registry: ClassVar[DefaultDict[type, _SubclassRegistry]] = defaultdict(dict)
-    _registered_names: ClassVar[DefaultDict[type, _SubclssNames]] = defaultdict(dict)
+class RegistrableMixin(ABC):  # noqa: B024
+    _registry: ClassVar[defaultdict[type, _SubclassRegistry]] = defaultdict(dict)
+    _registered_names: ClassVar[defaultdict[type, _SubclssNames]] = defaultdict(dict)
 
     @classmethod
     def register(
-        cls, name: str | None = None, exist_ok: bool = False
-    ) -> Callable[[type[RegistrableMixin]], type[RegistrableMixin]]:
-        # pylint: disable=protected-access
+        cls, name: str | None = None, *, exist_ok: bool = False
+    ) -> Callable[[type[Self]], type[Self]]:
         registry = RegistrableMixin._registry[cls]
         registered_names = RegistrableMixin._registered_names[cls]
 
@@ -85,14 +81,13 @@ class RegistrableMixin(ABC):
         return add_subclass_to_registry
 
     @classmethod
-    def by_name(cls: type[_RegistrableT], name: str) -> Callable[..., _RegistrableT]:
+    def by_name(cls, name: str) -> Callable[..., Self]:
         logger.debug("instantiating registered subclass %s of %s", name, cls)
         subclass = cls.resolve_class_name(name)
-        return cast(type[_RegistrableT], subclass)
+        return cast(type[Self], subclass)
 
     @classmethod
-    def resolve_class_name(cls: type[_RegistrableT], name: str) -> type[_RegistrableT]:
-        # pylint: disable=protected-access
+    def resolve_class_name(cls, name: str) -> type[Self]:
         sub_registry = RegistrableMixin._registry.get(cls, None)
         if sub_registry is None:
             for k, v in RegistrableMixin._registry.items():
@@ -130,17 +125,12 @@ If your registered class comes from custom code, you'll need to import the\
 
     @classmethod
     def list_available(cls) -> list[str]:
-        # pylint: disable=protected-access
         keys = list(RegistrableMixin._registry[cls].keys())
         return keys
 
     @classproperty
-    def registered_name(cls) -> str:  # pylint: disable=no-self-argument
-        for (
-            names
-        ) in (
-            RegistrableMixin._registered_names.values()  # pylint: disable=protected-access
-        ):
+    def registered_name(cls) -> str:  # noqa: N805
+        for names in RegistrableMixin._registered_names.values():
             name = names.get(cls)
             if name is not None:
                 return name
@@ -195,7 +185,7 @@ class RegistrableSettings(RegistrableConfig, BaseSettings):
     )
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls) -> Self:
         registry_key = cls.registry_key.default
         env_key = f"{cls.model_config['env_prefix']}{registry_key}"
         _, name = find_variable_loc_in_env(env_key, cls.model_config["case_sensitive"])
@@ -206,7 +196,7 @@ class RegistrableSettings(RegistrableConfig, BaseSettings):
 class FromConfig(ABC):
     @classmethod
     @abstractmethod
-    def _from_config(cls, config: RegistrableConfig, **extras) -> FromConfig: ...
+    def _from_config(cls, config: RegistrableConfig, **extras) -> Self: ...
 
 
 class RegistrableFromConfig(RegistrableMixin, FromConfig, ABC):
@@ -216,10 +206,10 @@ class RegistrableFromConfig(RegistrableMixin, FromConfig, ABC):
         if isinstance(name, FieldInfo):
             name = name.default
         subcls = cls.resolve_class_name(name)
-        return subcls._from_config(config, **extras)  # pylint: disable=protected-access
+        return subcls._from_config(config, **extras)
 
 
-def find_variable_loc_in_env(variable: str, case_sensitive: bool) -> tuple[str, str]:
+def find_variable_loc_in_env(variable: str, *, case_sensitive: bool) -> tuple[str, str]:
     if case_sensitive:
         try:
             return variable, os.environ[variable]
@@ -232,8 +222,8 @@ def find_variable_loc_in_env(variable: str, case_sensitive: bool) -> tuple[str, 
     raise ValueError(f"couldn't find {variable.upper()} in env variables")
 
 
-def find_in_env(variable: str, case_sensitive: bool) -> str:
-    return find_variable_loc_in_env(variable, case_sensitive)[1]
+def find_in_env(variable: str, *, case_sensitive: bool) -> str:
+    return find_variable_loc_in_env(variable, case_sensitive=case_sensitive)[1]
 
 
 class Registrable(BaseModel, RegistrableMixin, ABC):
@@ -247,7 +237,10 @@ class Registrable(BaseModel, RegistrableMixin, ABC):
         json_data: str | bytes | bytearray,
         *,
         strict: bool | None = None,
+        extra: ExtraValues | None = None,
         context: Any | None = None,
+        by_alias: bool | None = None,
+        by_name: bool | None = None,
     ) -> Self:
         if isinstance(json_data, bytes):
             data = json.loads(json_data.decode("utf-8"))
@@ -262,7 +255,14 @@ class Registrable(BaseModel, RegistrableMixin, ABC):
         key = data[cls.registry_key.default]
         subcls = cls.resolve_class_name(key)
         # TODO: try to use model_validate_json instead
-        return subcls.model_validate(data, strict=strict, context=context)
+        return subcls.model_validate(
+            data,
+            strict=strict,
+            context=context,
+            extra=extra,
+            by_alias=by_alias,
+            by_name=by_name,
+        )
 
     @model_serializer(mode="wrap")
     def serialize_with_registry_key(

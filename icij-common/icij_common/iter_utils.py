@@ -16,9 +16,9 @@ T = TypeVar("T")
 Predicate = Callable[[T], bool] | Callable[[T], Awaitable[bool]]
 
 
-async def async_batches(
-    iterable: AsyncIterable[T], batch_size: int
-) -> AsyncIterator[tuple[T]]:
+async def async_batches[I](
+    iterable: AsyncIterable[I], batch_size: int
+) -> AsyncIterator[tuple[I]]:
     it = aiter(iterable)
     if batch_size < 1:
         raise ValueError("n must be at least one")
@@ -34,9 +34,9 @@ async def async_batches(
         yield tuple(batch)
 
 
-def batches(
-    iterable: Iterable[T], batch_size: int
-) -> Generator[tuple[T, ...], None, None]:
+def batches[I](
+    iterable: Iterable[I], batch_size: int
+) -> Generator[tuple[I, ...], None, None]:
     if batch_size < 1:
         raise ValueError("n must be at least one")
     it = iter(iterable)
@@ -44,19 +44,19 @@ def batches(
         yield batch
 
 
-async def _maybe_await(maybe_awaitable: Awaitable[T] | T) -> T:
+async def _maybe_await[I](maybe_awaitable: Awaitable[I] | I) -> I:
     if inspect.isawaitable(maybe_awaitable):
         return await maybe_awaitable
     return maybe_awaitable
 
 
-async def once(item: T) -> AsyncIterator[T]:
+async def once[I](item: I) -> AsyncIterator[I]:
     yield item
 
 
-def before_and_after(
-    iterable: AsyncIterable[T], predicate: Predicate[T]
-) -> tuple[AsyncIterable[T], AsyncIterable[T]]:
+def before_and_after[I](
+    iterable: AsyncIterable[I], predicate: Predicate[I]
+) -> tuple[AsyncIterable[I], AsyncIterable[I]]:
     transition = asyncio.get_event_loop().create_future()
 
     async def true_iterator() -> AsyncIterator[T]:

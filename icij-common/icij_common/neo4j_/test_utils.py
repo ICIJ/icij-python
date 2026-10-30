@@ -1,10 +1,10 @@
-# pylint: disable=redefined-outer-name
 import contextlib
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import neo4j
 import pytest
-from neo4j import AsyncGraphDatabase
+from _pytest.monkeypatch import MonkeyPatch
+from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession, Driver
 
 import icij_common
 from icij_common.neo4j_.db import NEO4J_COMMUNITY_DB
@@ -15,7 +15,7 @@ NEO4J_TEST_PASSWORD = "theneo4jpassword"
 NEO4J_TEST_AUTH = neo4j.basic_auth(NEO4J_TEST_USER, NEO4J_TEST_PASSWORD)
 
 
-async def wipe_db(session: neo4j.AsyncSession):
+async def wipe_db(session: AsyncSession) -> None:
     # Indices and constraints
     query = "CALL apoc.schema.assert({}, {})"
     await session.run(query)
@@ -27,16 +27,14 @@ DETACH DELETE n
 
 
 @contextlib.asynccontextmanager
-async def _build_neo4j_driver():
+async def _build_neo4j_driver() -> AsyncGenerator[AsyncDriver]:
     uri = f"neo4j://127.0.0.1:{NEO4J_TEST_PORT}"
-    async with AsyncGraphDatabase.driver(  # pylint: disable=not-async-context-manager
-        uri, auth=NEO4J_TEST_AUTH
-    ) as driver:
+    async with AsyncGraphDatabase.driver(uri, auth=NEO4J_TEST_AUTH) as driver:
         yield driver
 
 
 @pytest.fixture(scope="module")
-async def neo4j_test_driver_module() -> AsyncGenerator[neo4j.AsyncDriver, None]:
+async def neo4j_test_driver_module() -> AsyncGenerator[AsyncDriver, None]:
     async with _build_neo4j_driver() as driver:
         async with driver.session(database=neo4j.DEFAULT_DATABASE) as sess:
             await wipe_db(sess)
@@ -44,15 +42,15 @@ async def neo4j_test_driver_module() -> AsyncGenerator[neo4j.AsyncDriver, None]:
 
 
 @pytest.fixture(scope="session")
-async def neo4j_test_driver_session() -> AsyncGenerator[neo4j.AsyncDriver, None]:
+async def neo4j_test_driver_session() -> AsyncGenerator[AsyncDriver, None]:
     async with _build_neo4j_driver() as driver:
         async with driver.session(database=neo4j.DEFAULT_DATABASE) as sess:
             await wipe_db(sess)
         yield driver
 
 
-@pytest.fixture()
-async def neo4j_test_driver() -> AsyncGenerator[neo4j.AsyncDriver, None]:
+@pytest.fixture
+async def neo4j_test_driver() -> AsyncGenerator[AsyncDriver, None]:
     async with _build_neo4j_driver() as driver:
         async with driver.session(database="neo4j") as sess:
             await wipe_db(sess)
@@ -61,8 +59,8 @@ async def neo4j_test_driver() -> AsyncGenerator[neo4j.AsyncDriver, None]:
 
 @pytest.fixture(scope="session")
 async def neo4j_test_session_session(
-    neo4j_test_driver_session: neo4j.Driver,
-) -> AsyncGenerator[neo4j.AsyncSession, None]:
+    neo4j_test_driver_session: Driver,
+) -> AsyncGenerator[AsyncSession]:
     driver = neo4j_test_driver_session
     async with driver.session(database="neo4j") as sess:
         await wipe_db(sess)
@@ -71,46 +69,45 @@ async def neo4j_test_session_session(
 
 @pytest.fixture(scope="module")
 async def neo4j_test_session_module(
-    neo4j_test_session_session: neo4j.AsyncSession,
-) -> neo4j.AsyncSession:
+    neo4j_test_session_session: AsyncSession,
+) -> AsyncSession:
     session = neo4j_test_session_session
     await wipe_db(session)
     return session
 
 
-@pytest.fixture()
+@pytest.fixture
 async def neo4j_test_session(
-    neo4j_test_session_session: neo4j.AsyncSession,
-) -> neo4j.AsyncSession:
+    neo4j_test_session_session: AsyncSession,
+) -> AsyncSession:
     session = neo4j_test_session_session
     await wipe_db(session)
     return session
 
 
-async def mocked_is_enterprise(_: neo4j.AsyncDriver) -> bool:
+async def mocked_is_enterprise(_: AsyncDriver) -> bool:
     return True
 
 
 @contextlib.asynccontextmanager
 async def _mocked_db_specific_session(
-    neo4j_driver: neo4j.AsyncDriver, db: str  # pylint: disable=unused-argument
-) -> neo4j.AsyncSession:
+    neo4j_driver: AsyncDriver,
+    db: str,  # noqa: ARG001
+) -> AsyncGenerator[AsyncSession]:
     async with neo4j_driver.session(database=NEO4J_COMMUNITY_DB) as sess:
         yield sess
 
 
-async def _mocked_db_registry_db(
-    neo4j_driver: neo4j.AsyncDriver,  # pylint: disable=unused-argument
-) -> str:
+async def _mocked_db_registry_db(neo4j_driver: AsyncDriver) -> str:  # noqa: ARG001
     return NEO4J_COMMUNITY_DB
 
 
-@pytest.fixture()
-def mock_enterprise(monkeypatch):
+@pytest.fixture
+def mock_enterprise(monkeypatch: MonkeyPatch) -> None:
     mock_enterprise_(monkeypatch)
 
 
-def mock_enterprise_(monkeypatch):
+def mock_enterprise_(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(
         icij_common.neo4j_.db, "db_specific_session", _mocked_db_specific_session
     )

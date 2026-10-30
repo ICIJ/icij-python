@@ -1,12 +1,14 @@
 from unittest.mock import AsyncMock
 
+import pytest
+
 from icij_common.neo4j_.db import create_databases_registry_db
 
 
-async def test_should_create_databases_registry_db_with_enterprise_distribution(
-    mock_enterprise,
+@pytest.mark.usefixtures("mock_enterprise")
+async def test_should_create_databases_registry_db_with_enterprise_distribution() -> (
+    None
 ):
-    # pylint: disable=unused-argument
     # Given
     mocked_driver = AsyncMock()
 

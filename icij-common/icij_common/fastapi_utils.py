@@ -16,7 +16,7 @@ _REQUEST_VALIDATION_ERROR = "Request Validation Error"
 logger = logging.getLogger(__name__)
 
 
-def json_error(*, title, detail, **kwargs) -> dict:
+def json_error(*, title: str, detail: str, **kwargs) -> dict:
     error = {"title": title, "detail": detail}
     error.update(kwargs)
     return error
@@ -24,7 +24,7 @@ def json_error(*, title, detail, **kwargs) -> dict:
 
 def display_errors(errors: list[ErrorDetails]) -> str:
     return "\n".join(
-        f'{_display_error_loc(e)}\n  {e["msg"]} ({_display_error_type_and_ctx(e)})'
+        f"{_display_error_loc(e)}\n  {e['msg']} ({_display_error_type_and_ctx(e)})"
         for e in errors
     )
 
@@ -43,7 +43,7 @@ def _display_error_type_and_ctx(error: ErrorDetails) -> str:
 
 async def request_validation_error_handler(
     request: Request, exc: RequestValidationError
-):
+) -> JSONResponse:
     title = _REQUEST_VALIDATION_ERROR
     detail = display_errors(list(exc.errors()))
     error = json_error(title=title, detail=detail)
@@ -53,7 +53,9 @@ async def request_validation_error_handler(
     )
 
 
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+async def http_exception_handler(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
     headers = getattr(exc, "headers", None)
     if not is_body_allowed_for_status_code(exc.status_code):
         return Response(status_code=exc.status_code, headers=headers)
@@ -65,16 +67,10 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
-async def internal_exception_handler(request: Request, exc: Exception):
-    # pylint: disable=unused-argument
+async def internal_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     title = INTERNAL_SERVER_ERROR
     detail = f"{type(exc).__name__}: {exc}"
     trace = "".join(traceback.format_exc())
     error = json_error(title=title, detail=detail, trace=trace)
-    logger.exception(
-        "%s\nURL: %s\nDetail: %s",
-        title,
-        request.url,
-        detail,
-    )
+    logger.error("%s\nURL: %s\nDetail: %s", title, request.url, detail)
     return JSONResponse(jsonable_encoder(error), status_code=500)

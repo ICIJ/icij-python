@@ -1,10 +1,9 @@
 import importlib
 import warnings
-
 from typing import Any
 
 
-class VariableNotFound(ImportError): ...  # pylint: disable=multiple-statements
+class VariableNotFound(ImportError): ...
 
 
 def import_variable(name: str) -> Any:
@@ -33,7 +32,7 @@ def _legacy_import_variable(name: str) -> Any:
         "importing using only dot will be soon deprecated,"
         " use the new path.to.module:variable syntax"
     )
-    warnings.warn(msg, DeprecationWarning)
+    warnings.warn(msg, DeprecationWarning, stacklevel=2)
     parts = name.split(".")
     submodule = ".".join(parts[:-1])
     if not submodule:
